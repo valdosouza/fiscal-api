@@ -53,7 +53,7 @@ O núcleo guarda o que é COMUM às famílias:
 (a nfse-api consome o `dist/` — reconstruir depois de mexer aqui). Relatório: §15 do prompt. Mapa:
 `db/` pool+tx+migrations · `auth/` JWT RS256 · `secret/` cofre+A1 · `establishment/` certificado+habilitação ·
 `transport/` mTLS+XMLDSig · `storage/` XML · `voice/` contrato de leitura (D-F33) · `erp/facts.ts` fonte de fatos
-base (ÚNICO lugar que lê o ERP) · `http/` borda. Repo GitHub a criar pelo Valdo (hoje git local).
+base (ÚNICO lugar que lê o ERP) · `http/` borda. Repo GitHub `valdosouza/gestao-2027-fiscal-api` (privado, criado 2026-10-04).
 Regras da Rodada 6: a trava da habilitação é POR LINHA da PK (`lockIssuerRows` — nunca faixa: promoção de trava = 1213,
 PADROES §9 regra 8); comando curto em linha disputada pela peça `runShortCommand` (D-F41); domínio do `model` = CHECK da
 migration 004, conferido no boot pela família (`assertIssuerModelDomainEnforced` — D-F45); `openIssuer` com `schemaName`
