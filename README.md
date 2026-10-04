@@ -1,13 +1,11 @@
-# fiscal-api
+# fiscal-api — núcleo comum das APIs fiscais
 
-Serviço de documento fiscal do Gestão 2027: emissão e autorização de **NFS-e** (ADN / Sefin
-Nacional) e, em fase futura, **NF-e / NFC-e** (SEFAZ), consumido por qualquer cliente licenciado e
-seus aplicativos (web, Android, iOS, sistemas de terceiros) — projetado para 1000 clientes emitindo
-e autorizando notas.
+Biblioteca (não roda sozinha) consumida pelos serviços **`nfse-api`** (NFS-e / ADN — porta 3002) e
+**`nfe-api`** (NF-e / NFC-e / SEFAZ — porta 3003, fase futura): transporte mTLS, assinatura XMLDSig,
+emitente (A1 cifrado no banco) e habilitação por modelo, máquina tentativa × voz, storage do XML,
+autenticação pelo JWT do produto e migrations do banco `fiscal_api`.
 
-**Estado (2026-10-03): Fase 0 — projeto criado, sem código.** As decisões e o plano de extração a
-partir do `setes-api` (onde a NFS-e está em produção desde 2026-09-29) vivem em
-`D:\Gestao2027\Infra-IA\prompts\prompt_apis_fiscais_isoladas.md`; o índice do projeto é
+**Estado (2026-10-04): F1 executada** (23 testes) (decisão D-F17 do Valdo: três pastas — núcleo
+`fiscal-api` + serviços `nfse-api` e `nfe-api`). Decisões e plano:
+`D:\Gestao2027\Infra-IA\prompts\prompt_apis_fiscais_isoladas.md` (§7 e §12); índice:
 `D:\Gestao2027\Infra-IA\fiscal-api\INDEX.md`.
-
-Porta prevista: **3002** · Banco próprio: `fiscal_api` · Contrato: `/v1` (OpenAPI design-first).

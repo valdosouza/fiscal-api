@@ -1,0 +1,95 @@
+/**
+ * CATÁLOGO DE ERROS das APIs fiscais (núcleo — D-F17). Mesmos CÓDIGOS do setes-api para o que já
+ * existia (o app e os testes dos gates da Onda 3 falam esse vocabulário); códigos novos da extração
+ * marcados com a decisão. O código nasce no mesmo commit do throw que o dispara.
+ */
+export const ErrorCodes = {
+  // Infra/contrato
+  INTERNAL:                          'INTERNAL',
+  VALIDATION_FAILED:                 'VALIDATION_FAILED',
+  UNSUPPORTED_MEDIA_TYPE:            'UNSUPPORTED_MEDIA_TYPE',   // gates da F1 (R3): corpo com charset/encoding não suportado
+  INVALID_ID:                        'INVALID_ID',
+  UNAUTHORIZED:                      'UNAUTHORIZED',
+  RESOURCE_BUSY:                     'RESOURCE_BUSY',
+  PRIVILEGE_REQUIRED:                'PRIVILEGE_REQUIRED',
+  ADMIN_REQUIRED:                    'ADMIN_REQUIRED',
+  INTERFACE_NOT_ALLOWED:             'INTERFACE_NOT_ALLOWED',
+  INSTITUTION_MISMATCH:              'INSTITUTION_MISMATCH',
+  // Nota (lida no ERP pela fonte de fatos — D-F10)
+  INVOICE_NOT_FOUND:                 'INVOICE_NOT_FOUND',
+  INVOICE_REASON_REQUIRED:           'INVOICE_REASON_REQUIRED',
+  INVOICE_SERVICE_BRANCH_MISSING:    'INVOICE_SERVICE_BRANCH_MISSING',
+  INVOICE_NOT_TRANSMITTABLE:         'INVOICE_NOT_TRANSMITTABLE',
+  SERVICE_RULE_NATIONAL_CODE_REQUIRED: 'SERVICE_RULE_NATIONAL_CODE_REQUIRED',
+  // Emissor fiscal (habilitação + A1)
+  FISCAL_ISSUER_MISSING:             'FISCAL_ISSUER_MISSING',
+  FISCAL_CERT_MISSING:               'FISCAL_CERT_MISSING',
+  FISCAL_CERT_EXPIRED:               'FISCAL_CERT_EXPIRED',
+  FISCAL_CERT_INVALID:               'FISCAL_CERT_INVALID',
+  FISCAL_MODEL_NOT_SUPPORTED:        'FISCAL_MODEL_NOT_SUPPORTED',
+  FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS: 'FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS',
+  FISCAL_MASTER_KEY_UNAVAILABLE:     'FISCAL_MASTER_KEY_UNAVAILABLE',
+  // Transporte fiscal
+  FISCAL_AUTHORITY_UNAVAILABLE:      'FISCAL_AUTHORITY_UNAVAILABLE',
+  FISCAL_AUTHORITY_AUTH_FAILED:      'FISCAL_AUTHORITY_AUTH_FAILED',
+  FISCAL_DPS_REJECTED:               'FISCAL_DPS_REJECTED',
+  FISCAL_NFSE_NOT_FOUND:             'FISCAL_NFSE_NOT_FOUND',
+  FISCAL_AUTHORITY_UNKNOWN_RESPONSE: 'FISCAL_AUTHORITY_UNKNOWN_RESPONSE',
+  // Tentativa × voz
+  FISCAL_TRANSMISSION_IN_PROGRESS:   'FISCAL_TRANSMISSION_IN_PROGRESS',
+  FISCAL_ALREADY_AUTHORIZED:         'FISCAL_ALREADY_AUTHORIZED',
+  FISCAL_CANCEL_IN_FLIGHT:           'FISCAL_CANCEL_IN_FLIGHT',
+  FISCAL_CANCEL_REFUSED:             'FISCAL_CANCEL_REFUSED',
+  FISCAL_NOT_TRANSMITTED:            'FISCAL_NOT_TRANSMITTED',
+  FISCAL_NOT_AUTHORIZED:             'FISCAL_NOT_AUTHORIZED',
+  FISCAL_EMITTER_INCOMPLETE:         'FISCAL_EMITTER_INCOMPLETE',
+  FISCAL_RECIPIENT_INCOMPLETE:       'FISCAL_RECIPIENT_INCOMPLETE',
+  FISCAL_EFFECT_PENDING:             'FISCAL_EFFECT_PENDING',
+  FISCAL_DPS_INVALID:                'FISCAL_DPS_INVALID',
+  FISCAL_DPS_ID_CHANGED:             'FISCAL_DPS_ID_CHANGED',
+  FISCAL_CUTOVER_PENDING:            'FISCAL_CUTOVER_PENDING',
+} as const
+
+export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes]
+
+export const ErrorCatalog: Record<ErrorCode, string> = {
+  INTERNAL:                          'Erro interno do servidor (rastreável pelo ref)',
+  VALIDATION_FAILED:                 'Payload rejeitado pela validação de formato — fields[] aponta os campos',
+  UNSUPPORTED_MEDIA_TYPE:            'Corpo da requisição com charset ou Content-Encoding não suportado — envie JSON em UTF-8',
+  INVALID_ID:                        'Identificador de rota inválido',
+  UNAUTHORIZED:                      'Token ausente, inválido ou expirado (JWT do produto, RS256 — D-F13)',
+  RESOURCE_BUSY:                     'Registro em uso por outra operação — tente novamente',
+  PRIVILEGE_REQUIRED:                'Privilégio necessário para esta ação (TRANSMITIR/CANCELAR na interface do ramo)',
+  ADMIN_REQUIRED:                    'Ação exclusiva do administrador do estabelecimento',
+  INTERFACE_NOT_ALLOWED:             'Interface do ramo não contratada para este estabelecimento (licença — D-F14)',
+  INSTITUTION_MISMATCH:              'Token aponta um schema que não é o da institution — recusado',
+  INVOICE_NOT_FOUND:                 'Nota fiscal não encontrada (ou não emitida por este estabelecimento)',
+  INVOICE_REASON_REQUIRED:           'Motivo do cancelamento é obrigatório',
+  INVOICE_SERVICE_BRANCH_MISSING:    'Nota sem ramo de serviço — só nota com serviço gera DPS',
+  INVOICE_NOT_TRANSMITTABLE:         'Nota não transmissível: sincronizada da origem (sem evento de emissão na web) ou já cancelada',
+  SERVICE_RULE_NATIONAL_CODE_REQUIRED: 'Regra de ISS sem código de tributação nacional (D-N11a)',
+  FISCAL_ISSUER_MISSING:             'Estabelecimento sem habilitação do emissor para este modelo de documento — configure ambiente e série',
+  FISCAL_CERT_MISSING:               'Certificado digital A1 ausente — envie o .pfx',
+  FISCAL_CERT_EXPIRED:               'Certificado digital A1 expirou — renove e envie o novo',
+  FISCAL_CERT_INVALID:               'PKCS#12 inválido, senha incorreta, par certificado × chave não fecha ou certificado de outro CNPJ',
+  FISCAL_MODEL_NOT_SUPPORTED:        'Modelo de documento fiscal não suportado por esta API',
+  FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS: 'Emissor tem transmissão viva no ambiente atual — aguarde a voz do fisco antes de mudar o ambiente ou excluir',
+  FISCAL_MASTER_KEY_UNAVAILABLE:     'Chave-mestra do cofre indisponível (versão ausente da configuração) — operação recusada sem tocar o A1 (D-F16)',
+  FISCAL_AUTHORITY_UNAVAILABLE:      'Fisco indisponível (rede, timeout, 5xx ou limite) — tente depois; tentativa EM VOO quando houve envio',
+  FISCAL_AUTHORITY_AUTH_FAILED:      'Fisco recusou o certificado do emissor (handshake mTLS, 401/403)',
+  FISCAL_DPS_REJECTED:               'Fisco rejeitou o documento (regras E0xxx) — códigos em fields[]',
+  FISCAL_NFSE_NOT_FOUND:             'Fisco não encontrou o recurso (NFS-e, DPS ou parâmetros municipais) / XML ausente',
+  FISCAL_AUTHORITY_UNKNOWN_RESPONSE: 'Fisco respondeu sem envelope legível — desfecho ambíguo, reconciliar pela consulta',
+  FISCAL_TRANSMISSION_IN_PROGRESS:   'Transmissão desta nota em andamento (reserva sem voz) — aguarde e consulte',
+  FISCAL_ALREADY_AUTHORIZED:         'NFS-e desta nota já autorizada no fisco — nada a transmitir',
+  FISCAL_CANCEL_IN_FLIGHT:           'Pedido de cancelamento ao fisco sem resposta (K) — consulte para reconciliar',
+  FISCAL_CANCEL_REFUSED:             'Fisco recusou o pedido de cancelamento — mensagens em fields[]; nada mudou',
+  FISCAL_NOT_TRANSMITTED:            'Nota nunca transmitida ao fisco',
+  FISCAL_NOT_AUTHORIZED:             'Não há NFS-e autorizada para cancelar no fisco — cancele a nota direto no ERP (D-F28)',
+  FISCAL_EMITTER_INCOMPLETE:         'Cadastro do estabelecimento incompleto para o DPS — complete no Meu Estabelecimento',
+  FISCAL_RECIPIENT_INCOMPLETE:       'Cadastro do tomador incompleto para o DPS — complete o cadastro da entidade',
+  FISCAL_EFFECT_PENDING:             'Fisco já cancelou a NFS-e e o cancelamento LOCAL ainda não foi aplicado no ERP — aplique antes de nova ação (D-F28)',
+  FISCAL_DPS_INVALID:                'DPS não pôde ser montado com os dados da nota/cadastros — campo e motivo em fields[]; nada reservado',
+  FISCAL_DPS_ID_CHANGED:             'O Id do DPS desta vida mudaria (município/CNPJ do emitente mudou desde a 1ª tentativa) — o fisco já conhece o Id antigo; nada enviado (D-F30)',
+  FISCAL_CUTOVER_PENDING:            'A emissão fiscal desta empresa ainda é feita pelo ERP — a API fiscal só LÊ até a virada (D-F18 sem dual-write; virada = fato `cutover_at` na habilitação — D-F39)',
+}

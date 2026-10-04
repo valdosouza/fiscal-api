@@ -1,46 +1,60 @@
-# CLAUDE.md — fiscal-api
+# CLAUDE.md — fiscal-api (NÚCLEO COMUM — biblioteca)
 
 ## ⚠️ Base de conhecimento central: D:\Gestao2027\Infra-IA
 
 Antes de qualquer tarefa neste projeto, consulte `D:\Gestao2027\Infra-IA\INDICE_CENTRAL.md` e, em
-especial, **`Infra-IA/fiscal-api/INDEX.md`** (START HERE deste projeto). Decisões vigentes e questões
-abertas: `Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` (§7 decisões D-F, §8 questões Q-F).
+especial, **`Infra-IA/fiscal-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F45 em
+`Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` §7; plano no §12, modelo no §14, execução da F1 no **§15**.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
-## Estado (2026-10-03)
+## O que este projeto É (D-F17, Valdo 2026-10-03)
 
-**Fase 0 — sem código.** D-F1…D-F3 decididas pelo Valdo; a F1 (extração da NFS-e do setes-api para
-cá) só começa quando as questões Q-F2…Q-F26 do prompt fecharem. Não crie `src/` antes disso.
+A **biblioteca do núcleo comum** das duas APIs fiscais — `nfse-api` (NFS-e/ADN) e `nfe-api`
+(NF-e/NFC-e/SEFAZ). **Não roda sozinha**: não tem porta, `server.ts` nem rotas. Os serviços a
+consomem como dependência (`file:../fiscal-api` no dev, tag git no deploy).
 
-## O que este projeto É
+Conceito: *um emitente habilitado declara um documento fiscal ao fisco e recebe a voz dele.*
+O núcleo guarda o que é COMUM às famílias:
 
-Serviço de DOCUMENTO fiscal, consumido por qualquer cliente licenciado e seus múltiplos aplicativos:
-*um emitente habilitado declara um documento ao fisco e recebe a voz dele*. Famílias `/v1/nfse`
-(ADN / Sefin Nacional) e `/v1/nfe` (SEFAZ — NF-e 55, NFC-e 65 apontada). Responde pelo FORMATO e
-pela CONVERSA com o fisco (leiaute, assinatura, mTLS, tentativa, voz, XML, PDF).
+- transporte mTLS (`https-json`; SOAP da SEFAZ quando a F4 vier) e assinatura XMLDSig paramétrica
+- **emitente** (`tb_establishment_certificate`: o A1 do estabelecimento, chave privada CIFRADA no banco —
+  D-F16/D-F34) e **habilitação** por modelo (`tb_establishment_issuer` — D-E1; carrega o contador do DPS e o
+  ALUGUEL da consulta ativa `refresh_lease_until`)
+- máquina **tentativa × voz** (estado DERIVADO da última voz; ambíguo nunca fecha; recusa ≠ transitório)
+- storage do XML (filesystem no dev; backend de produção na F3)
+- autenticação pelo **JWT do produto** (RS256, só chave pública — D-F13)
+- base da **fonte de fatos Gestão 2027** (leitura SÓ-SELECT de `setes_central`/`setes_*` — D-F10/D-F15)
+- migrations do banco **`fiscal_api`** (D-F7), views publicadas para o setes-api (D-F15)
 
-## O que este projeto NÃO É (fronteira — parecer do guardião conceitual)
+## O que este projeto NÃO É
 
-- Não calcula imposto. Não conhece pedido, nota, cliente nem cadeia de entidade de quem chama.
-- **Nenhum import ou SQL sobre `tb_invoice`, `tb_order`, `tb_entity*`** — a cerca é testada por grep.
-- Não é o setes-api: o setes-api é UM dos aplicativos (`tb_licensee_app`) de cada licenciado.
-- Não aplica efeitos no ERP: a voz fica aqui; o efeito é de quem chama, que acusa (`ack`).
+- Não calcula imposto. Não escreve no ERP (GRANT só SELECT — D-F15). Não aplica efeito no ERP
+  (o efeito é do setes-api lendo a voz — D-F11).
+- **Nenhum `tb_invoice`/`tb_order`/`tb_entity*` fora da fonte de fatos** — o núcleo de transporte,
+  assinatura, cofre e voz é cego ao ERP (teste do terceiro cego vale para o NÚCLEO — D-F10).
+- Não tem `tb_licensee`: licenciado = institution do produto (D-F14).
 
 ## Regras inegociáveis
 
-1. Estado é DERIVADO da última voz da última tentativa — nunca coluna `status`.
-2. 2xx ilegível do fisco = ambíguo (502 / K em voo), nunca aceite; recusa de REGRA ≠ transitório.
-3. Idempotência por construção: UNIQUE `(licensee, emitter, external_code)`.
-4. Nenhum `Map/Set` de controle em memória de processo — trava no banco ou worker.
-5. Segredo nunca em coluna, log ou resposta; PKCS#12 abre no upload, senha não persiste.
-6. Banco próprio `fiscal_api` (NUNCA `setes_*`), escopo por linha `tb_licensee_id`.
-7. Molde de código: setes-api (`gateway/ · modules/ · shared/ · migrations/`, módulo em 6 arquivos —
-   `Infra-IA/setes-api/ARQUITETURA_MODULOS_API.md`); `PADROES_BANCO.md` + skill `revisar-ddl.md`
-   antes de qualquer DDL; Swagger em todo endpoint; gates socrático/adversarial antes de "pronto".
+1. Estado DERIVADO da última voz da última tentativa — nunca coluna `status`.
+2. 2xx ilegível do fisco = ambíguo (em voo), nunca aceite; recusa de REGRA ≠ transitório.
+3. Nenhum `Map/Set` de controle em memória de processo — trava no BANCO: `FOR UPDATE` na linha da nota
+   do ERP (D-F27 — o mesmo do cancelamento local do setes-api; ordem nota → emissor → DPS → tentativa) e
+   ALUGUEL por UPDATE atômico na linha do emissor para o rodízio (nunca conexão retida — gates da F1).
+4. Segredo nunca em coluna em claro, log ou resposta; PKCS#12 abre no upload, senha não persiste (D-N5).
+5. Banco `fiscal_api` (NUNCA `setes_*`); padrões de `PADROES_BANCO.md` (UTC na sessão, REPEATABLE READ,
+   contadores sob lock) + skill `revisar-ddl.md` antes de qualquer DDL.
+6. Molde de código: setes-api (`shared/` por peça, testes Jest com mocks na fronteira); gates
+   socrático ≥ 0,70 + adversarial sem HIGH antes de "pronto".
 
-## Palavras da casa (não renomear)
+## Estado (2026-10-04)
 
-licenciado (`tb_licensee`) · aplicativo do licenciado (`tb_licensee_app`) · emitente (`tb_emitter`)
-· habilitação/emissor (`tb_issuer`, por MODELO) · documento (`tb_fiscal_document`) · tentativa ·
-voz (append-only, kind + código cru + source) · `external_code` (referência de quem chama) ·
-autoridade (adaptador por fisco) · família (`nfse` | `nfe`).
+**F1 executada + Rodadas 4 e 6 (2026-10-04 — §16/§17 do prompt)** — `npm test` (44) · `npx tsc --noEmit` · `npm run build`
+(a nfse-api consome o `dist/` — reconstruir depois de mexer aqui). Relatório: §15 do prompt. Mapa:
+`db/` pool+tx+migrations · `auth/` JWT RS256 · `secret/` cofre+A1 · `establishment/` certificado+habilitação ·
+`transport/` mTLS+XMLDSig · `storage/` XML · `voice/` contrato de leitura (D-F33) · `erp/facts.ts` fonte de fatos
+base (ÚNICO lugar que lê o ERP) · `http/` borda. Repo GitHub a criar pelo Valdo (hoje git local).
+Regras da Rodada 6: a trava da habilitação é POR LINHA da PK (`lockIssuerRows` — nunca faixa: promoção de trava = 1213,
+PADROES §9 regra 8); comando curto em linha disputada pela peça `runShortCommand` (D-F41); domínio do `model` = CHECK da
+migration 004, conferido no boot pela família (`assertIssuerModelDomainEnforced` — D-F45); `openIssuer` com `schemaName`
+dá o predicado COMPLETO da cerca.
