@@ -47,9 +47,9 @@ O núcleo guarda o que é COMUM às famílias:
 6. Molde de código: setes-api (`shared/` por peça, testes Jest com mocks na fronteira); gates
    socrático ≥ 0,70 + adversarial sem HIGH antes de "pronto".
 
-## Estado (2026-10-04)
+## Estado (2026-10-04, 3ª sessão)
 
-**F1 executada + Rodadas 4 e 6 (2026-10-04 — §16/§17 do prompt)** — `npm test` (44) · `npx tsc --noEmit` · `npm run build`
+**F1 executada + Rodadas 4, 6 e 7 (§16–§18 do prompt; D-F46…D-F53 mexeram só na nfse-api)** — `npm test` (52) · `npx tsc --noEmit` · `npm run build`
 (a nfse-api consome o `dist/` — reconstruir depois de mexer aqui). Relatório: §15 do prompt. Mapa:
 `db/` pool+tx+migrations · `auth/` JWT RS256 · `secret/` cofre+A1 · `establishment/` certificado+habilitação ·
 `transport/` mTLS+XMLDSig · `storage/` XML · `voice/` contrato de leitura (D-F33) · `erp/facts.ts` fonte de fatos
