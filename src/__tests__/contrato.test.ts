@@ -12,6 +12,7 @@ import {
 import { ProductTokenVerifier, isAdmin, isSuper } from '../auth/product-jwt'
 import { FsFiscalStorage } from '../storage/fiscal-storage'
 import { splitStatements } from '../db/migrations'
+import { erpWrites } from './fence'
 
 const t = (attempt: number, lastKind: any, over: any = {}) => ({
   attempt, lastKind, accessKey: null as string | null, lastSource: 'P' as any, environment: 'P' as any, dpsId: 'DPS1', lifeEvent: 1, ...over,
@@ -120,6 +121,19 @@ describe('CERCA do núcleo cego (D-F10 / critério §12.8-1)', () => {
       .filter(f => ERP_TABLE.test(fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')))
       .map(f => path.relative(srcRoot, f))
     expect(offenders).toEqual([])
+  })
+
+  // Gate do delta da Rodada 6 (L6): a cerca D-F31 vivia só na nfse-api — o NÚCLEO (que a nfe-api vai compartilhar, e onde
+  // mora a fonte de fatos) não tinha cerca de ESCRITA no ERP. As tabelas do `fiscal_api` são do banco da conexão (sem
+  // qualificador): escrita QUALIFICADA pelo schema do cliente (`${…}`.) ou pelo central (setes_*.) = escrita no ERP.
+  it('CERCA D-F31 no núcleo: NENHUMA escrita no ERP em src/ (a única do produto é o ato da virada, nos scripts da nfse-api)', () => {
+    // gate adversarial r8 (ADV-R8-06): LISTA BRANCA — todo alvo de escrita é nome simples de tabela (peça `./fence`)
+    const writes = files(srcRoot).flatMap(f => erpWrites(fs.readFileSync(f, 'utf8')).map(m => `${path.relative(srcRoot, f)}: ${m}`))
+    expect(writes).toEqual([])
+    // a cerca não é cega (senão passaria sempre) — e não acusa a escrita LEGÍTIMA no `fiscal_api` nem o `FOR UPDATE`
+    expect(erpWrites('q.query(`UPDATE \\`${s}\\`.tb_invoice SET x = 1`)')).toHaveLength(1)
+    expect(erpWrites('q.query(`DELETE FROM setes_central.tb_entity`)')).toHaveLength(1)
+    expect(erpWrites('q.query(`UPDATE tb_establishment_issuer SET x = 1 WHERE id = ? FOR UPDATE`); q.query(`INSERT INTO tb_x (a) SELECT a FROM \\`${s}\\`.tb_y`)')).toEqual([])
   })
 
   it('nenhum Map/Set de CONTROLE em memória fora dos caches de dado declarados (erp/facts.ts)', () => {
