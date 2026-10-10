@@ -180,7 +180,7 @@ export async function clearCertificate(
 export async function emissionStillInErp(q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
   const { replicas, serviceRows } = await issuerRowsState(q, institutionId)
   if (replicas > 0) return true
-  // D-F50 (= Q-F58 (a)): a lacuna (b) olha a LINHA SE — sem ela, a SE própria do ERP decide (uma 55/65 virada não esconde)
+  // D-F57 (= Q-F64 (a)): a lacuna (b) olha a LINHA SE — sem ela, a SE própria do ERP decide (uma 55/65 virada não esconde)
   if (serviceRows > 0) return false
   return erpServiceIssuerExists(q, schemaName, institutionId)
 }

@@ -260,7 +260,7 @@ describe('D-F45 — boot confere que o motor APLICA o CHECK do domínio do model
 describe('sessão 2026-10-04 — trava da habilitação POR LINHA e réplica excluída no openIssuer', () => {
   it('lockIssuerRows trava as LINHAS da PK (institution × cada modelo), nunca a FAIXA da institution (promoção de trava → 1213 no aluguel)', async () => {
     const q = { query: jest.fn(async () => [[{ model: 'SE', c: null }, { model: '55', c: '2026-10-04 00:00:00' }]] as any) }
-    expect(await lockIssuerRows(q, 7)).toEqual({ rows: 2, replicas: 1, serviceRows: 1 })                 // D-F50: a contagem SE vem junto
+    expect(await lockIssuerRows(q, 7)).toEqual({ rows: 2, replicas: 1, serviceRows: 1 })                 // D-F57: a contagem SE vem junto
     const [sql, params] = (q.query.mock.calls[0] as unknown) as [string, unknown[]]
     expect(sql).toMatch(/WHERE tb_institution_id = \? AND model IN \(\?, \?, \?\) FOR UPDATE/)
     expect(params).toEqual([7, ...ISSUER_MODELS])
@@ -341,7 +341,7 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
     expect(await run([], true)).toBe('FISCAL_CUTOVER_PENDING')                              // lacuna (b): sem linha, SE no ERP
     expect(await run([{ model: 'SE', c: '2026-10-04 00:00:00' }], true)).toBe('ok')         // SE virada: o ERP não decide mais
     expect(await run([], false)).toBe('ok')                                                 // institution nova
-    // D-F50 (= Q-F58 (a)): uma 55 VIRADA (nasce virada — D-F42) NÃO esconde a SE que o ERP ainda emite
+    // D-F57 (= Q-F64 (a)): uma 55 VIRADA (nasce virada — D-F42) NÃO esconde a SE que o ERP ainda emite
     expect(await run([{ model: '55', c: '2026-10-04 00:00:00' }], true)).toBe('FISCAL_CUTOVER_PENDING')
     expect(await run([{ model: '55', c: '2026-10-04 00:00:00' }], false)).toBe('ok')
   })
@@ -362,7 +362,7 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
     expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)      // lacuna: ainda não migrada
     expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)     // institution nova
     expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'sem-tabela'), 'setes_setes', 1)).toBe(false)
-    // D-F50 (= Q-F58 (a)): só a 55 virada no fiscal_api + SE no ERP → AINDA do ERP (antes: "há linha" escondia a SE)
+    // D-F57 (= Q-F64 (a)): só a 55 virada no fiscal_api + SE no ERP → AINDA do ERP (antes: "há linha" escondia a SE)
     expect(await emissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)
     expect(await emissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)
   })

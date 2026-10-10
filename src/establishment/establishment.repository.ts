@@ -73,7 +73,7 @@ const MODEL_IN = `model IN (${ISSUER_MODELS.map(() => '?').join(', ')})`
  * de implantação); a faixa tinha o mesmo efeito.
  */
 /**
- * D-F50 (= Q-F58 (a), Valdo 2026-10-10): `serviceRows` = linhas da habilitação SE (vivas ou excluídas). A lacuna (b) da cerca
+ * D-F57 (= Q-F64 (a), Valdo 2026-10-10): `serviceRows` = linhas da habilitação SE (vivas ou excluídas). A lacuna (b) da cerca
  * olha a LINHA SE — uma linha 55/65 (que nasce virada, D-F42) não pode esconder a SE que o ERP ainda emite.
  */
 export const SERVICE_ISSUER_MODEL: IssuerModel = 'SE'
@@ -148,7 +148,7 @@ export async function getIssuer(q: Queryable, institutionId: number, model: Issu
  */
 export async function assertEmitterWritable(q: Queryable, schemaName: string, institutionId: number): Promise<void> {
   const { replicas, serviceRows } = await lockIssuerRows(q, institutionId)
-  // D-F50: lacuna (b) = sem LINHA SE no `fiscal_api` e com SE no ERP (uma 55/65 virada não a esconde)
+  // D-F57: lacuna (b) = sem LINHA SE no `fiscal_api` e com SE no ERP (uma 55/65 virada não a esconde)
   if (replicas > 0 || (serviceRows === 0 && await erpServiceIssuerExists(q, schemaName, institutionId))) {
     throw new HttpError(409, 'A emissão fiscal deste estabelecimento ainda é do ERP — o emitente só muda pelo ERP até a virada',
       undefined, ErrorCodes.FISCAL_CUTOVER_PENDING)

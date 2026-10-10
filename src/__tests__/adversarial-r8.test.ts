@@ -1,14 +1,14 @@
 /// <reference types="jest" />
 // GATE ADVERSARIAL do delta das APIs fiscais (sessão 2026-10-10) — lado do NÚCLEO (fiscal-api), só unit. Alvos:
 //  - L6: a cerca D-F31 no núcleo (`contrato.test.ts`) — a regex pega as formas REAIS de escrita no ERP?
-//  - D-F50: `lockIssuerRows` (travante) × `issuerRowsState` (não travante) × `emissionStillInErp` × `assertEmitterWritable`
+//  - D-F57: `lockIssuerRows` (travante) × `issuerRowsState` (não travante) × `emissionStillInErp` × `assertEmitterWritable`
 //    respondem a MESMA coisa em todos os estados da habilitação (a prova no motor real está na suíte ao vivo r8 da nfse-api).
 // Achado (o `it.failing` fixa o estado atual; a correção é do Valdo):
 //  - [LOW ADV-R8-06] a regex da cerca é sintática e deixa passar escrita no ERP por UPDATE multi-tabela (`UPDATE a JOIN
 //    \`${s}\`.b … SET b.x`), identificador `??` do mysql2, minúsculas, expressão no template (`${inst.schemaName}`/
 //    `${assertSchema(s)}`), concatenação, `DELETE alias FROM`, modificadores (`LOW_PRIORITY`/`IGNORE` no UPDATE), DDL
 //    (`ALTER`/`TRUNCATE`/`DROP`) e código depois de `//` dentro de string na MESMA linha. Hoje NENHUMA escrita real escapa
-//    (conferido: as escritas do núcleo são todas sem qualificador) — a defesa de produção é o GRANT (D-F15/D-F48).
+//    (conferido: as escritas do núcleo são todas sem qualificador) — a defesa de produção é o GRANT (D-F15/D-F53).
 import fs from 'fs'
 import path from 'path'
 import { emissionStillInErp } from '../establishment/establishment'
@@ -79,7 +79,7 @@ describe('L6 — a cerca D-F31 do núcleo × formas reais de escrita no ERP', ()
 })
 
 // ---------------------------------------------------------------------------------------------------------------------
-// D-F50 — leitura travante × não travante × predicado × guarda de escrita, em TODOS os estados (banco FALSO que interpreta
+// D-F57 — leitura travante × não travante × predicado × guarda de escrita, em TODOS os estados (banco FALSO que interpreta
 // os 3 SQL da peça; o motor real está na suíte ao vivo r8 da nfse-api)
 // ---------------------------------------------------------------------------------------------------------------------
 type Row = { model: 'SE' | '55' | '65'; cutoverAt: string | null; deleted: 'N' | 'S' }
@@ -115,11 +115,11 @@ const STATES: Record<string, Row[]> = {
   '55 virada + SE virada excluída': [{ model: '55', cutoverAt: T, deleted: 'N' }, { model: 'SE', cutoverAt: T, deleted: 'S' }],
   'só 55 réplica (versão antiga do script)': [{ model: '55', cutoverAt: null, deleted: 'N' }],
 }
-// o que a D-F50 promete: réplica em qualquer linha → ERP; SE presente (viva/excluída) e não réplica → API; sem SE → o ERP decide
+// o que a D-F57 promete: réplica em qualquer linha → ERP; SE presente (viva/excluída) e não réplica → API; sem SE → o ERP decide
 const EXPECTED_STILL_IN_ERP = (rows: Row[], erpHasSe: boolean) =>
   rows.some(r => r.cutoverAt == null) ? true : rows.some(r => r.model === 'SE') ? false : erpHasSe
 
-describe('D-F50 — trava × contagem × predicado × guarda de escrita respondem igual em TODOS os estados', () => {
+describe('D-F57 — trava × contagem × predicado × guarda de escrita respondem igual em TODOS os estados', () => {
   for (const erpHasSe of [true, false]) {
     for (const [name, rows] of Object.entries(STATES)) {
       it(`sem achado: ${name} | ERP ${erpHasSe ? 'COM' : 'sem'} SE`, async () => {
