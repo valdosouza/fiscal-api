@@ -97,12 +97,12 @@ function fakeDb() {
   const query = jest.fn(async (sql: string, p: any[] = []) => {
     // lockIssuerRows: as LINHAS da PK (institution × modelos pedidos), vivas ou excluídas — `c` = cutover_at
     // (sessão 2026-10-04: antes este falso devolvia ZERO linhas para a trava por acaso — chave `1:undefined`)
-    if (/SELECT cutover_at AS c FROM tb_establishment_issuer[\s\S]*FOR UPDATE/.test(sql)) {
-      return [[...issuers.values()].filter(r => r.institutionId === p[0] && p.slice(1).includes(r.model)).map(r => ({ c: r.cutoverAt ?? null }))]
+    if (/SELECT model, cutover_at AS c FROM tb_establishment_issuer[\s\S]*FOR UPDATE/.test(sql)) {
+      return [[...issuers.values()].filter(r => r.institutionId === p[0] && p.slice(1).includes(r.model)).map(r => ({ model: r.model, c: r.cutoverAt ?? null }))]
     }
-    if (/SELECT COUNT\(\*\) AS n, SUM\(cutover_at IS NULL\) AS r FROM tb_establishment_issuer/.test(sql)) {     // issuerRowsState
-      const all = [...issuers.values()].filter(r => r.institutionId === p[0])
-      return [[{ n: all.length, r: all.filter(r => r.cutoverAt == null).length }]]
+    if (/SELECT COUNT\(\*\) AS n, SUM\(cutover_at IS NULL\) AS r, SUM\(model = \?\) AS s FROM tb_establishment_issuer/.test(sql)) {     // issuerRowsState
+      const all = [...issuers.values()].filter(r => r.institutionId === p[1])
+      return [[{ n: all.length, r: all.filter(r => r.cutoverAt == null).length, s: all.filter(r => r.model === p[0]).length }]]
     }
     if (/FROM tb_establishment_issuer/.test(sql)) {
       const row = issuers.get(`${p[0]}:${p[1]}`)
@@ -259,8 +259,8 @@ describe('D-F45 — boot confere que o motor APLICA o CHECK do domínio do model
 
 describe('sessão 2026-10-04 — trava da habilitação POR LINHA e réplica excluída no openIssuer', () => {
   it('lockIssuerRows trava as LINHAS da PK (institution × cada modelo), nunca a FAIXA da institution (promoção de trava → 1213 no aluguel)', async () => {
-    const q = { query: jest.fn(async () => [[{ c: null }, { c: '2026-10-04 00:00:00' }]] as any) }
-    expect(await lockIssuerRows(q, 7)).toEqual({ rows: 2, replicas: 1 })
+    const q = { query: jest.fn(async () => [[{ model: 'SE', c: null }, { model: '55', c: '2026-10-04 00:00:00' }]] as any) }
+    expect(await lockIssuerRows(q, 7)).toEqual({ rows: 2, replicas: 1, serviceRows: 1 })                 // D-F50: a contagem SE vem junto
     const [sql, params] = (q.query.mock.calls[0] as unknown) as [string, unknown[]]
     expect(sql).toMatch(/WHERE tb_institution_id = \? AND model IN \(\?, \?, \?\) FOR UPDATE/)
     expect(params).toEqual([7, ...ISSUER_MODELS])
@@ -324,7 +324,7 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
     const mkConn = (rows: any[], erpHas: boolean) => ({
       query: jest.fn(async (sql: string) => {
         calls.push(sql)
-        if (/SELECT cutover_at AS c FROM tb_establishment_issuer[\s\S]*FOR UPDATE/.test(sql)) return [rows]
+        if (/SELECT model, cutover_at AS c FROM tb_establishment_issuer[\s\S]*FOR UPDATE/.test(sql)) return [rows]
         if (/`setes_setes`\.tb_establishment_issuer/.test(sql)) return [erpHas ? [{ x: 1 }] : []]
         return [[]]
       }),
@@ -336,17 +336,20 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
       const pool = { query: conn.query, getConnection: jest.fn(async () => conn) } as any
       return clearCertificate({ pool, keyring: ring }, 1, 7, { schemaName: 'setes_setes' }).then(() => 'ok', (e: any) => e.code)
     }
-    expect(await run([{ c: null }], false)).toBe('FISCAL_CUTOVER_PENDING')                // réplica (viva ou excluída: a trava lê todas)
+    expect(await run([{ model: 'SE', c: null }], false)).toBe('FISCAL_CUTOVER_PENDING')   // réplica (viva ou excluída: a trava lê todas)
     expect(calls[0]).toMatch(/FOR UPDATE/)                                                  // 1ª instrução = trava
     expect(await run([], true)).toBe('FISCAL_CUTOVER_PENDING')                              // lacuna (b): sem linha, SE no ERP
-    expect(await run([{ c: '2026-10-04 00:00:00' }], true)).toBe('ok')                      // virada: o ERP não decide mais
+    expect(await run([{ model: 'SE', c: '2026-10-04 00:00:00' }], true)).toBe('ok')         // SE virada: o ERP não decide mais
     expect(await run([], false)).toBe('ok')                                                 // institution nova
+    // D-F50 (= Q-F58 (a)): uma 55 VIRADA (nasce virada — D-F42) NÃO esconde a SE que o ERP ainda emite
+    expect(await run([{ model: '55', c: '2026-10-04 00:00:00' }], true)).toBe('FISCAL_CUTOVER_PENDING')
+    expect(await run([{ model: '55', c: '2026-10-04 00:00:00' }], false)).toBe('ok')
   })
 
   it('predicado "ainda emitido pelo ERP": réplica (viva ou excluída) → sim; só linhas viradas → não; nenhuma linha → a habilitação SE do ERP decide (tabela ausente = não)', async () => {
-    const mk = (state: { n: number; r: number }, erp: 'tem' | 'nao' | 'sem-tabela') => ({
+    const mk = (state: { n: number; r: number; s?: number }, erp: 'tem' | 'nao' | 'sem-tabela') => ({
       query: jest.fn(async (sql: string) => {
-        if (/COUNT\(\*\) AS n, SUM\(cutover_at IS NULL\)/.test(sql)) return [[{ n: state.n, r: state.r }]]
+        if (/COUNT\(\*\) AS n, SUM\(cutover_at IS NULL\) AS r, SUM\(model = \?\) AS s/.test(sql)) return [[{ n: state.n, r: state.r, s: state.s ?? state.n }]]
         if (/`setes_setes`\.tb_establishment_issuer/.test(sql)) {
           if (erp === 'sem-tabela') throw Object.assign(new Error("Table doesn't exist"), { code: 'ER_NO_SUCH_TABLE', errno: 1146 })
           return [erp === 'tem' ? [{ x: 1 }] : []]
@@ -359,5 +362,8 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
     expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)      // lacuna: ainda não migrada
     expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)     // institution nova
     expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'sem-tabela'), 'setes_setes', 1)).toBe(false)
+    // D-F50 (= Q-F58 (a)): só a 55 virada no fiscal_api + SE no ERP → AINDA do ERP (antes: "há linha" escondia a SE)
+    expect(await emissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)
+    expect(await emissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)
   })
 })

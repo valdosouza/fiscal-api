@@ -72,12 +72,19 @@ const MODEL_IN = `model IN (${ISSUER_MODELS.map(() => '?').join(', ')})`
  * podem deadlockar entre si (reexecutadas; esgotado = 409, nada gravado). Limitação aceita (§17 do prompt — criação é ato
  * de implantação); a faixa tinha o mesmo efeito.
  */
-export async function lockIssuerRows(q: Queryable, institutionId: number): Promise<{ rows: number; replicas: number }> {
+/**
+ * D-F50 (= Q-F58 (a), Valdo 2026-10-10): `serviceRows` = linhas da habilitação SE (vivas ou excluídas). A lacuna (b) da cerca
+ * olha a LINHA SE — uma linha 55/65 (que nasce virada, D-F42) não pode esconder a SE que o ERP ainda emite.
+ */
+export const SERVICE_ISSUER_MODEL: IssuerModel = 'SE'
+export interface IssuerRowsState { rows: number; replicas: number; serviceRows: number }
+
+export async function lockIssuerRows(q: Queryable, institutionId: number): Promise<IssuerRowsState> {
   const [rows] = await q.query(
-    `SELECT cutover_at AS c FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${MODEL_IN} FOR UPDATE`,
+    `SELECT model, cutover_at AS c FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${MODEL_IN} FOR UPDATE`,
     [institutionId, ...ISSUER_MODELS])
   const list = rows as any[]
-  return { rows: list.length, replicas: list.filter(r => r.c == null).length }
+  return { rows: list.length, replicas: list.filter(r => r.c == null).length, serviceRows: list.filter(r => r.model === SERVICE_ISSUER_MODEL).length }
 }
 
 /**
@@ -85,11 +92,12 @@ export async function lockIssuerRows(q: Queryable, institutionId: number): Promi
  * a trava filtrada divergiam com um modelo fora da lista e a cerca se contradizia). O domínio vira fato do banco com a
  * Q-F56 (CHECK); até lá, modelo fora de `ISSUER_MODELS` não existe para a cerca.
  */
-export async function issuerRowsState(q: Queryable, institutionId: number): Promise<{ rows: number; replicas: number }> {
+export async function issuerRowsState(q: Queryable, institutionId: number): Promise<IssuerRowsState> {
   const [rows] = await q.query(
-    `SELECT COUNT(*) AS n, SUM(cutover_at IS NULL) AS r FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${MODEL_IN}`,
-    [institutionId, ...ISSUER_MODELS])
-  return { rows: Number((rows as any[])[0]?.n ?? 0), replicas: Number((rows as any[])[0]?.r ?? 0) }
+    `SELECT COUNT(*) AS n, SUM(cutover_at IS NULL) AS r, SUM(model = ?) AS s FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${MODEL_IN}`,
+    [SERVICE_ISSUER_MODEL, institutionId, ...ISSUER_MODELS])
+  const r0 = (rows as any[])[0]
+  return { rows: Number(r0?.n ?? 0), replicas: Number(r0?.r ?? 0), serviceRows: Number(r0?.s ?? 0) }
 }
 
 /**
@@ -139,8 +147,9 @@ export async function getIssuer(q: Queryable, institutionId: number, model: Issu
  * peça direto (script, a futura nfe-api), não só para a borda da nfse-api.
  */
 export async function assertEmitterWritable(q: Queryable, schemaName: string, institutionId: number): Promise<void> {
-  const { rows, replicas } = await lockIssuerRows(q, institutionId)
-  if (replicas > 0 || (rows === 0 && await erpServiceIssuerExists(q, schemaName, institutionId))) {
+  const { replicas, serviceRows } = await lockIssuerRows(q, institutionId)
+  // D-F50: lacuna (b) = sem LINHA SE no `fiscal_api` e com SE no ERP (uma 55/65 virada não a esconde)
+  if (replicas > 0 || (serviceRows === 0 && await erpServiceIssuerExists(q, schemaName, institutionId))) {
     throw new HttpError(409, 'A emissão fiscal deste estabelecimento ainda é do ERP — o emitente só muda pelo ERP até a virada',
       undefined, ErrorCodes.FISCAL_CUTOVER_PENDING)
   }
