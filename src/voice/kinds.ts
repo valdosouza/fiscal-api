@@ -3,6 +3,18 @@
  *
  * S enviado · A autorizada · R rejeitada · C cancelada · K cancelamento em voo · F falha explícita ·
  * N pedido de cancelamento NÃO consta no fisco (D-N17 — segue autorizada).
+ *
+ * CONHECIMENTO NEGATIVO (D-F102 = Q-F108 (a), Valdo 2026-10-11): S ("enviado") NÃO tem produtor hoje e NÃO tem SAÍDA — a D-F51 só
+ * fecha tentativa SEM voz, e por DOIS portões: o predicado `isInterruptedInFlight` E a reconferência sob a trava, que recusa tentativa
+ * com voz (`recordInterruptedFailure` na nfse-api, `reconcileInterrupted` no setes-api — R21-03). Quem criar produtor de S abre OS DOIS,
+ * NA MESMA ENTREGA (idade da voz S ≥ IN_FLIGHT_MINUTES + o veredito conclusivo do fisco da família → F); senão a prova da reconferência
+ * (D-F101) fica falsa para sempre e o transmitir em 409. A CERCA (`nfse-api/src/__tests__/voice-kind-fence.ts`, por AST) pega o literal
+ * S ao lado de `kind` em QUALQUER grafia e o SQL de escrita na voz, em todo lugar que escreve na voz da NFS-e — NÃO pega produtor
+ * SEMÂNTICO (constante nomeada, shorthand, mapa, parâmetro): esse só o TIPO do escritor pega (Q-F112). Escopo por família: Q-F111.
+ * D-F103 (= Q-F109 (a)): `kind` é CHAR(1) sem CHECK de domínio na migration 001 da nfse-api (colação _ci — o banco aceita "f", que o SQL
+ * lê como F e o código como VIVA). Os escritores são TIPADOS — EXCETO a cópia do `migrate:setes` (`nfse-api/scripts/migrate-from-setes-api.ts`:
+ * `INSERT IGNORE … SELECT … ev.kind` herda o domínio da ORIGEM, que também não tem CHECK — R21-05). NUNCA gravar voz por fora do código.
+ * A migration da F2a ganha o CHECK do domínio em colação binária, conferido no boot (molde da D-F45) — item (7) da nota de implantação.
  */
 export type TransmissionEventKind = 'S' | 'A' | 'R' | 'C' | 'K' | 'F' | 'N'
 /** P resposta direta ao nosso pedido · Q consulta. */

@@ -151,6 +151,8 @@ type ReconfirmLike = Pick<TransmissionView, 'attempt' | 'lastKind' | 'lastSource
  */
 export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: readonly T[]): T | null {
   if (lifeList.some(t => !!t.accessKey)) return null
+  // D-F103 (= Q-F109 (a)): `=== 'F'` é sensível a caixa e o banco não confere o domínio de `kind` (colação _ci) — os escritores são
+  // tipados; voz gravada por fora do código ("f") some daqui. O CHECK binário entra na migration da F2a.
   const c = lifeList
     .filter(t => t.lastKind === 'F' && t.lastSource === 'Q' && t.environment === 'P' && !!t.dpsId)
     .sort((a, b) => a.attempt - b.attempt)
@@ -174,6 +176,9 @@ export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: reado
  * D-F101 (= Q-F107 (b), Valdo 2026-10-11 — estende a D-F99): "em voo" = tentativa VIVA, pelo MESMO predicado da barreira do plano de
  * cancelamento e do rodízio (`isLiveTransmission`: sem voz OU última voz não final — S "enviado", K) — a voz S tem instante, mas a
  * apresentação dela pode não ter chegado ao fisco. `lastKind` entra no contrato; AUSENTE conta como viva (falha FECHADO).
+ * D-F102 (= Q-F108 (a)): S não tem saída hoje (ver `kinds.ts`) — quem criar produtor de S dá a ela a saída da D-F51.
+ * D-F104 (= Q-F110 (a), Valdo 2026-10-11): a prova fica BOOLEANA até a F2a; o veredito com MOTIVO (barreira e prova numa chamada só —
+ * molde `verdictOf`, D-IB47) se decide na rodada da F2a, com o caso real (itens (5)/(6) da nota de implantação, §21.14).
  */
 // R20-02 do gate da Rodada 20: `lastKind` é OBRIGATÓRIO no tipo (o valor pode ser `null` = viva) — projeção que o esquece não compila
 // (antes compilava e a prova nunca passava: laço "reconfira" silencioso na F2a); o fallback de execução segue falhando FECHADO
