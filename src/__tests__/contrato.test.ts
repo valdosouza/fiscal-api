@@ -16,6 +16,12 @@ import { FsFiscalStorage } from '../storage/fiscal-storage'
 import { splitStatements } from '../db/migrations'
 import { erpWrites } from './fence'
 
+/** Gate da Rodada 18 (R18-03/R18-04): a prova exige a IDENTIDADE da candidata e a VIDA — os testes antigos de 1 argumento passam por aqui. */
+const proven = (c: any, life?: any[]) => {
+  const cc = { dpsId: 'DPS-TESTE', environment: 'P', ...c }
+  return reconfirmationProven(cc, life ?? [cc])
+}
+
 const t = (attempt: number, lastKind: any, over: any = {}) => ({
   attempt, lastKind, accessKey: null as string | null, lastSource: 'P' as any, environment: 'P' as any, dpsId: 'DPS1', lifeEvent: 1, ...over,
 })
@@ -66,13 +72,20 @@ describe('contrato de leitura da voz (D-F33) — UMA regra para a nfse-api e o s
     expect(reconfirmationCandidate([t(1, 'F', { lastSource: 'P' })])).toBeNull()
     expect(reconfirmationCandidate([t(1, 'F', { lastSource: 'Q' }), t(2, 'A', { accessKey: 'K' })])).toBeNull()
     // D-F90 (= Q-F96 (c)): a prova é o E2404 EXPLÍCITO posterior ao F (`nfseNotGeneratedAt`), nunca o carimbo do rodízio
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:00:00' })).toBe(false)   // a consulta que GEROU o F
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:05:00' })).toBe(true)
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null })).toBe(false)
+    expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:00:00' })).toBe(false)   // a consulta que GEROU o F
+    expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:05:00' })).toBe(true)
+    expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null })).toBe(false)
+    // D-F97 (= Q-F103 (b)): a vida reapresenta o MESMO Id — o E2404 tem de ser posterior à ÚLTIMA apresentação em qualquer tentativa
+    const cand = { lastEventAt: '2026-10-01 10:00:00', createdAt: '2026-10-01 09:59:00', dpsId: 'DPS1', environment: 'P' as const, nfseNotGeneratedAt: '2026-10-02 10:00:00' }
+    const reapresentada = { lastEventAt: '2026-10-03 10:00:05', createdAt: '2026-10-03 10:00:00', dpsId: 'DPS1', environment: 'P' as const }
+    expect(reconfirmationProven(cand, [cand, reapresentada])).toBe(false)                               // nova apresentação DEPOIS do E2404
+    expect(reconfirmationProven({ ...cand, nfseNotGeneratedAt: '2026-10-03 11:00:00' }, [cand, reapresentada])).toBe(true)
+    expect(reconfirmationProven(cand, [cand, { ...reapresentada, environment: 'H' as const }])).toBe(true)   // outro ambiente não conta
+    expect(reconfirmationProven(cand, [cand, { ...reapresentada, dpsId: 'DPS2' }])).toBe(true)               // outro Id (outra vida) não conta
     // D-F92 (conhecimento negativo): a prova não tem prazo — um E2404 semanas depois do F (a revisita de 24 h, D-F52) ainda prova
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-25 09:00:00' })).toBe(true)
+    expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-25 09:00:00' })).toBe(true)
     // o carimbo do rodízio (inclusive o de um 502 ambíguo persistente) não entra na prova
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null, lastQueriedAt: '2026-10-01 10:05:00' } as any)).toBe(false)
+    expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null, lastQueriedAt: '2026-10-01 10:05:00' } as any)).toBe(false)
   })
 })
 

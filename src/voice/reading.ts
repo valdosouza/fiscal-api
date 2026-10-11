@@ -163,10 +163,32 @@ export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: reado
  * (`nfse_not_generated_at` > instante da voz). NUNCA o `last_queried_at` — esse é só o carimbo do rodízio ("nós
  * olhamos"), gravado também quando a consulta falhou de forma persistente (502 ambíguo): a prova ficava forjável.
  * Mesmo relógio dos dois lados (o NOSSO — PADROES §11 regra 9). Estritamente maior: a consulta que GEROU o F não prova.
- * CONHECIMENTO NEGATIVO (D-F92 = Q-F98 (a), Valdo 2026-10-11): a prova NÃO tem prazo de validade — qualquer E2404 POSTERIOR ao F
- * vale, inclusive o da revisita automática de 24 h (D-F52) semanas antes do cancelamento: o DPS foi enviado UMA vez; 24 h depois do F
- * o "não gerada" é conclusivo. Não inventar janela; reabrir só se a prova ao vivo M4 mostrar NFS-e gerada TARDE para um DPS.
+ * CONHECIMENTO NEGATIVO (D-F92 = Q-F98 (a), Valdo 2026-10-11): a prova NÃO tem prazo de validade — qualquer E2404 POSTERIOR à
+ * última apresentação do Id vale, inclusive o da revisita automática de 24 h (D-F52) semanas antes do cancelamento; 24 h depois da
+ * última apresentação o "não gerada" é conclusivo. Não inventar janela; reabrir só se a prova ao vivo M4 mostrar NFS-e gerada TARDE.
+ * D-F97 (= Q-F103 (b), Valdo 2026-10-11): as tentativas da MESMA vida reapresentam o MESMO Id do DPS (D-N3/D-F30) — a premissa "o DPS
+ * foi enviado uma vez" era falsa. O E2404 tem de ser POSTERIOR à ÚLTIMA apresentação do Id em QUALQUER tentativa da vida no mesmo
+ * ambiente (o instante da reserva ou da última voz de cada uma, o maior); passe a VIDA em `lifeList` (sem ela, só a candidata conta).
  */
-export function reconfirmationProven(candidate: Pick<TransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt'>): boolean {
-  return !!candidate.nfseNotGeneratedAt && !!candidate.lastEventAt && candidate.nfseNotGeneratedAt > candidate.lastEventAt
+type PresentationLike = Partial<Pick<TransmissionView, 'lastEventAt' | 'createdAt' | 'dpsId' | 'environment'>>
+/** Instante do banco como o leitor do núcleo o entrega (`DATE_FORMAT` — UTC); só nesse formato a comparação por texto é cronológica. */
+const DB_INSTANT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
+export function reconfirmationProven(
+  candidate: Pick<TransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt'> & PresentationLike,
+  /** A VIDA inteira (as tentativas da vida vigente) — obrigatória (gate da Rodada 18, R18-04: o padrão `[candidata]` voltava em
+   *  silêncio à regra de antes da D-F97). */
+  lifeList: readonly PresentationLike[],
+): boolean {
+  if (!candidate.nfseNotGeneratedAt || !candidate.lastEventAt) return false
+  // R18-03: sem a IDENTIDADE da candidata (Id do DPS + ambiente) não há como achar as reapresentações — falha FECHADO
+  if (!candidate.dpsId || !candidate.environment) return false
+  // R18-06: instante fora do formato do leitor (ISO com T/Z, etc.) — a comparação por texto mentiria; falha FECHADO
+  const instants = [candidate.nfseNotGeneratedAt, candidate.lastEventAt, ...lifeList.flatMap(t => [t.createdAt, t.lastEventAt])]
+  if (instants.some(at => at != null && !DB_INSTANT.test(at))) return false
+  let lastPresentation = candidate.lastEventAt
+  for (const t of [candidate, ...lifeList]) {
+    if (t.dpsId !== candidate.dpsId || t.environment !== candidate.environment) continue
+    for (const at of [t.createdAt, t.lastEventAt]) if (at && at > lastPresentation) lastPresentation = at
+  }
+  return candidate.nfseNotGeneratedAt > lastPresentation
 }

@@ -3,7 +3,7 @@
 ## ⚠️ Base de conhecimento central: D:\Gestao2027\Infra-IA
 
 Antes de qualquer tarefa neste projeto, consulte `D:\Gestao2027\Infra-IA\INDICE_CENTRAL.md` e, em
-especial, **`Infra-IA/fiscal-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F93 em
+especial, **`Infra-IA/fiscal-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F97 em
 `Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` §7; plano no §12, modelo no §14, execução da F1 no **§15**.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
