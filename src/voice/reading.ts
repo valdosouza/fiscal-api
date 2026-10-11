@@ -1,4 +1,4 @@
-import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
+import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, SUBSTITUTION_CANCEL_CODE, HUMAN_EFFECT_CANCEL_CODES, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
 
 /**
  * CONTRATO DE LEITURA da voz do fisco (D-F33) — exportado pela biblioteca para a API da família
@@ -124,8 +124,20 @@ export function fiscalStateOf(tx: Pick<TransmissionView, 'lastKind'> | null): Se
  * Pendência DERIVADA do efeito (D-F28): a vigente da vida tem voz C do fisco e a nota, no ERP, ainda
  * NÃO tem o evento C. Nada é gravado para saber disso — é a leitura dos dois fatos.
  */
-export function localCancelPending(current: Pick<TransmissionView, 'lastKind'> | null, invoiceLastKind: string | null): boolean {
-  return current?.lastKind === 'C' && invoiceLastKind !== 'C'
+export function localCancelPending(current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null, invoiceLastKind: string | null): boolean {
+  // D-F68 (= Q-F75 (a)): a SUBSTITUIÇÃO (e105102) não manda o app aplicar o C local — é decisão humana (D-F64/D-F67);
+  // D-F82 (= Q-F89): o cancelamento DE OFÍCIO (e305101) também não
+  return current?.lastKind === 'C' && invoiceLastKind !== 'C' && !isHumanEffectCancel(current)
+}
+
+/** D-F82: a voz vigente é um cancelamento cujo efeito no ERP só nasce de ato HUMANO (105102 ou 305101). */
+export function isHumanEffectCancel(current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null): boolean {
+  return current?.lastKind === 'C' && !!current.lastCode && HUMAN_EFFECT_CANCEL_CODES.has(current.lastCode)
+}
+
+/** D-F68: a voz vigente é um cancelamento por SUBSTITUIÇÃO (código do evento na voz C — D-F71). */
+export function isSubstitutionCancel(current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null): boolean {
+  return current?.lastKind === 'C' && current.lastCode === SUBSTITUTION_CANCEL_CODE
 }
 
 type ReconfirmLike = Pick<TransmissionView, 'attempt' | 'lastKind' | 'lastSource' | 'environment' | 'accessKey' | 'dpsId'>

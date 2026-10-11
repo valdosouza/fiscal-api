@@ -3,7 +3,7 @@
 ## ⚠️ Base de conhecimento central: D:\Gestao2027\Infra-IA
 
 Antes de qualquer tarefa neste projeto, consulte `D:\Gestao2027\Infra-IA\INDICE_CENTRAL.md` e, em
-especial, **`Infra-IA/fiscal-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F66 em
+especial, **`Infra-IA/fiscal-api/INDEX.md`** (START HERE). Decisões vigentes: D-F1…D-F82 em
 `Infra-IA/prompts/prompt_apis_fiscais_isoladas.md` §7; plano no §12, modelo no §14, execução da F1 no **§15**.
 Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/atualizar-infra-ia.md`.
 
@@ -49,7 +49,7 @@ O núcleo guarda o que é COMUM às famílias:
 
 ## Estado (2026-10-04, 3ª sessão)
 
-**F1 executada + Rodadas 4–9 (§16–§20 do prompt; D-F57 — lacuna (b) pela linha SE — e a cerca D-F31 por LISTA BRANCA, `src/__tests__/fence.ts`, mexeram no núcleo; reconciliação de 2026-10-10 no §20)** — `npm test` (78) · `npx tsc --noEmit` · `npm run build`
+**F1 executada + Rodadas 4–9 (§16–§20 do prompt; D-F57 — lacuna (b) pela linha SE — e a cerca D-F31 por LISTA BRANCA, `src/__tests__/fence.ts`, mexeram no núcleo; reconciliação de 2026-10-10 no §20; Rodadas 12–14 (D-F67…D-F82) puseram no núcleo o código do evento de cancelamento e o efeito humano — `HUMAN_EFFECT_CANCEL_CODES`, §21.7)** — `npm test` (80) · `npx tsc --noEmit` · `npm run build`
 (a nfse-api consome o `dist/` — reconstruir depois de mexer aqui). Relatório: §15 do prompt. Mapa:
 `db/` pool+tx+migrations · `auth/` JWT RS256 · `secret/` cofre+A1 · `establishment/` certificado+habilitação ·
 `transport/` mTLS+XMLDSig · `storage/` XML · `voice/` contrato de leitura (D-F33) · `erp/facts.ts` fonte de fatos

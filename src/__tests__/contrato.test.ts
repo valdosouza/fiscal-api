@@ -7,8 +7,10 @@ import path from 'path'
 import { generateKeyPairSync } from 'crypto'
 import jwt from 'jsonwebtoken'
 import {
-  currentOf, fiscalStateOf, localCancelPending, reconfirmationCandidate, reconfirmationProven, isLiveTransmission, isAuthorized, inLife,
+  currentOf, fiscalStateOf, localCancelPending, isSubstitutionCancel, isHumanEffectCancel,
+  reconfirmationCandidate, reconfirmationProven, isLiveTransmission, isAuthorized, inLife,
 } from '../voice/reading'
+import { CANCEL_EVENT_CODES, SUBSTITUTION_CANCEL_CODE, EX_OFFICIO_CANCEL_CODE, HUMAN_EFFECT_CANCEL_CODES } from '../voice/kinds'
 import { ProductTokenVerifier, isAdmin, isSuper } from '../auth/product-jwt'
 import { FsFiscalStorage } from '../storage/fiscal-storage'
 import { splitStatements } from '../db/migrations'
@@ -34,10 +36,28 @@ describe('contrato de leitura da voz (D-F33) — UMA regra para a nfse-api e o s
     expect(inLife([t(1, 'A')], null)).toEqual([])
   })
   it('pendência DERIVADA (D-F28): voz C × nota ainda não-C no ERP; nada gravado', () => {
-    expect(localCancelPending({ lastKind: 'C' }, 'E')).toBe(true)
-    expect(localCancelPending({ lastKind: 'C' }, 'C')).toBe(false)
-    expect(localCancelPending({ lastKind: 'A' }, 'E')).toBe(false)
+    expect(localCancelPending({ lastKind: 'C', lastCode: '101101' }, 'E')).toBe(true)
+    expect(localCancelPending({ lastKind: 'C', lastCode: null }, 'E')).toBe(true)        // voz anterior à D-F68 = cancelamento comum
+    expect(localCancelPending({ lastKind: 'C', lastCode: '101101' }, 'C')).toBe(false)
+    expect(localCancelPending({ lastKind: 'A', lastCode: null }, 'E')).toBe(false)
     expect(localCancelPending(null, 'E')).toBe(false)
+  })
+  it('D-F68 (= Q-F75 (a)): a SUBSTITUIÇÃO (e105102) nunca manda o app aplicar o C local — é decisão humana (D-F64/D-F67)', () => {
+    expect(localCancelPending({ lastKind: 'C', lastCode: '105102' }, 'E')).toBe(false)
+    expect(isSubstitutionCancel({ lastKind: 'C', lastCode: '105102' })).toBe(true)
+    for (const code of ['101101', '105104', '305101', null]) expect(isSubstitutionCancel({ lastKind: 'C', lastCode: code })).toBe(false)
+    expect(isSubstitutionCancel({ lastKind: 'R', lastCode: '105102' })).toBe(false)    // só a voz C
+    expect([...CANCEL_EVENT_CODES]).toEqual(['101101', '105102', '105104', '305101'])
+    expect(SUBSTITUTION_CANCEL_CODE).toBe('105102')
+  })
+  it('D-F82 (= Q-F89): o cancelamento DE OFÍCIO (e305101) também espera o humano; 101101 e 105104 seguem automáticos', () => {
+    expect(localCancelPending({ lastKind: 'C', lastCode: '305101' }, 'E')).toBe(false)
+    expect(localCancelPending({ lastKind: 'C', lastCode: '105104' }, 'E')).toBe(true)
+    expect([...HUMAN_EFFECT_CANCEL_CODES].sort()).toEqual(['105102', '305101'])
+    expect(EX_OFFICIO_CANCEL_CODE).toBe('305101')
+    for (const code of ['105102', '305101']) expect(isHumanEffectCancel({ lastKind: 'C', lastCode: code })).toBe(true)
+    for (const code of ['101101', '105104', null]) expect(isHumanEffectCancel({ lastKind: 'C', lastCode: code })).toBe(false)
+    expect(isHumanEffectCancel({ lastKind: 'K', lastCode: '305101' })).toBe(false)
   })
   it('reconfirmação (Q-ADV2a/D-F29): TODA tentativa da vida conta; H não prende; com chave não há o que provar; prova = olhou DEPOIS do F', () => {
     const life = [t(1, 'F', { lastSource: 'Q' }), t(2, 'R')]
