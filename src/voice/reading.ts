@@ -171,8 +171,13 @@ export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: reado
  * ambiente (o instante da reserva ou da última voz de cada uma, o maior); passe a VIDA em `lifeList` (sem ela, só a candidata conta).
  * D-F99 (= Q-F105 (b), Valdo 2026-10-11): tentativa da MESMA identidade SEM VOZ (em voo — só há o instante da RESERVA; o POST dela pode
  * chegar ao fisco DEPOIS do E2404) → não prova, falha FECHADO. A prova volta quando a tentativa ganhar voz (aí a apresentação é conhecida).
+ * D-F101 (= Q-F107 (b), Valdo 2026-10-11 — estende a D-F99): "em voo" = tentativa VIVA, pelo MESMO predicado da barreira do plano de
+ * cancelamento e do rodízio (`isLiveTransmission`: sem voz OU última voz não final — S "enviado", K) — a voz S tem instante, mas a
+ * apresentação dela pode não ter chegado ao fisco. `lastKind` entra no contrato; AUSENTE conta como viva (falha FECHADO).
  */
-type PresentationLike = Partial<Pick<TransmissionView, 'lastEventAt' | 'createdAt' | 'dpsId' | 'environment'>>
+// R20-02 do gate da Rodada 20: `lastKind` é OBRIGATÓRIO no tipo (o valor pode ser `null` = viva) — projeção que o esquece não compila
+// (antes compilava e a prova nunca passava: laço "reconfira" silencioso na F2a); o fallback de execução segue falhando FECHADO
+type PresentationLike = Partial<Pick<TransmissionView, 'lastEventAt' | 'createdAt' | 'dpsId' | 'environment'>> & Pick<TransmissionView, 'lastKind'>
 /** Instante do banco como o leitor do núcleo o entrega (`DATE_FORMAT` — UTC); só nesse formato a comparação por texto é cronológica. */
 const DB_INSTANT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
 export function reconfirmationProven(
@@ -193,7 +198,8 @@ export function reconfirmationProven(
     // identidade" — falha FECHADO (a view entrega `dps_id` e `environment` em toda linha da vida)
     if (!t.dpsId || !t.environment) return false
     if (t.dpsId !== candidate.dpsId || t.environment !== candidate.environment) continue
-    if (!t.lastEventAt) return false                                   // D-F99: em voo — a apresentação dela é desconhecida
+    // D-F99/D-F101: em voo (sem voz) ou VIVA (S/K — `isLiveTransmission`) — a apresentação dela é desconhecida; `lastKind` ausente = viva
+    if (!t.lastEventAt || !FINAL_TRANSMISSION_KINDS.has(t.lastKind ?? '')) return false
     for (const at of [t.createdAt, t.lastEventAt]) if (at && at > lastPresentation) lastPresentation = at
   }
   return candidate.nfseNotGeneratedAt > lastPresentation

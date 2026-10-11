@@ -124,13 +124,13 @@ describe('ACHADO R19-01 (MEDIUM latente — entra com a F2a; a MESMA classe do R
   })
 })
 
-describe('ACHADO R19-02 (LOW latente — questão Q-F106) — D-F99 lê "em voo" como `lastEventAt` nulo, mas o vocabulário da casa tem uma voz VIVA: S "enviado" (`isLiveTransmission` — S/K não são finais; o SQL do rodízio também trata `le.kind IN (\'S\',\'K\')` como viva). Uma irmã da mesma identidade com última voz S tem `lastEventAt` = instante do S, e o POST dela pode chegar ao fisco DEPOIS do E2404 — o mesmo buraco do R18-05. Hoje S não tem produtor (latente)', () => {
+describe('ACHADO R19-02 (LOW latente — questão Q-F107, decidida: D-F101) — D-F99 lê "em voo" como `lastEventAt` nulo, mas o vocabulário da casa tem uma voz VIVA: S "enviado" (`isLiveTransmission` — S/K não são finais; o SQL do rodízio também trata `le.kind IN (\'S\',\'K\')` como viva). Uma irmã da mesma identidade com última voz S tem `lastEventAt` = instante do S, e o POST dela pode chegar ao fisco DEPOIS do E2404 — o mesmo buraco do R18-05. Hoje S não tem produtor (latente)', () => {
   const enviado = (over: any = {}) => row({ attempt: 2, createdAt: '2026-10-03 10:00:00', lastEvent: 1, lastKind: 'S', lastSource: 'P', lastEventAt: '2026-10-03 10:00:00', ...over })
-  it('contexto: a irmã com voz S é VIVA para o núcleo (`isLiveTransmission`) e prova passa com um E2404 2 s depois do S', () => {
+  it('[CORRIGIDO — D-F101 (= Q-F107 (b))] a irmã com voz S é VIVA para o núcleo (`isLiveTransmission`) e a prova também a vê assim — um E2404 2 s depois do S não prova', () => {
     expect(isLiveTransmission(enviado())).toBe(true)
-    expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:02' }), [cand(), enviado()])).toBe(true)
+    expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:02' }), [cand(), enviado()])).toBe(false)
   })
-  it.failing('[LOW R19-02] irmã da MESMA identidade com última voz S (viva — a apresentação dela ainda é desconhecida) → NÃO prova', () => {
+  it('[CORRIGIDO — D-F101] [LOW R19-02] irmã da MESMA identidade com última voz S (viva — a apresentação dela ainda é desconhecida) → NÃO prova', () => {
     expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:02' }), [cand(), enviado()])).toBe(false)
   })
 })

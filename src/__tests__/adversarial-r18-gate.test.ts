@@ -34,10 +34,11 @@ const emVoo = (over: any = {}) => row({ attempt: 2, createdAt: '2026-10-03 10:00
 
 describe('ACHADO R18-03 (MEDIUM) — D-F97: a identidade da candidata é OPCIONAL no tipo (`PresentationLike = Partial<…>`): candidata sem `dpsId`/`environment` + a VIDA passada → `t.dpsId !== candidate.dpsId` pula TODAS as tentativas da vida (undefined ≠ \'DPS1\') e a prova volta à regra pré-D-F97 em silêncio — com a vida em mãos', () => {
   it('[CORRIGIDO na sessão] candidata de 2 campos (sem identidade) e vida vazia → falha FECHADO (o molde da F2a não prova sem o Id do DPS e o ambiente)', () => {
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-02 10:00:00' }, [])).toBe(false)
+    // projeção MUTILADA de propósito (o tipo exige `lastKind` desde o R20-02 — `as any` mantém o ataque ao fallback de execução)
+    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-02 10:00:00' } as any, [])).toBe(false)
   })
   it('[CORRIGIDO na sessão] [MEDIUM R18-03] candidata projetada SEM dpsId/environment, vida COM a reapresentação de 03/10 (posterior ao E2404 de 02/10) → NÃO prova (falha fechado, como a D-F97 promete)', () => {
-    const projected = { lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-02 10:00:00' }   // sem identidade
+    const projected = { lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-02 10:00:00' } as any   // sem identidade (mutilada de propósito)
     expect(reconfirmationProven(projected, [cand(), reapresentada()])).toBe(false)                      // hoje: true
   })
   it('[CORRIGIDO na sessão] [MEDIUM R18-03] candidata com `dpsId` mas SEM `environment` (projeção parcial) → a vida em P também é ignorada; não pode provar', () => {

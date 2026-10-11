@@ -18,7 +18,7 @@ import { erpWrites } from './fence'
 
 /** Gate da Rodada 18 (R18-03/R18-04): a prova exige a IDENTIDADE da candidata e a VIDA — os testes antigos de 1 argumento passam por aqui. */
 const proven = (c: any, life?: any[]) => {
-  const cc = { dpsId: 'DPS-TESTE', environment: 'P', ...c }
+  const cc = { dpsId: 'DPS-TESTE', environment: 'P', lastKind: 'F', ...c }   // D-F101: a candidata é a F por consulta (lastKind ausente = viva)
   return reconfirmationProven(cc, life ?? [cc])
 }
 
@@ -76,12 +76,15 @@ describe('contrato de leitura da voz (D-F33) — UMA regra para a nfse-api e o s
     expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:05:00' })).toBe(true)
     expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null })).toBe(false)
     // D-F97 (= Q-F103 (b)): a vida reapresenta o MESMO Id — o E2404 tem de ser posterior à ÚLTIMA apresentação em qualquer tentativa
-    const cand = { lastEventAt: '2026-10-01 10:00:00', createdAt: '2026-10-01 09:59:00', dpsId: 'DPS1', environment: 'P' as const, nfseNotGeneratedAt: '2026-10-02 10:00:00' }
-    const reapresentada = { lastEventAt: '2026-10-03 10:00:05', createdAt: '2026-10-03 10:00:00', dpsId: 'DPS1', environment: 'P' as const }
+    const cand = { lastEventAt: '2026-10-01 10:00:00', createdAt: '2026-10-01 09:59:00', dpsId: 'DPS1', environment: 'P' as const, lastKind: 'F' as const, nfseNotGeneratedAt: '2026-10-02 10:00:00' }
+    const reapresentada = { lastEventAt: '2026-10-03 10:00:05', createdAt: '2026-10-03 10:00:00', dpsId: 'DPS1', environment: 'P' as const, lastKind: 'R' as const }
     expect(reconfirmationProven(cand, [cand, reapresentada])).toBe(false)                               // nova apresentação DEPOIS do E2404
     expect(reconfirmationProven({ ...cand, nfseNotGeneratedAt: '2026-10-03 11:00:00' }, [cand, reapresentada])).toBe(true)
     expect(reconfirmationProven(cand, [cand, { ...reapresentada, environment: 'H' as const }])).toBe(true)   // outro ambiente não conta
     expect(reconfirmationProven(cand, [cand, { ...reapresentada, dpsId: 'DPS2' }])).toBe(true)               // outro Id (outra vida) não conta
+    // D-F101 (= Q-F107 (b)): irmã da mesma identidade VIVA (voz S/K, ou sem `lastKind`) derruba a prova — o mesmo predicado do plano
+    expect(reconfirmationProven({ ...cand, nfseNotGeneratedAt: '2026-10-03 11:00:00' }, [cand, { ...reapresentada, lastKind: 'S' as const }])).toBe(false)
+    expect(reconfirmationProven({ ...cand, nfseNotGeneratedAt: '2026-10-03 11:00:00' }, [cand, { ...reapresentada, lastKind: undefined } as any])).toBe(false)   // ausente à força (o tipo exige — R20-02)
     // D-F92 (conhecimento negativo): a prova não tem prazo — um E2404 semanas depois do F (a revisita de 24 h, D-F52) ainda prova
     expect(proven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-25 09:00:00' })).toBe(true)
     // o carimbo do rodízio (inclusive o de um 502 ambíguo persistente) não entra na prova
