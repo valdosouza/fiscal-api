@@ -23,6 +23,8 @@ export interface TransmissionView {
   nfseNumber:    string | null
   dhProc:        string | null
   lastQueriedAt: string | null
+  /** D-F90: última resposta E2404 (nenhuma NFS-e para o Id do DPS) a uma consulta desta tentativa — a PROVA da D-F29. */
+  nfseNotGeneratedAt: string | null
   createdAt:     string | null
   lastEvent:     number | null
   lastKind:      TransmissionEventKind | null
@@ -58,7 +60,7 @@ export function transmissionViewSelect(db: string, alias = 'v'): string {
          ${alias}.attempt, ${alias}.life_event AS lifeEvent, ${alias}.environment, ${alias}.serie,
          ${alias}.dps_number AS dpsNumber, ${alias}.dps_id AS dpsId, ${alias}.access_key AS accessKey,
          ${alias}.nfse_number AS nfseNumber, ${f('dh_proc')} AS dhProc, ${f('last_queried_at')} AS lastQueriedAt,
-         ${f('created_at')} AS createdAt, ${alias}.last_event AS lastEvent, ${alias}.last_kind AS lastKind,
+         ${f('nfse_not_generated_at')} AS nfseNotGeneratedAt, ${f('created_at')} AS createdAt, ${alias}.last_event AS lastEvent, ${alias}.last_kind AS lastKind,
          ${alias}.last_code AS lastCode, ${alias}.last_message AS lastMessage, ${alias}.last_source AS lastSource,
          ${f('last_dh')} AS lastDh, ${f('last_event_at')} AS lastEventAt
     FROM \`${db}\`.vw_invoice_service_transmission ${alias}`
@@ -71,7 +73,7 @@ export function mapTransmissionView(r: any): TransmissionView {
     attempt: Number(r.attempt), lifeEvent: Number(r.lifeEvent), environment: r.environment === 'P' ? 'P' : 'H',
     serie: r.serie ?? null, dpsNumber: n(r.dpsNumber), dpsId: r.dpsId ?? null, accessKey: r.accessKey ?? null,
     nfseNumber: r.nfseNumber ?? null, dhProc: r.dhProc ?? null, lastQueriedAt: r.lastQueriedAt ?? null,
-    createdAt: r.createdAt ?? null, lastEvent: n(r.lastEvent), lastKind: r.lastKind ?? null, lastCode: r.lastCode ?? null,
+    nfseNotGeneratedAt: r.nfseNotGeneratedAt ?? null, createdAt: r.createdAt ?? null, lastEvent: n(r.lastEvent), lastKind: r.lastKind ?? null, lastCode: r.lastCode ?? null,
     lastMessage: r.lastMessage ?? null, lastSource: r.lastSource ?? null, lastDh: r.lastDh ?? null, lastEventAt: r.lastEventAt ?? null,
   }
 }
@@ -156,10 +158,15 @@ export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: reado
 }
 
 /**
- * Prova LIDA NO BANCO (D-F29): alguém olhou o fisco DEPOIS da voz F da candidata
- * (`last_queried_at` > instante da voz). A consulta que GEROU o F grava os dois no mesmo instante —
- * por isso estritamente maior: só uma consulta POSTERIOR prova.
+ * Prova LIDA NO BANCO (D-F29; D-F90 = Q-F96 (c), Valdo 2026-10-11 — SUPERA em parte a D-F29): o fisco respondeu
+ * EXPLICITAMENTE E2404 ("nenhuma NFS-e para este Id de DPS") a uma pergunta feita DEPOIS da voz F da candidata
+ * (`nfse_not_generated_at` > instante da voz). NUNCA o `last_queried_at` — esse é só o carimbo do rodízio ("nós
+ * olhamos"), gravado também quando a consulta falhou de forma persistente (502 ambíguo): a prova ficava forjável.
+ * Mesmo relógio dos dois lados (o NOSSO — PADROES §11 regra 9). Estritamente maior: a consulta que GEROU o F não prova.
+ * CONHECIMENTO NEGATIVO (D-F92 = Q-F98 (a), Valdo 2026-10-11): a prova NÃO tem prazo de validade — qualquer E2404 POSTERIOR ao F
+ * vale, inclusive o da revisita automática de 24 h (D-F52) semanas antes do cancelamento: o DPS foi enviado UMA vez; 24 h depois do F
+ * o "não gerada" é conclusivo. Não inventar janela; reabrir só se a prova ao vivo M4 mostrar NFS-e gerada TARDE para um DPS.
  */
-export function reconfirmationProven(candidate: Pick<TransmissionView, 'lastQueriedAt' | 'lastEventAt'>): boolean {
-  return !!candidate.lastQueriedAt && !!candidate.lastEventAt && candidate.lastQueriedAt > candidate.lastEventAt
+export function reconfirmationProven(candidate: Pick<TransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt'>): boolean {
+  return !!candidate.nfseNotGeneratedAt && !!candidate.lastEventAt && candidate.nfseNotGeneratedAt > candidate.lastEventAt
 }

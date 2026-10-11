@@ -65,9 +65,14 @@ describe('contrato de leitura da voz (D-F33) — UMA regra para a nfse-api e o s
     expect(reconfirmationCandidate([t(1, 'F', { lastSource: 'Q', environment: 'H' })])).toBeNull()
     expect(reconfirmationCandidate([t(1, 'F', { lastSource: 'P' })])).toBeNull()
     expect(reconfirmationCandidate([t(1, 'F', { lastSource: 'Q' }), t(2, 'A', { accessKey: 'K' })])).toBeNull()
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', lastQueriedAt: '2026-10-01 10:00:00' })).toBe(false)   // a consulta que GEROU o F
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', lastQueriedAt: '2026-10-01 10:05:00' })).toBe(true)
-    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', lastQueriedAt: null })).toBe(false)
+    // D-F90 (= Q-F96 (c)): a prova é o E2404 EXPLÍCITO posterior ao F (`nfseNotGeneratedAt`), nunca o carimbo do rodízio
+    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:00:00' })).toBe(false)   // a consulta que GEROU o F
+    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-01 10:05:00' })).toBe(true)
+    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null })).toBe(false)
+    // D-F92 (conhecimento negativo): a prova não tem prazo — um E2404 semanas depois do F (a revisita de 24 h, D-F52) ainda prova
+    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: '2026-10-25 09:00:00' })).toBe(true)
+    // o carimbo do rodízio (inclusive o de um 502 ambíguo persistente) não entra na prova
+    expect(reconfirmationProven({ lastEventAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null, lastQueriedAt: '2026-10-01 10:05:00' } as any)).toBe(false)
   })
 })
 
