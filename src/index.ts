@@ -7,6 +7,7 @@
 // erros, log, tempo
 export * from './errors/http-error'
 export * from './errors/error-codes'
+export * from './errors/ambiguous-cause'
 export { logger } from './log/logger'
 export type { Logger } from './log/logger'
 export * from './time/zone'

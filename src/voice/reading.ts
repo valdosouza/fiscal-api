@@ -169,6 +169,8 @@ export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: reado
  * D-F97 (= Q-F103 (b), Valdo 2026-10-11): as tentativas da MESMA vida reapresentam o MESMO Id do DPS (D-N3/D-F30) — a premissa "o DPS
  * foi enviado uma vez" era falsa. O E2404 tem de ser POSTERIOR à ÚLTIMA apresentação do Id em QUALQUER tentativa da vida no mesmo
  * ambiente (o instante da reserva ou da última voz de cada uma, o maior); passe a VIDA em `lifeList` (sem ela, só a candidata conta).
+ * D-F99 (= Q-F105 (b), Valdo 2026-10-11): tentativa da MESMA identidade SEM VOZ (em voo — só há o instante da RESERVA; o POST dela pode
+ * chegar ao fisco DEPOIS do E2404) → não prova, falha FECHADO. A prova volta quando a tentativa ganhar voz (aí a apresentação é conhecida).
  */
 type PresentationLike = Partial<Pick<TransmissionView, 'lastEventAt' | 'createdAt' | 'dpsId' | 'environment'>>
 /** Instante do banco como o leitor do núcleo o entrega (`DATE_FORMAT` — UTC); só nesse formato a comparação por texto é cronológica. */
@@ -187,7 +189,11 @@ export function reconfirmationProven(
   if (instants.some(at => at != null && !DB_INSTANT.test(at))) return false
   let lastPresentation = candidate.lastEventAt
   for (const t of [candidate, ...lifeList]) {
+    // R19-01 do gate da Rodada 19: irmã sem a identidade (projeção sem Id do DPS ou ambiente) não pode ser descartada como "outra
+    // identidade" — falha FECHADO (a view entrega `dps_id` e `environment` em toda linha da vida)
+    if (!t.dpsId || !t.environment) return false
     if (t.dpsId !== candidate.dpsId || t.environment !== candidate.environment) continue
+    if (!t.lastEventAt) return false                                   // D-F99: em voo — a apresentação dela é desconhecida
     for (const at of [t.createdAt, t.lastEventAt]) if (at && at > lastPresentation) lastPresentation = at
   }
   return candidate.nfseNotGeneratedAt > lastPresentation

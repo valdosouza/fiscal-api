@@ -54,12 +54,13 @@ describe('ACHADO R18-03 (MEDIUM) — D-F97: a identidade da candidata é OPCIONA
 })
 
 describe('ACHADO R18-05 (LOW — depende de decisão: Q-F105) — D-F97: "apresentação" = max(createdAt, lastEventAt); numa tentativa EM VOO (sem voz) só há o `createdAt` da RESERVA — o POST chega ao fisco DEPOIS (assinatura, disco, rede); um E2404 que caia entre a reserva e a chegada do POST prova contra uma apresentação que ainda não aconteceu', () => {
-  it.failing('[LOW R18-05] vida com tentativa da MESMA identidade EM VOO (sem voz) → não prova (a apresentação dela é desconhecida)', () => {
+  it('[CORRIGIDO — D-F99] [LOW R18-05] vida com tentativa da MESMA identidade EM VOO (sem voz) → não prova (a apresentação dela é desconhecida)', () => {
     // E2404 da candidata às 10:00:02 — DEPOIS da reserva da 2 (10:00:00), ANTES do POST dela chegar ao fisco
     expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:02' }), [cand(), emVoo()])).toBe(false)   // hoje: true
   })
-  it('contexto: a mitigação hoje é EXTERNA — com a tentativa 2 viva o plano de cancelamento recusa (setes-api `invoice-cancel.ts:334`, `isLiveTransmission(latest)`); a função sozinha não sabe disso', () => {
-    expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:02' }), [cand(), emVoo()])).toBe(true)
+  it('[CORRIGIDO — D-F99] a função sozinha agora sabe (a recusa do plano de cancelamento — `isLiveTransmission` — segue como 2ª barreira); quando a 2 ganha voz, a prova POSTERIOR a ela volta a valer', () => {
+    expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:02' }), [cand(), emVoo()])).toBe(false)
+    expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:06' }), [cand(), reapresentada()])).toBe(true)
   })
 })
 
@@ -95,11 +96,11 @@ describe('RESISTIU — D-F97: outras vidas, outro ambiente, nulos, empate de seg
     // `inLife` antes (o caminho da F2a) dá a mesma resposta
     expect(reconfirmationProven(cand(), inLife([cand(), reapresentada({ environment: 'H' }), otherLife], 1))).toBe(true)
   })
-  it('resistiu: nulos — candidata sem E2404 ou sem voz → false; irmã com createdAt/lastEventAt nulos não lança nem conta', () => {
+  it('resistiu: nulos — candidata sem E2404 ou sem voz → false; irmã da MESMA identidade com createdAt/lastEventAt nulos não lança e falha FECHADO (D-F99: sem voz)', () => {
     expect(reconfirmationProven(cand({ nfseNotGeneratedAt: null }), [cand()])).toBe(false)
     expect(reconfirmationProven(cand({ lastEventAt: null }), [cand()])).toBe(false)
     expect(() => reconfirmationProven(cand(), [cand(), row({ attempt: 3, createdAt: null, lastEventAt: null })])).not.toThrow()
-    expect(reconfirmationProven(cand(), [cand(), row({ attempt: 3, createdAt: null, lastEventAt: null })])).toBe(true)
+    expect(reconfirmationProven(cand(), [cand(), row({ attempt: 3, createdAt: null, lastEventAt: null })])).toBe(false)   // D-F99
   })
   it('resistiu: E2404 no MESMO segundo da última apresentação NÃO prova (estritamente maior — falha fechado no empate)', () => {
     expect(reconfirmationProven(cand({ nfseNotGeneratedAt: '2026-10-03 10:00:05' }), [cand(), reapresentada()])).toBe(false)
