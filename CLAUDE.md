@@ -20,7 +20,13 @@ O núcleo guarda o que é COMUM às famílias:
 - **emitente** (`tb_establishment_certificate`: o A1 do estabelecimento, chave privada CIFRADA no banco —
   D-F16/D-F34) e **habilitação** por modelo (`tb_establishment_issuer` — D-E1; carrega o contador do DPS e o
   ALUGUEL da consulta ativa `refresh_lease_until`)
-- máquina **tentativa × voz** (estado DERIVADO da última voz; ambíguo nunca fecha; recusa ≠ transitório)
+- **voz**: vocabulário comum com classificação TOTAL (`voice/kinds.ts` — S/A/R/C/K/F/N + P/D da NF-e) e o CONTRATO DE LEITURA
+  (`voice/reading.ts`: projeção comum `TransmissionView` com o REGISTRO como fato `authorityRecorded` — D-NE56 —, estado derivado
+  exaustivo, `currentOf` por registro; `voice/families/` = a leitura publicada POR família, hoje só `service`). A máquina tentativa × voz
+  (escrita, reserva, rodízio) AINDA mora na nfse-api — vem para cá como PEÇAS na parte 2 da NE-1a (D-NE13/D-NE58), nunca como roteiro
+  genérico; estado DERIVADO da última voz; ambíguo nunca fecha; recusa ≠ transitório
+- **referência da nota** (`ref/invoice-ref.ts` — `InvoiceRef` com o TERMINAL; `WEB_TERMINAL` só na borda; nenhum `terminal = 0` em SQL do
+  núcleo — D-NE12)
 - storage do XML (filesystem no dev; backend de produção na F3)
 - autenticação pelo **JWT do produto** (RS256, só chave pública — D-F13)
 - base da **fonte de fatos Gestão 2027** (leitura SÓ-SELECT de `setes_central`/`setes_*` — D-F10/D-F15)
@@ -47,7 +53,10 @@ O núcleo guarda o que é COMUM às famílias:
 6. Molde de código: setes-api (`shared/` por peça, testes Jest com mocks na fronteira); gates
    socrático ≥ 0,70 + adversarial sem HIGH antes de "pronto".
 
-## Estado (2026-10-04, 3ª sessão)
+## Estado (2026-10-11 — NE-1a parte 1, `Infra-IA/prompts/prompt_onda_nfe_sefaz.md` §12.9: projeção comum + registro como fato,
+P/D com classificação total, `InvoiceRef`; a parte 2 — cerca por modelo, emitter, escritor/peças, `ca`/cadeia, parser XML — vem depois)
+
+## Estado anterior (2026-10-04, 3ª sessão)
 
 **F1 executada + Rodadas 4–9 (§16–§20 do prompt; D-F57 — lacuna (b) pela linha SE — e a cerca D-F31 por LISTA BRANCA, `src/__tests__/fence.ts`, mexeram no núcleo; reconciliação de 2026-10-10 no §20; Rodadas 12–14 (D-F67…D-F82) puseram no núcleo o código do evento de cancelamento e o efeito humano — `HUMAN_EFFECT_CANCEL_CODES`, §21.7)** — `npm test` (80) · `npx tsc --noEmit` · `npm run build`
 (a nfse-api consome o `dist/` — reconstruir depois de mexer aqui). Relatório: §15 do prompt. Mapa:

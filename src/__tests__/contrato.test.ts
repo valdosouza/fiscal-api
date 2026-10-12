@@ -6,11 +6,12 @@ import os from 'os'
 import path from 'path'
 import { generateKeyPairSync } from 'crypto'
 import jwt from 'jsonwebtoken'
+import { currentOf, fiscalStateOf, isLiveTransmission, isAuthorized, inLife } from '../voice/reading'
+// NE-1a: as regras e os códigos de evento da NFS-e moram na família de serviço (mesmos nomes na biblioteca)
 import {
-  currentOf, fiscalStateOf, localCancelPending, isSubstitutionCancel, isHumanEffectCancel,
-  reconfirmationCandidate, reconfirmationProven, isLiveTransmission, isAuthorized, inLife,
-} from '../voice/reading'
-import { CANCEL_EVENT_CODES, SUBSTITUTION_CANCEL_CODE, EX_OFFICIO_CANCEL_CODE, HUMAN_EFFECT_CANCEL_CODES } from '../voice/kinds'
+  localCancelPending, isSubstitutionCancel, isHumanEffectCancel, reconfirmationCandidate, reconfirmationProven,
+  CANCEL_EVENT_CODES, SUBSTITUTION_CANCEL_CODE, EX_OFFICIO_CANCEL_CODE, HUMAN_EFFECT_CANCEL_CODES,
+} from '../voice/families/service'
 import { ProductTokenVerifier, isAdmin, isSuper } from '../auth/product-jwt'
 import { FsFiscalStorage } from '../storage/fiscal-storage'
 import { splitStatements } from '../db/migrations'
@@ -22,8 +23,10 @@ const proven = (c: any, life?: any[]) => {
   return reconfirmationProven(cc, life ?? [cc])
 }
 
+// NE-1a (D-NE56): na NFS-e o registro É a chave (a mesma definição da view 004) — a fixture deriva um do outro, salvo quando o teste o fixa
 const t = (attempt: number, lastKind: any, over: any = {}) => ({
-  attempt, lastKind, accessKey: null as string | null, lastSource: 'P' as any, environment: 'P' as any, dpsId: 'DPS1', lifeEvent: 1, ...over,
+  attempt, lastKind, accessKey: null as string | null, lastSource: 'P' as any, environment: 'P' as any, dpsId: 'DPS1', lifeEvent: 1,
+  authorityRecorded: over.accessKey != null, ...over,
 })
 
 describe('contrato de leitura da voz (D-F33) — UMA regra para a nfse-api e o setes-api', () => {
@@ -177,11 +180,23 @@ describe('CERCA do núcleo cego (D-F10 / critério §12.8-1)', () => {
     expect(erpWrites('q.query(`UPDATE tb_establishment_issuer SET x = 1 WHERE id = ? FOR UPDATE`); q.query(`INSERT INTO tb_x (a) SELECT a FROM \\`${s}\\`.tb_y`)')).toEqual([])
   })
 
-  it('nenhum Map/Set de CONTROLE em memória fora dos caches de dado declarados (erp/facts.ts)', () => {
+  // Gate adversarial da NE-1a (NE1A-07): a cerca via só o genérico EXPLÍCITO — `new Map()` e `new Set([…])` escapavam. Agora pega as duas
+  // formas; a LISTA BRANCA nomeia cada arquivo que guarda DADO declarado ou um Map/Set LOCAL de função (nunca estado de controle).
+  const DATA_HOLDERS: Record<string, string> = {
+    'erp/facts.ts': 'caches de DADO declarados (fuso, schema, id da interface) + mapa local do lote de vidas',
+    'transport/https-json.ts': 'constantes de códigos do Node/OpenSSL (TLS/credencial local)',
+    'errors/ambiguous-cause.ts': 'constante: as causas fechadas do ambíguo',
+    'util/readonly-set.ts': 'a peça do conjunto IMUTÁVEL (o Set interno não sai dela)',
+    'db/migrations.ts': 'local: versões já aplicadas no executor',
+    'http/http.ts': 'local: origens permitidas do CORS',
+    'secret/cipher.ts': 'local: anel de chaves-mestras do processo',
+    'auth/product-jwt.ts': 'local: chaves públicas do verificador',
+  }
+  it('nenhum Map/Set de CONTROLE em memória fora dos detentores de DADO declarados (com e sem genérico explícito)', () => {
     const offenders = files(srcRoot)
-      .filter(f => !f.endsWith(`erp${path.sep}facts.ts`))
-      .filter(f => /new (Map|Set)\s*</.test(fs.readFileSync(f, 'utf8')) && !/voice[\\/]kinds\.ts$/.test(f) && !/secret[\\/]cipher\.ts$/.test(f) && !/auth[\\/]product-jwt\.ts$/.test(f))
-      .map(f => path.relative(srcRoot, f))
+      .map(f => path.relative(srcRoot, f).replace(/\\/g, '/'))
+      .filter(f => /new (Map|Set)\s*[<(]/.test(fs.readFileSync(path.join(srcRoot, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')))
+      .filter(f => !(f in DATA_HOLDERS))
     expect(offenders).toEqual([])
   })
 })

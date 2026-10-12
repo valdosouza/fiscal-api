@@ -37,9 +37,14 @@ export * from './transport/xmldsig'
 // arquivo fiscal (XML)
 export * from './storage/fiscal-storage'
 
-// voz: vocabulário + contrato de leitura (D-F33)
+// referência da nota no ERP (NE-1a — terminal por parâmetro, D-NE12)
+export * from './ref/invoice-ref'
+
+// voz: vocabulário + contrato de leitura (D-F33) — projeção comum + leitura POR família (NE-1a, D-NE56)
 export * from './voice/kinds'
 export * from './voice/reading'
+export * from './voice/families/service'
+export * from './voice/families'
 
 // fonte de fatos Gestão 2027 — base (D-F10/D-F32)
 export * as erp from './erp/facts'

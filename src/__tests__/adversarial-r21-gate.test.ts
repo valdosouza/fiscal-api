@@ -19,9 +19,11 @@
 import fs from 'fs'
 import path from 'path'
 import * as core from '../index'
+import { isLiveTransmission } from '../voice/reading'
+// NE-1a: as regras e a leitura da NFS-e moram na família de serviço (mesmos nomes na biblioteca)
 import {
-  reconfirmationCandidate, reconfirmationProven, mapTransmissionView, isLiveTransmission, TransmissionView,
-} from '../voice/reading'
+  reconfirmationCandidate, reconfirmationProven, mapTransmissionView, ServiceTransmissionView as TransmissionView,
+} from '../voice/families/service'
 import { FINAL_TRANSMISSION_KINDS, TransmissionEventKind } from '../voice/kinds'
 
 const SRC_ROOT = path.resolve(__dirname, '..')
@@ -37,7 +39,9 @@ const raw = (over: any = {}) => ({
   institutionId: 1, invoiceId: 6200, terminal: 0, attempt: 1, lifeEvent: 1, environment: 'P', serie: '1', dpsNumber: 42, dpsId: 'DPS1',
   accessKey: null, nfseNumber: null, dhProc: null, lastQueriedAt: '2026-10-01 10:00:00', nfseNotGeneratedAt: null, createdAt: '2026-10-01 09:59:00',
   lastEvent: 2, lastKind: 'F', lastCode: null, lastMessage: 'Sem resposta do fisco e nenhuma NFS-e gerada para este DPS — envio interrompido',
-  lastSource: 'Q', lastDh: null, lastEventAt: '2026-10-01 10:00:00', ...over,
+  lastSource: 'Q', lastDh: null, lastEventAt: '2026-10-01 10:00:00',
+  authorityRecorded: over.accessKey != null ? 'S' : 'N',   // NE-1a (D-NE56): coluna da view 004 — na NFS-e espelha a chave
+  ...over,
 })
 const row = (over: any = {}) => mapTransmissionView(raw(over))
 /** Candidata com o E2404 da reconferência em 02/10 10:00 (POSTERIOR ao F de 01/10 10:00). */
@@ -59,7 +63,8 @@ const PROOF_IS_BOOLEAN: [ProofReturn] extends [boolean] ? ([boolean] extends [Pr
 describe('D-F104 (= Q-F110 (a)) — `reconfirmationProven` booleana até a F2a', () => {
   it('resistiu: o retorno é `boolean` no TIPO (testemunha de compilação) e em TODA execução — varredura de candidatas e vidas incoerentes, sem lançar', () => {
     expect(PROOF_IS_BOOLEAN).toBe(true)
-    const cands = [cand(), cand({ nfseNotGeneratedAt: null }), cand({ dpsId: null }), cand({ environment: null }), cand({ lastEventAt: '2026-10-02T10:00:00Z' }),
+    // NE-1a (gates da parte 1, M4): o mapa recusa linha sem `environment` — a candidata sem ambiente chega à prova só montada à mão
+    const cands = [cand(), cand({ nfseNotGeneratedAt: null }), cand({ dpsId: null }), { ...cand(), environment: null as any }, cand({ lastEventAt: '2026-10-02T10:00:00Z' }),
       { ...cand(), lastKind: 'S' as TransmissionEventKind }, { ...cand(), lastKind: undefined as any }, { ...cand(), lastKind: 'f' as any }]
     const lives: TransmissionView[][] = [[], [cand()], [cand(), sib('S')], [cand(), sib('R')], [sib(undefined)], [cand(), sib('K', { dpsId: null })], [cand(), sib(null, { lastEventAt: null })]]
     for (const c of cands) for (const life of lives) {

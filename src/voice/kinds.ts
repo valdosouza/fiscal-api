@@ -1,5 +1,7 @@
+import { readonlySet } from '../util/readonly-set'
+
 /**
- * Vocabulário da VOZ do fisco — fonte ÚNICA (L5 do gate socrático da Onda 3). Sem imports.
+ * Vocabulário da VOZ do fisco — fonte ÚNICA (L5 do gate socrático da Onda 3). Só importa a peça do conjunto imutável.
  *
  * S enviado · A autorizada · R rejeitada · C cancelada · K cancelamento em voo · F falha explícita ·
  * N pedido de cancelamento NÃO consta no fisco (D-N17 — segue autorizada).
@@ -22,29 +24,46 @@
  * o domínio é a lista da FAMÍLIA (A/R/C/K/F/N — D-F107), não este tipo comum. Quando a máquina vier para cá (NE-1a), a lista de escrita
  * vai no DESCRITOR da família (`VoiceFamily<K>`) e o escritor comum é genérico nela, com o funil em execução (D-F108 — nota no
  * `prompt_onda_nfe_sefaz.md` §12.8): nunca um escritor do núcleo tipado por `TransmissionEventKind`.
+ *
+ * NE-1a (D-NE14, Valdo 2026-10-10; Rodada 1 da NE-1a — D-NE56/D-NE59, 2026-10-11): o vocabulário COMUM ganha P (NF-e: lote/recibo em
+ * PROCESSAMENTO — VIVA) e D (NF-e: uso DENEGADO — FINAL e NÃO autorizada; o número queima — D-E7). A NFS-e nunca grava P nem D (lista
+ * positiva da família — D-F106). Os códigos de evento de cancelamento da NFS-e saíram daqui para `families/service.ts` (eram política
+ * da família no vocabulário comum — parecer do guardião da NE-1a); os nomes seguem exportados pela biblioteca.
+ * CONHECIMENTO NEGATIVO (D-NE62 = Q-NE62 (a), gates da NE-1a parte 1): a família de serviço LÊ a tabela dela pelo vocabulário COMUM — uma
+ * voz P/D gravada POR FORA do código numa tabela da NFS-e (D-F103: sem CHECK até a F2a) mudou de leitura com a NE-1a: P era "em voo" e
+ * vira "processing"; D era VIVA (desconhecida) e vira FINAL "denied" (a barreira da NFS-e `isLive || isAuthorized` deixaria nova
+ * tentativa passar e o DELETE do A1 também); 'd' minúsculo diverge entre o SQL (_ci, final) e o código (desconhecido, viva). Nenhum
+ * escritor tipado produz P/D na NFS-e (lista positiva — D-F106) e a OpenAPI da NFS-e segue com os 7 estados dela; quem fecha a porta é o
+ * CHECK binário da F2a (D-F107). NUNCA gravar voz por fora do código.
  */
-export type TransmissionEventKind = 'S' | 'A' | 'R' | 'C' | 'K' | 'F' | 'N'
+export type TransmissionEventKind = 'S' | 'A' | 'R' | 'C' | 'K' | 'F' | 'N' | 'P' | 'D'
 /** P resposta direta ao nosso pedido · Q consulta. */
 export type TransmissionSource = 'P' | 'Q'
 export type TransmissionEnvironment = 'H' | 'P'
 
-/** Tentativa ENCERRADA: o fisco não vai dizer mais nada útil sobre ela sozinho. */
-export const FINAL_TRANSMISSION_KINDS: ReadonlySet<string> = new Set<TransmissionEventKind>(['A', 'R', 'C', 'F', 'N'])
-/** NFS-e AUTORIZADA e vigente (A, ou N depois de um K — D-N17). */
-export const AUTHORIZED_KINDS: ReadonlySet<string> = new Set<TransmissionEventKind>(['A', 'N'])
+/**
+ * Classificação TOTAL do vocabulário (NE-1a): todo kind diz se ENCERRA a tentativa (final) e se deixa o documento AUTORIZADO e
+ * vigente. Kind novo sem classe não compila (`satisfies Record<…>`); os conjuntos abaixo DERIVAM daqui — nunca uma 2ª lista.
+ * Autorizado implica final (conferido em teste).
+ */
+const kindClass = <F extends boolean, A extends boolean>(final: F, authorized: A) => Object.freeze({ final, authorized })
+// congelado em PROFUNDIDADE (gate NE-1a, NE1A-06): `as const` é só tipo — sem o freeze um módulo do processo trocava a classe
+export const KIND_CLASS = Object.freeze({
+  S: kindClass(false, false),   // enviado (sem produtor na NFS-e — D-F102)
+  A: kindClass(true,  true),    // autorizada
+  R: kindClass(true,  false),   // rejeitada
+  C: kindClass(true,  false),   // cancelada
+  K: kindClass(false, false),   // cancelamento em voo
+  F: kindClass(true,  false),   // falha explícita
+  N: kindClass(true,  true),    // pedido de cancelamento NÃO consta — segue autorizada (D-N17)
+  P: kindClass(false, false),   // NF-e: em processamento (consulta do recibo — D-NE33)
+  D: kindClass(true,  false),   // NF-e: uso denegado
+} satisfies Record<TransmissionEventKind, { readonly final: boolean; readonly authorized: boolean }>)
 
-/**
- * D-F68 (= Q-F75 (a)) / D-F71 (= Q-F78 (a)), Valdo 2026-10-10: na voz C, o `authority_code` guarda o TIPO do evento de
- * cancelamento do fisco (escrito uma vez; NULL = voz anterior à D-F68, lida como cancelamento comum).
- * 101101 emitente · 105102 SUBSTITUIÇÃO · 105104 deferido em análise fiscal · 305101 de ofício.
- */
-export const CANCEL_EVENT_CODES: ReadonlySet<string> = new Set(['101101', '105102', '105104', '305101'])
-/** D-F64: cancelamento por SUBSTITUIÇÃO — existe uma NFS-e substituta que o ERP não conhece; efeito local NÃO automático. */
-export const SUBSTITUTION_CANCEL_CODE = '105102'
-/** D-F82 (= Q-F89, Valdo 2026-10-10): cancelamento DE OFÍCIO pelo fisco — sem substituta; o efeito local é do HUMANO. */
-export const EX_OFFICIO_CANCEL_CODE = '305101'
-/**
- * D-F82: cancelamentos cujo efeito no ERP só nasce de ato HUMANO (substituição: cancelar ou manter a nota — D-F67;
- * de ofício: cancelar a nota). 101101 (o nosso pedido) e 105104 (deferido a pedido do contribuinte) seguem automáticos.
- */
-export const HUMAN_EFFECT_CANCEL_CODES: ReadonlySet<string> = new Set([SUBSTITUTION_CANCEL_CODE, EX_OFFICIO_CANCEL_CODE])
+const kindsWhere = (pick: (c: { final: boolean; authorized: boolean }) => boolean): string[] =>
+  Object.entries(KIND_CLASS).filter(([, c]) => pick(c)).map(([k]) => k)
+
+/** Tentativa ENCERRADA: o fisco não vai dizer mais nada útil sobre ela sozinho. Imutável em execução (NE1A-06). */
+export const FINAL_TRANSMISSION_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => c.final))
+/** Documento AUTORIZADO e vigente (A, ou N depois de um K — D-N17). Imutável em execução (NE1A-06). */
+export const AUTHORIZED_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => c.authorized))

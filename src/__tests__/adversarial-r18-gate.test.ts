@@ -13,13 +13,17 @@
 //  * CONTEXTO (`it('contexto …')`) — fixa o comportamento atual que fundamenta um achado ou uma QUESTÃO (decisão do Valdo).
 //
 // REGRAS DO GATE: puro (sem banco, sem socket, sem fisco).
-import { reconfirmationCandidate, reconfirmationProven, transmissionViewSelect, mapTransmissionView, inLife } from '../voice/reading'
+import { inLife } from '../voice/reading'
+// NE-1a: as regras e a leitura da NFS-e moram na família de serviço (mesmos nomes na biblioteca)
+import { reconfirmationCandidate, reconfirmationProven, transmissionViewSelect, mapTransmissionView } from '../voice/families/service'
 
 /** Linha da view como o `mapTransmissionView` a entrega (instantes 'YYYY-MM-DD HH:MM:SS' UTC — DATE_FORMAT do leitor). */
 const row = (over: any = {}) => mapTransmissionView({
   institutionId: 1, invoiceId: 6200, terminal: 0, attempt: 1, lifeEvent: 1, environment: 'P', serie: '1', dpsNumber: 42, dpsId: 'DPS1',
   accessKey: null, nfseNumber: null, dhProc: null, lastQueriedAt: null, nfseNotGeneratedAt: null, createdAt: '2026-10-01 09:59:00',
-  lastEvent: 2, lastKind: 'F', lastCode: null, lastMessage: null, lastSource: 'Q', lastDh: null, lastEventAt: '2026-10-01 10:00:00', ...over,
+  lastEvent: 2, lastKind: 'F', lastCode: null, lastMessage: null, lastSource: 'Q', lastDh: null, lastEventAt: '2026-10-01 10:00:00',
+  authorityRecorded: over.accessKey != null ? 'S' : 'N',   // NE-1a (D-NE56): coluna da view 004 — na NFS-e espelha a chave
+  ...over,
 })
 /** Candidata: F por consulta em P (tentativa 1) com E2404 em 02/10 (posterior ao F de 01/10). */
 const cand = (over: any = {}) => row({ nfseNotGeneratedAt: '2026-10-02 10:00:00', ...over })

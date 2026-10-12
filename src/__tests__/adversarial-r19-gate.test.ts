@@ -19,9 +19,11 @@
 // REGRAS DO GATE: puro (sem banco, sem socket — `transport.request` trocado —, sem fisco). Lê o espelho do setes-api só como TEXTO.
 import fs from 'fs'
 import path from 'path'
+import { isLiveTransmission } from '../voice/reading'
+// NE-1a: as regras e a leitura da NFS-e moram na família de serviço (mesmos nomes na biblioteca)
 import {
-  reconfirmationCandidate, reconfirmationProven, transmissionViewSelect, mapTransmissionView, isLiveTransmission,
-} from '../voice/reading'
+  reconfirmationCandidate, reconfirmationProven, transmissionViewSelect, mapTransmissionView,
+} from '../voice/families/service'
 import { AMBIGUOUS_CAUSES, tagAmbiguous, ambiguousCauseOf } from '../errors/ambiguous-cause'
 import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
@@ -32,7 +34,9 @@ import { logger } from '../log/logger'
 const row = (over: any = {}) => mapTransmissionView({
   institutionId: 1, invoiceId: 6200, terminal: 0, attempt: 1, lifeEvent: 1, environment: 'P', serie: '1', dpsNumber: 42, dpsId: 'DPS1',
   accessKey: null, nfseNumber: null, dhProc: null, lastQueriedAt: null, nfseNotGeneratedAt: null, createdAt: '2026-10-01 09:59:00',
-  lastEvent: 2, lastKind: 'F', lastSource: 'Q', lastCode: null, lastMessage: null, lastDh: null, lastEventAt: '2026-10-01 10:00:00', ...over,
+  lastEvent: 2, lastKind: 'F', lastSource: 'Q', lastCode: null, lastMessage: null, lastDh: null, lastEventAt: '2026-10-01 10:00:00',
+  authorityRecorded: over.accessKey != null ? 'S' : 'N',   // NE-1a (D-NE56): coluna da view 004 — na NFS-e espelha a chave
+  ...over,
 })
 /** Candidata: F por consulta em P (tentativa 1) com E2404 em 02/10 (posterior ao F de 01/10). */
 const cand = (over: any = {}) => row({ nfseNotGeneratedAt: '2026-10-02 10:00:00', ...over })
@@ -120,7 +124,9 @@ describe('ACHADO R19-01 (MEDIUM latente — entra com a F2a; a MESMA classe do R
     const sql = transmissionViewSelect('fiscal_api')
     expect(sql).toMatch(/v\.dps_id AS dpsId/)
     expect(sql).toMatch(/v\.environment/)
-    expect(mapTransmissionView({ attempt: 2, environment: null }).environment).toBe('H')          // nunca undefined depois do mapa
+    // NE-1a (gate socrático M4): o padrão 'H' falhava ABERTO no `isFiscalRecord` — agora a linha sem ambiente falha ALTO no mapa
+    // (a intenção "nunca undefined depois do mapa" segue: não há objeto mapeado sem ambiente)
+    expect(() => mapTransmissionView({ attempt: 2, environment: null, authorityRecorded: 'N', terminal: 0 })).toThrow(/environment/)
   })
 })
 
@@ -166,7 +172,7 @@ describe('RESISTIU — D-F99: o que é e o que não é "tentativa da MESMA ident
   })
   it('resistiu: leitor REAL — o SELECT da view entrega o instante da última voz por `DATE_FORMAT(v.last_event_at, …)` (NULL sem voz); o mapa transforma NULL/coluna ausente em null; um Date cru (SELECT sem DATE_FORMAT) falha fechado pelo formato (R18-06)', () => {
     expect(transmissionViewSelect('fiscal_api')).toMatch(/DATE_FORMAT\(v\.last_event_at, '%Y-%m-%d %H:%i:%s'\) AS lastEventAt/)
-    const raw = { institutionId: 1, invoiceId: 6200, attempt: 2, lifeEvent: 1, environment: 'P', dpsId: 'DPS1', createdAt: '2026-10-03 10:00:00' }
+    const raw = { institutionId: 1, invoiceId: 6200, terminal: 0, attempt: 2, lifeEvent: 1, environment: 'P', dpsId: 'DPS1', createdAt: '2026-10-03 10:00:00', authorityRecorded: 'N' }
     expect(mapTransmissionView({ ...raw, lastEventAt: null }).lastEventAt).toBeNull()
     expect(mapTransmissionView(raw).lastEventAt).toBeNull()
     expect(reconfirmationProven(cand(), [cand(), mapTransmissionView({ ...raw, lastEventAt: null })])).toBe(false)

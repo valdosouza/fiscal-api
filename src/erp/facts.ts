@@ -4,6 +4,7 @@ import { ErrorCodes } from '../errors/error-codes'
 import { Queryable } from '../db/tx'
 import { assertSchema } from '../db/schema'
 import { DEFAULT_TIME_ZONE, isValidTimeZone } from '../time/zone'
+import { InvoiceRef } from '../ref/invoice-ref'
 
 /**
  * FONTE DE FATOS GESTÃO 2027 — base comum (D-F10). ÚNICO lugar do núcleo que lê o ERP
@@ -62,13 +63,16 @@ export async function assertInstitutionSchema(q: Queryable, institutionId: numbe
 
 export type OrderInterfaceKey = 'service-orders' | 'order-returns' | 'orders'
 
-/** Interface do RAMO do pedido (espelho de `resolveOrderInterface`); sem linha = 'orders'. */
-export async function orderInterface(q: Queryable, schemaName: string, institutionId: number, orderId: number): Promise<OrderInterfaceKey> {
+/**
+ * Interface do RAMO do pedido da nota (espelho de `resolveOrderInterface`); sem linha = 'orders'. O pedido e a nota têm o MESMO id
+ * no ERP (a ordem vincula todo o processo) — por isso recebe a referência da NOTA (NE-1a: terminal por parâmetro, D-NE12).
+ */
+export async function orderInterface(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<OrderInterfaceKey> {
   const s = assertSchema(schemaName)
-  if (!Number.isInteger(orderId) || orderId <= 0) return 'orders'
+  if (!Number.isInteger(ref.invoiceId) || ref.invoiceId <= 0) return 'orders'
   const [rows] = await q.query(
-    `SELECT interface_key AS k FROM \`${s}\`.vw_order_interface WHERE tb_institution_id = ? AND tb_order_id = ? AND terminal = 0`,
-    [institutionId, orderId])
+    `SELECT interface_key AS k FROM \`${s}\`.vw_order_interface WHERE tb_institution_id = ? AND tb_order_id = ? AND terminal = ?`,
+    [ref.institutionId, ref.invoiceId, ref.terminal])
   const k = rows[0]?.k
   return k === 'service-orders' || k === 'order-returns' ? k : 'orders'
 }
@@ -97,17 +101,20 @@ const LIFE_SELECT = (s: string) => `
          last_event AS lastEvent, last_kind AS lastKind
     FROM \`${s}\`.vw_invoice_life`
 
-export async function invoiceLife(q: Queryable, schemaName: string, institutionId: number, invoiceId: number): Promise<InvoiceLife | null> {
+export async function invoiceLife(q: Queryable, schemaName: string, ref: InvoiceRef): Promise<InvoiceLife | null> {
   const s = assertSchema(schemaName)
-  const [rows] = await q.query(`${LIFE_SELECT(s)} WHERE tb_institution_id = ? AND tb_invoice_id = ? AND terminal = 0`, [institutionId, invoiceId])
+  const [rows] = await q.query(`${LIFE_SELECT(s)} WHERE tb_institution_id = ? AND tb_invoice_id = ? AND terminal = ?`,
+    [ref.institutionId, ref.invoiceId, ref.terminal])
   return rows[0] ? mapLife(rows[0]) : null
 }
 
-export async function invoiceLives(q: Queryable, schemaName: string, institutionId: number, invoiceIds: number[]): Promise<Map<number, InvoiceLife>> {
+/** Vidas de VÁRIAS notas do MESMO estabelecimento e terminal (lote — a chave da nota inteira por parâmetro, D-NE12). */
+export async function invoiceLives(q: Queryable, schemaName: string, scope: Pick<InvoiceRef, 'institutionId' | 'terminal'>, invoiceIds: number[]): Promise<Map<number, InvoiceLife>> {
   const out = new Map<number, InvoiceLife>()
   if (!invoiceIds.length) return out
   const s = assertSchema(schemaName)
-  const [rows] = await q.query(`${LIFE_SELECT(s)} WHERE tb_institution_id = ? AND tb_invoice_id IN (?) AND terminal = 0`, [institutionId, invoiceIds])
+  const [rows] = await q.query(`${LIFE_SELECT(s)} WHERE tb_institution_id = ? AND tb_invoice_id IN (?) AND terminal = ?`,
+    [scope.institutionId, invoiceIds, scope.terminal])
   for (const r of rows) out.set(Number(r.invoiceId), mapLife(r))
   return out
 }
@@ -305,16 +312,16 @@ export interface LockedInvoice {
  * regra só, gate socrático L-9) por leitura travante COMPARTILHADA (fresca: não depende do snapshot do
  * REPEATABLE READ). Primeira coisa que a transação faz no ERP. null = a linha não existe.
  */
-export async function lockInvoice(conn: PoolConnection, schemaName: string, institutionId: number, invoiceId: number): Promise<LockedInvoice | null> {
+export async function lockInvoice(conn: PoolConnection, schemaName: string, ref: InvoiceRef): Promise<LockedInvoice | null> {
   const s = assertSchema(schemaName)
   const [rows] = await conn.query<any[]>(
-    `SELECT deleted FROM \`${s}\`.tb_invoice WHERE id = ? AND tb_institution_id = ? AND terminal = 0 FOR UPDATE`,
-    [invoiceId, institutionId])
+    `SELECT deleted FROM \`${s}\`.tb_invoice WHERE id = ? AND tb_institution_id = ? AND terminal = ? FOR UPDATE`,
+    [ref.invoiceId, ref.institutionId, ref.terminal])
   if (!rows[0]) return null
   const [life] = await conn.query<any[]>(
     `SELECT life_event AS lifeEvent, last_event AS lastEvent, last_kind AS lastKind FROM \`${s}\`.vw_invoice_life
-      WHERE tb_institution_id = ? AND tb_invoice_id = ? AND terminal = 0 LOCK IN SHARE MODE`,
-    [institutionId, invoiceId])
+      WHERE tb_institution_id = ? AND tb_invoice_id = ? AND terminal = ? LOCK IN SHARE MODE`,
+    [ref.institutionId, ref.invoiceId, ref.terminal])
   const l = life[0]
   return {
     alive: String(rows[0].deleted) !== 'S',

@@ -1,13 +1,26 @@
-import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, SUBSTITUTION_CANCEL_CODE, HUMAN_EFFECT_CANCEL_CODES, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
+import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
+import { InvoiceRef, invoiceRefFilter } from '../ref/invoice-ref'
 
 /**
  * CONTRATO DE LEITURA da voz do fisco (D-F33) — exportado pela biblioteca para a API da família
  * (que decide transmitir) E para o setes-api (que decide cancelar localmente e mostra o selo): UMA
  * regra da vigente, UM estado derivado, UMA pendência — nunca duas cópias (guardião §13.1-6).
  * Puro (sem banco): quem lê as VIEWs publicadas (D-F15) mapeia a linha e aplica estas funções.
+ *
+ * NE-1a (Rodada 1 da NE-1a, Valdo 2026-10-11 — D-NE56/D-NE59; parecer do guardião no `prompt_onda_nfe_sefaz.md` §12.9.2):
+ *  - PROJEÇÃO COMUM (`TransmissionView`) = as colunas que TODA família publica na view dela, com os mesmos nomes, tipos e significado;
+ *    as colunas próprias da família ficam no tipo dela (NFS-e: `ServiceTransmissionView`, em `families/service.ts`).
+ *  - REGISTRO pelo fisco = FATO publicado na view (`authority_recorded` — D-NE56), NUNCA a presença da chave: na NF-e a chave de acesso
+ *    é NOSSA e existe desde a reserva da tentativa (D-NE7) — "tem chave" lá não quer dizer que a SEFAZ registrou nada.
+ *  - Views POR família (`VoiceFamilyReading`); view comum por UNION é MAQUETE (não funde — PADROES §11 regra 3; colunas NULL por
+ *    família; sem dono — D-F35). Quem lê percorre as leituras dos ramos PRESENTES na nota (`VOICE_READINGS`).
+ *  - Vocabulário com P/D e estado derivado EXAUSTIVO (kind novo quebra a compilação em vez de virar "em voo" calado).
  */
 
-/** Linha de `vw_invoice_service_transmission` (tentativa + DPS da vida + última voz). Instantes em UTC. */
+/** Família = RAMO da nota no `fiscal_api` (55 e 65 são a MESMA família — mercadoria). Nunca coluna. */
+export type InvoiceBranch = 'service' | 'merchandise'
+
+/** PROJEÇÃO COMUM de uma tentativa (linha da view de tentativas de QUALQUER família). Instantes em UTC. */
 export interface TransmissionView {
   institutionId: number
   invoiceId:     number
@@ -16,15 +29,11 @@ export interface TransmissionView {
   /** Vida da nota (evento E que a abriu — D-N27). */
   lifeEvent:     number
   environment:   TransmissionEnvironment
-  serie:         string | null
-  dpsNumber:     number | null
-  dpsId:         string | null
+  /** Chave de acesso do documento — a PROVENIÊNCIA é da família (NFS-e: do fisco; NF-e: nossa, desde a reserva). NUNCA sinal de registro. */
   accessKey:     string | null
-  nfseNumber:    string | null
-  dhProc:        string | null
+  /** D-NE56: o fisco REGISTROU o documento desta tentativa (em qualquer ambiente) — coluna `authority_recorded` ('S'/'N') da view. */
+  authorityRecorded: boolean
   lastQueriedAt: string | null
-  /** D-F90: última resposta E2404 (nenhuma NFS-e para o Id do DPS) a uma consulta desta tentativa — a PROVA da D-F29. */
-  nfseNotGeneratedAt: string | null
   createdAt:     string | null
   lastEvent:     number | null
   lastKind:      TransmissionEventKind | null
@@ -35,7 +44,7 @@ export interface TransmissionView {
   lastEventAt:   string | null
 }
 
-/** Linha de `vw_invoice_service_transmission_event` (uma voz). */
+/** Linha da view de VOZES de qualquer família (uma voz). */
 export interface VoiceView {
   institutionId: number
   invoiceId:     number
@@ -52,54 +61,171 @@ export interface VoiceView {
   createdAt:     string | null
 }
 
-/** SELECT pronto da view de tentativas (instantes como 'YYYY-MM-DD HH:MM:SS' UTC) — [db] = banco fiscal. */
-export function transmissionViewSelect(db: string, alias = 'v'): string {
-  if (!/^[a-z0-9_]+$/.test(db)) throw new Error(`Banco fiscal inválido: ${db}`)
-  const f = (c: string) => `DATE_FORMAT(${alias}.${c}, '%Y-%m-%d %H:%i:%s')`
-  return `SELECT ${alias}.tb_institution_id AS institutionId, ${alias}.tb_invoice_id AS invoiceId, ${alias}.terminal,
-         ${alias}.attempt, ${alias}.life_event AS lifeEvent, ${alias}.environment, ${alias}.serie,
-         ${alias}.dps_number AS dpsNumber, ${alias}.dps_id AS dpsId, ${alias}.access_key AS accessKey,
-         ${alias}.nfse_number AS nfseNumber, ${f('dh_proc')} AS dhProc, ${f('last_queried_at')} AS lastQueriedAt,
-         ${f('nfse_not_generated_at')} AS nfseNotGeneratedAt, ${f('created_at')} AS createdAt, ${alias}.last_event AS lastEvent, ${alias}.last_kind AS lastKind,
-         ${alias}.last_code AS lastCode, ${alias}.last_message AS lastMessage, ${alias}.last_source AS lastSource,
-         ${f('last_dh')} AS lastDh, ${f('last_event_at')} AS lastEventAt
-    FROM \`${db}\`.vw_invoice_service_transmission ${alias}`
+/** Coluna publicada: [coluna da view, nome no objeto, instante?] — instante sai como 'YYYY-MM-DD HH:MM:SS' (UTC). */
+export type ViewColumn = readonly [column: string, field: string, instant?: boolean]
+
+/** Lista de colunas congelada em PROFUNDIDADE (gate NE-1a, NE1A-06: congelamento raso deixava trocar a coluna do SELECT publicado). */
+export function frozenColumns(columns: readonly ViewColumn[]): readonly ViewColumn[] {
+  return Object.freeze(columns.map(c => Object.freeze([...c]) as unknown as ViewColumn))
 }
 
-export function mapTransmissionView(r: any): TransmissionView {
-  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v))
+/** A projeção comum — UMA lista, que monta o SELECT de toda família (o teste da família a confere contra o DDL da view dela). */
+export const COMMON_TRANSMISSION_COLUMNS: readonly ViewColumn[] = frozenColumns([
+  ['tb_institution_id', 'institutionId'], ['tb_invoice_id', 'invoiceId'], ['terminal', 'terminal'], ['attempt', 'attempt'],
+  ['life_event', 'lifeEvent'], ['environment', 'environment'], ['access_key', 'accessKey'], ['authority_recorded', 'authorityRecorded'],
+  ['last_queried_at', 'lastQueriedAt', true], ['created_at', 'createdAt', true], ['last_event', 'lastEvent'], ['last_kind', 'lastKind'],
+  ['last_code', 'lastCode'], ['last_message', 'lastMessage'], ['last_source', 'lastSource'], ['last_dh', 'lastDh', true],
+  ['last_event_at', 'lastEventAt', true],
+])
+
+/**
+ * LEITURA PUBLICADA de uma família (NE-1a — parecer do guardião): o nome das views e as colunas DELA, o mapeador da linha e a regra
+ * "efeito humano" do cancelamento. Mora no núcleo porque o setes-api só importa o núcleo (D-F33); a família é dona do DDL das views
+ * (D-F35). Dado puro — nenhum roteiro aqui.
+ */
+export interface VoiceFamilyReading<V extends TransmissionView> {
+  readonly branch:           InvoiceBranch
+  readonly transmissionView: string
+  readonly voiceView:        string
+  readonly ownColumns:       readonly ViewColumn[]
+  readonly map:              (row: any) => V
+  /** Cancelamento cujo efeito no ERP só nasce de ato HUMANO (NFS-e: substituição e de ofício — D-F82); a NF-e define o dela (NE-2). */
+  readonly humanEffectCancel: (current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null) => boolean
+}
+
+const IDENT = /^[a-z][a-z0-9_]*$/
+/** Nome de campo do objeto mapeado (camelCase simples). */
+const FIELD = /^[a-z][A-Za-z0-9]*$/
+
+/**
+ * SELECT pronto da view de tentativas da família ([db] = banco fiscal; instantes em UTC). Gate NE-1a (NE1A-05): TODO identificador
+ * é conferido (banco, alias, view, coluna e campo) e a família NÃO pode redeclarar coluna nem campo da projeção comum — senão o SELECT
+ * sai com o alias duplicado, o driver monta o objeto na ordem das colunas e a coluna da família substitui o FATO comum calada.
+ */
+export function familyViewSelect(reading: VoiceFamilyReading<TransmissionView>, db: string, alias = 'v'): string {
+  if (!/^[a-z0-9_]+$/.test(db)) throw new Error(`Banco fiscal inválido: ${db}`)
+  if (!IDENT.test(alias)) throw new Error(`Alias inválido: ${alias}`)
+  if (!/^vw_[a-z0-9_]+$/.test(reading.transmissionView)) throw new Error(`View de tentativas inválida: ${reading.transmissionView}`)
+  const columns = [...COMMON_TRANSMISSION_COLUMNS, ...reading.ownColumns]
+  const seenColumns: string[] = [], seenFields: string[] = []
+  for (const [column, field] of columns) {
+    if (typeof column !== 'string' || !IDENT.test(column)) throw new Error(`Coluna inválida na leitura da família: ${JSON.stringify(column)}`)
+    if (typeof field !== 'string' || !FIELD.test(field)) throw new Error(`Campo inválido na leitura da família: ${JSON.stringify(field)}`)
+    if (seenColumns.includes(column) || seenFields.includes(field)) {
+      throw new Error(`A leitura da família redeclara a coluna/campo ${column}/${field} (a projeção comum não se sombreia)`)
+    }
+    seenColumns.push(column)
+    seenFields.push(field)
+  }
+  const col = ([column, field, instant]: ViewColumn) => instant
+    ? `DATE_FORMAT(${alias}.${column}, '%Y-%m-%d %H:%i:%s') AS ${field}`
+    : `${alias}.${column} AS ${field}`
+  return `SELECT ${columns.map(col).join(', ')}
+    FROM \`${db}\`.${reading.transmissionView} ${alias}`
+}
+
+/** As tentativas de UMA nota na view da família (a referência inteira por parâmetro — o terminal nunca é literal; D-NE12). */
+export function familyViewQuery(reading: VoiceFamilyReading<TransmissionView>, db: string, ref: InvoiceRef, alias = 'v'): { sql: string; params: number[] } {
+  const f = invoiceRefFilter(ref, alias)
+  return { sql: `${familyViewSelect(reading, db, alias)} WHERE ${f.sql} ORDER BY ${alias}.attempt`, params: f.params }
+}
+
+/**
+ * As tentativas de VÁRIAS notas do MESMO estabelecimento e terminal (lote — o selo da lista de OS na F2a; gate socrático da NE-1a, M3):
+ * a chave da nota inteira por parâmetro (simétrico ao `invoiceLives`), nunca um WHERE próprio do leitor com `terminal = 0`. Lista vazia
+ * é erro de quem chama (não há SQL para "nenhuma nota").
+ */
+export function familyViewQueryMany(
+  reading: VoiceFamilyReading<TransmissionView>, db: string, scope: Pick<InvoiceRef, 'institutionId' | 'terminal'>, invoiceIds: readonly number[], alias = 'v',
+): { sql: string; params: unknown[] } {
+  if (!invoiceIds.length) throw new Error('familyViewQueryMany: lista de notas vazia')
   return {
-    institutionId: Number(r.institutionId), invoiceId: Number(r.invoiceId), terminal: Number(r.terminal ?? 0),
-    attempt: Number(r.attempt), lifeEvent: Number(r.lifeEvent), environment: r.environment === 'P' ? 'P' : 'H',
-    serie: r.serie ?? null, dpsNumber: n(r.dpsNumber), dpsId: r.dpsId ?? null, accessKey: r.accessKey ?? null,
-    nfseNumber: r.nfseNumber ?? null, dhProc: r.dhProc ?? null, lastQueriedAt: r.lastQueriedAt ?? null,
-    nfseNotGeneratedAt: r.nfseNotGeneratedAt ?? null, createdAt: r.createdAt ?? null, lastEvent: n(r.lastEvent), lastKind: r.lastKind ?? null, lastCode: r.lastCode ?? null,
-    lastMessage: r.lastMessage ?? null, lastSource: r.lastSource ?? null, lastDh: r.lastDh ?? null, lastEventAt: r.lastEventAt ?? null,
+    sql: `${familyViewSelect(reading, db, alias)} WHERE ${alias}.tb_institution_id = ? AND ${alias}.tb_invoice_id IN (?) AND ${alias}.terminal = ?`
+      + ` ORDER BY ${alias}.tb_invoice_id, ${alias}.attempt`,
+    params: [scope.institutionId, [...invoiceIds], scope.terminal],
   }
 }
 
-type TxLike = Pick<TransmissionView, 'attempt' | 'accessKey' | 'lastKind'>
+/**
+ * Mapeia a PROJEÇÃO COMUM de uma linha da view. Toda coluna que DECIDE é obrigatória e falha ALTO fora do domínio (gates da NE-1a parte 1):
+ * `authority_recorded` ('S'/'N' — view sem a coluna = migration da família não aplicada; nunca vira "não registrado" calado: o cancelamento
+ * local trataria nota registrada como pendente), `environment` ('P'/'H' — o padrão 'H' falhava ABERTO no `isFiscalRecord`: nota registrada
+ * em produção tratada como homologação, soft-delete e número reaproveitado — M4) e `terminal` (inteiro ≥ 0 — o `?? 0` era o terminal da
+ * web escondido no núcleo, D-NE70 = Q-NE70 (a)).
+ */
+export function mapCommonView(r: any): TransmissionView {
+  const n = (v: unknown) => (v === null || v === undefined ? null : Number(v))
+  if (r.authorityRecorded !== 'S' && r.authorityRecorded !== 'N') {
+    throw new Error(`View de tentativas sem authority_recorded ('S'/'N') — migration da família não aplicada? (recebido: ${JSON.stringify(r.authorityRecorded)})`)
+  }
+  if (r.environment !== 'P' && r.environment !== 'H') {
+    throw new Error(`Linha da view sem environment ('P'/'H') — projeção torta? (recebido: ${JSON.stringify(r.environment)})`)
+  }
+  const terminal = r.terminal === null || r.terminal === undefined || r.terminal === '' ? NaN : Number(r.terminal)
+  if (!Number.isInteger(terminal) || terminal < 0) {
+    throw new Error(`Linha da view sem terminal (inteiro ≥ 0) — projeção torta? (recebido: ${JSON.stringify(r.terminal)})`)
+  }
+  return {
+    institutionId: Number(r.institutionId), invoiceId: Number(r.invoiceId), terminal,
+    attempt: Number(r.attempt), lifeEvent: Number(r.lifeEvent), environment: r.environment,
+    accessKey: r.accessKey ?? null, authorityRecorded: r.authorityRecorded === 'S',
+    lastQueriedAt: r.lastQueriedAt ?? null, createdAt: r.createdAt ?? null, lastEvent: n(r.lastEvent), lastKind: r.lastKind ?? null,
+    lastCode: r.lastCode ?? null, lastMessage: r.lastMessage ?? null, lastSource: r.lastSource ?? null, lastDh: r.lastDh ?? null,
+    lastEventAt: r.lastEventAt ?? null,
+  }
+}
 
-/** Tentativa VIVA = sem voz (em voo) ou com última voz não final (S/K). */
-export function isLiveTransmission(tx: TxLike | null): boolean {
+/** Só a última voz decide; a tentativa costuma vir inteira (attempt/accessKey passam, não pesam). */
+type KindLike = Pick<TransmissionView, 'lastKind'> & { attempt?: number; accessKey?: string | null }
+
+/** Tentativa VIVA = sem voz (em voo) ou com última voz não final (S/K/P). */
+export function isLiveTransmission(tx: KindLike | null): boolean {
   return !!tx && !FINAL_TRANSMISSION_KINDS.has(tx.lastKind ?? '')
 }
 
 /** AUTORIZADA vigente = última voz A ou N (D-N17). */
-export function isAuthorized(tx: TxLike | null): boolean {
+export function isAuthorized(tx: KindLike | null): boolean {
   return !!tx && AUTHORIZED_KINDS.has(tx.lastKind ?? '')
 }
 
 /**
- * A VIGENTE dentro das tentativas de UMA vida (D-N26): a NFS-e existe uma vez por vida e pousa na
- * tentativa que a obteve — "quem DETÉM a chave" (a de maior attempt, se mais de uma); sem chave, a
- * última tentativa. [list] já filtrada pela vida vigente (D-N27), em qualquer ordem.
+ * A VIGENTE dentro das tentativas de UMA vida (D-N26): o documento existe uma vez por vida e pousa na tentativa que o fisco
+ * REGISTROU (a de maior attempt, se mais de uma); sem registro, a última tentativa. [list] já filtrada pela vida vigente (D-N27), em
+ * qualquer ordem. D-NE56 (NE-1a): era "quem DETÉM a chave" — na NFS-e é o mesmo fato (a chave vem do fisco); na NF-e não (a chave é nossa).
  */
-export function currentOf<T extends TxLike>(list: readonly T[]): T | null {
+export function currentOf<T extends Pick<TransmissionView, 'attempt' | 'authorityRecorded'>>(list: readonly T[]): T | null {
   if (!list.length) return null
+  assertOneInvoiceLife(list)
   const sorted = [...list].sort((a, b) => a.attempt - b.attempt)
-  const keyed = [...sorted].reverse().find(t => !!t.accessKey)
-  return keyed ?? sorted[sorted.length - 1]
+  const recorded = [...sorted].reverse().find(t => authorityRecordedOf(t))
+  return recorded ?? sorted[sorted.length - 1]
+}
+
+/**
+ * O fato do registro como BOOLEANO — falha ALTO fora do domínio (D-NE66 = Q-NE66 (a), gate adversarial NE1A-01): a linha CRUA da view
+ * (flag 'S'/'N' do SELECT público, `any` do driver) passada direto a um predicado virava "não registrado" calada — NFS-e registrada em
+ * produção tratada como pendente. O caminho certo é o `reading.map`; o predicado recusa o que não passou por ele.
+ */
+export function authorityRecordedOf(tx: Pick<TransmissionView, 'authorityRecorded'>): boolean {
+  const v = (tx as { authorityRecorded?: unknown }).authorityRecorded
+  if (typeof v !== 'boolean') {
+    throw new Error(`authorityRecorded fora do domínio boolean (${JSON.stringify(v)}) — linha da view não passou pelo mapa da família?`)
+  }
+  return v
+}
+
+/**
+ * D-NE71 (= Q-NE71 (a), gate adversarial): a vigente é de UMA nota e UMA vida — lista que mistura estabelecimento, nota, terminal ou vida
+ * (nos campos que as linhas trazem) é erro de quem chama e falha alto, nunca uma "vigente" de outra nota. A família não está na linha
+ * (projeção comum) — quem mistura famílias é a composição que percorre `VOICE_READINGS`, uma de cada vez.
+ */
+function assertOneInvoiceLife(list: readonly object[]): void {
+  for (const key of ['institutionId', 'invoiceId', 'terminal', 'lifeEvent'] as const) {
+    const first = (list[0] as Record<string, unknown>)[key]
+    for (const t of list) {
+      if ((t as Record<string, unknown>)[key] !== first) throw new Error(`currentOf: lista mistura ${key} (${String(first)} × ${String((t as Record<string, unknown>)[key])})`)
+    }
+  }
 }
 
 /** Tentativas de [list] que pertencem à vida [lifeEvent] (vida nula = nota sem evento E: nada vale). */
@@ -107,105 +233,58 @@ export function inLife<T extends { lifeEvent: number }>(list: readonly T[], life
   return lifeEvent == null ? [] : list.filter(t => t.lifeEvent === lifeEvent)
 }
 
-export type ServiceFiscalState = 'none' | 'in_flight' | 'authorized' | 'rejected' | 'failed' | 'cancelled' | 'cancel_in_flight'
+/** Estado DERIVADO da última voz — do vocabulário COMUM (P em processamento e D denegada são da NF-e; a NFS-e nunca os produz). */
+export type FiscalState = 'none' | 'in_flight' | 'processing' | 'authorized' | 'denied' | 'rejected' | 'failed' | 'cancelled' | 'cancel_in_flight'
+/** Nome anterior à NE-1a (o estado é do vocabulário comum); a NFS-e só produz os 7 do contrato dela. */
+export type ServiceFiscalState = FiscalState
 
-export function fiscalStateOf(tx: Pick<TransmissionView, 'lastKind'> | null): ServiceFiscalState {
+/** Estado derivado — `switch` EXAUSTIVO: kind novo no vocabulário sem `case` aqui não compila (o `default` era "em voo" calado). */
+export function fiscalStateOf(tx: KindLike | null): FiscalState {
   if (!tx) return 'none'
-  switch (tx.lastKind) {
+  const kind = tx.lastKind
+  if (kind === null || kind === undefined) return 'in_flight'          // reserva sem voz
+  switch (kind) {
+    case 'S': return 'in_flight'
+    case 'P': return 'processing'
     case 'A':
     case 'N': return 'authorized'
+    case 'D': return 'denied'
     case 'R': return 'rejected'
     case 'F': return 'failed'
     case 'C': return 'cancelled'
     case 'K': return 'cancel_in_flight'
-    default:  return 'in_flight'
+    default: {
+      // kind fora do vocabulário só chega gravado por fora do código (D-F103) — em execução falha FECHADO como viva
+      const unknownKind: never = kind
+      void unknownKind
+      return 'in_flight'
+    }
   }
 }
 
-/**
- * Pendência DERIVADA do efeito (D-F28): a vigente da vida tem voz C do fisco e a nota, no ERP, ainda
- * NÃO tem o evento C. Nada é gravado para saber disso — é a leitura dos dois fatos.
- */
-export function localCancelPending(current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null, invoiceLastKind: string | null): boolean {
-  // D-F68 (= Q-F75 (a)): a SUBSTITUIÇÃO (e105102) não manda o app aplicar o C local — é decisão humana (D-F64/D-F67);
-  // D-F82 (= Q-F89): o cancelamento DE OFÍCIO (e305101) também não
-  return current?.lastKind === 'C' && invoiceLastKind !== 'C' && !isHumanEffectCancel(current)
-}
-
-/** D-F82: a voz vigente é um cancelamento cujo efeito no ERP só nasce de ato HUMANO (105102 ou 305101). */
-export function isHumanEffectCancel(current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null): boolean {
-  return current?.lastKind === 'C' && !!current.lastCode && HUMAN_EFFECT_CANCEL_CODES.has(current.lastCode)
-}
-
-/** D-F68: a voz vigente é um cancelamento por SUBSTITUIÇÃO (código do evento na voz C — D-F71). */
-export function isSubstitutionCancel(current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null): boolean {
-  return current?.lastKind === 'C' && current.lastCode === SUBSTITUTION_CANCEL_CODE
-}
-
-type ReconfirmLike = Pick<TransmissionView, 'attempt' | 'lastKind' | 'lastSource' | 'environment' | 'accessKey' | 'dpsId'>
-
-/**
- * Reconfirmação antes do cancelamento LOCAL (Q-ADV1b/Q-ADV2a → D-F29): na VIDA vigente, se nenhuma
- * tentativa detém a chave e alguma fechou com F por CONSULTA em PRODUÇÃO (as tentativas da vida reusam
- * o Id do DPS — D-N3), a candidata é a ÚLTIMA delas. Homologação não prende a nota (Q-CA5b).
- */
-export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: readonly T[]): T | null {
-  if (lifeList.some(t => !!t.accessKey)) return null
-  // D-F103 (= Q-F109 (a)): `=== 'F'` é sensível a caixa e o banco não confere o domínio de `kind` (colação _ci) — os escritores são
-  // tipados; voz gravada por fora do código ("f") some daqui. O CHECK binário entra na migration da F2a.
-  const c = lifeList
-    .filter(t => t.lastKind === 'F' && t.lastSource === 'Q' && t.environment === 'P' && !!t.dpsId)
-    .sort((a, b) => a.attempt - b.attempt)
-  return c[c.length - 1] ?? null
+/** Registro FISCAL (Q-CA5): o fisco registrou E em PRODUÇÃO — homologação não tem valor jurídico. Fato da view (D-NE56). */
+export function isFiscalRecord(tx: Pick<TransmissionView, 'authorityRecorded' | 'environment'> | null): boolean {
+  return !!tx && authorityRecordedOf(tx) && tx.environment === 'P'
 }
 
 /**
- * Prova LIDA NO BANCO (D-F29; D-F90 = Q-F96 (c), Valdo 2026-10-11 — SUPERA em parte a D-F29): o fisco respondeu
- * EXPLICITAMENTE E2404 ("nenhuma NFS-e para este Id de DPS") a uma pergunta feita DEPOIS da voz F da candidata
- * (`nfse_not_generated_at` > instante da voz). NUNCA o `last_queried_at` — esse é só o carimbo do rodízio ("nós
- * olhamos"), gravado também quando a consulta falhou de forma persistente (502 ambíguo): a prova ficava forjável.
- * Mesmo relógio dos dois lados (o NOSSO — PADROES §11 regra 9). Estritamente maior: a consulta que GEROU o F não prova.
- * CONHECIMENTO NEGATIVO (D-F92 = Q-F98 (a), Valdo 2026-10-11): a prova NÃO tem prazo de validade — qualquer E2404 POSTERIOR à
- * última apresentação do Id vale, inclusive o da revisita automática de 24 h (D-F52) semanas antes do cancelamento; 24 h depois da
- * última apresentação o "não gerada" é conclusivo. Não inventar janela; reabrir só se a prova ao vivo M4 mostrar NFS-e gerada TARDE.
- * D-F97 (= Q-F103 (b), Valdo 2026-10-11): as tentativas da MESMA vida reapresentam o MESMO Id do DPS (D-N3/D-F30) — a premissa "o DPS
- * foi enviado uma vez" era falsa. O E2404 tem de ser POSTERIOR à ÚLTIMA apresentação do Id em QUALQUER tentativa da vida no mesmo
- * ambiente (o instante da reserva ou da última voz de cada uma, o maior); passe a VIDA em `lifeList` (sem ela, só a candidata conta).
- * D-F99 (= Q-F105 (b), Valdo 2026-10-11): tentativa da MESMA identidade SEM VOZ (em voo — só há o instante da RESERVA; o POST dela pode
- * chegar ao fisco DEPOIS do E2404) → não prova, falha FECHADO. A prova volta quando a tentativa ganhar voz (aí a apresentação é conhecida).
- * D-F101 (= Q-F107 (b), Valdo 2026-10-11 — estende a D-F99): "em voo" = tentativa VIVA, pelo MESMO predicado da barreira do plano de
- * cancelamento e do rodízio (`isLiveTransmission`: sem voz OU última voz não final — S "enviado", K) — a voz S tem instante, mas a
- * apresentação dela pode não ter chegado ao fisco. `lastKind` entra no contrato; AUSENTE conta como viva (falha FECHADO).
- * D-F102 (= Q-F108 (a)): S não tem saída hoje (ver `kinds.ts`) — quem criar produtor de S dá a ela a saída da D-F51.
- * D-F104 (= Q-F110 (a), Valdo 2026-10-11): a prova fica BOOLEANA até a F2a; o veredito com MOTIVO (barreira e prova numa chamada só —
- * molde `verdictOf`, D-IB47) se decide na rodada da F2a, com o caso real (itens (5)/(6) da nota de implantação, §21.14).
+ * Barreira de NOVA tentativa (NE-1a): a vigente está VIVA ou o fisco REGISTROU o documento — a NF-e DENEGADA (D: final e não
+ * autorizada) também barra (D-E7: não se retransmite; o número queimou). A NFS-e segue com a ordem dos 409 dela (os mesmos códigos).
  */
-// R20-02 do gate da Rodada 20: `lastKind` é OBRIGATÓRIO no tipo (o valor pode ser `null` = viva) — projeção que o esquece não compila
-// (antes compilava e a prova nunca passava: laço "reconfira" silencioso na F2a); o fallback de execução segue falhando FECHADO
-type PresentationLike = Partial<Pick<TransmissionView, 'lastEventAt' | 'createdAt' | 'dpsId' | 'environment'>> & Pick<TransmissionView, 'lastKind'>
-/** Instante do banco como o leitor do núcleo o entrega (`DATE_FORMAT` — UTC); só nesse formato a comparação por texto é cronológica. */
-const DB_INSTANT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
-export function reconfirmationProven(
-  candidate: Pick<TransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt'> & PresentationLike,
-  /** A VIDA inteira (as tentativas da vida vigente) — obrigatória (gate da Rodada 18, R18-04: o padrão `[candidata]` voltava em
-   *  silêncio à regra de antes da D-F97). */
-  lifeList: readonly PresentationLike[],
+export function blocksNewAttempt(tx: Pick<TransmissionView, 'lastKind' | 'authorityRecorded'> | null): boolean {
+  if (!tx) return false
+  const recorded = authorityRecordedOf(tx)          // o fato é conferido SEMPRE (também quando a viva decidiria sozinha)
+  return isLiveTransmission(tx) || recorded
+}
+
+/**
+ * Pendência DERIVADA do efeito (D-F28) na leitura de UMA família: a vigente da vida tem voz C do fisco e a nota, no ERP, ainda NÃO tem
+ * o evento C — salvo cancelamento de efeito HUMANO da família. Nada é gravado para saber disso — é a leitura dos dois fatos.
+ */
+export function localCancelPendingIn(
+  reading: Pick<VoiceFamilyReading<TransmissionView>, 'humanEffectCancel'>,
+  current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null,
+  invoiceLastKind: string | null,
 ): boolean {
-  if (!candidate.nfseNotGeneratedAt || !candidate.lastEventAt) return false
-  // R18-03: sem a IDENTIDADE da candidata (Id do DPS + ambiente) não há como achar as reapresentações — falha FECHADO
-  if (!candidate.dpsId || !candidate.environment) return false
-  // R18-06: instante fora do formato do leitor (ISO com T/Z, etc.) — a comparação por texto mentiria; falha FECHADO
-  const instants = [candidate.nfseNotGeneratedAt, candidate.lastEventAt, ...lifeList.flatMap(t => [t.createdAt, t.lastEventAt])]
-  if (instants.some(at => at != null && !DB_INSTANT.test(at))) return false
-  let lastPresentation = candidate.lastEventAt
-  for (const t of [candidate, ...lifeList]) {
-    // R19-01 do gate da Rodada 19: irmã sem a identidade (projeção sem Id do DPS ou ambiente) não pode ser descartada como "outra
-    // identidade" — falha FECHADO (a view entrega `dps_id` e `environment` em toda linha da vida)
-    if (!t.dpsId || !t.environment) return false
-    if (t.dpsId !== candidate.dpsId || t.environment !== candidate.environment) continue
-    // D-F99/D-F101: em voo (sem voz) ou VIVA (S/K — `isLiveTransmission`) — a apresentação dela é desconhecida; `lastKind` ausente = viva
-    if (!t.lastEventAt || !FINAL_TRANSMISSION_KINDS.has(t.lastKind ?? '')) return false
-    for (const at of [t.createdAt, t.lastEventAt]) if (at && at > lastPresentation) lastPresentation = at
-  }
-  return candidate.nfseNotGeneratedAt > lastPresentation
+  return current?.lastKind === 'C' && invoiceLastKind !== 'C' && !reading.humanEffectCancel(current)
 }

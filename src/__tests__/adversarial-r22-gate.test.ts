@@ -80,11 +80,15 @@ describe('D-F106 (= Q-F112 (b)) sobre o vocabulário do NÚCLEO', () => {
     const d: ServiceWriteAfterNe1a = 'D'
     expect([same, stable, s, p, d]).toEqual([true, true, 'S', 'P', 'D'])
   })
-  it('contexto: o vocabulário comum de HOJE é exatamente S/A/R/C/K/F/N (S segue nele — D-F102 opção (c) não escolhida — e VIVO); quando a NE-1a trouxer P/D esta testemunha quebra e aponta a Q-F114', () => {
-    const today: Equal<TransmissionEventKind, 'S' | 'A' | 'R' | 'C' | 'K' | 'F' | 'N'> = assertType()
+  it('contexto [NE-1a — D-NE14]: a testemunha quebrou como previsto — o vocabulário comum agora é S/A/R/C/K/F/N + P (viva) e D (final); S segue nele e VIVO (D-F102); a lista de escrita da NFS-e NÃO mudou (A/R/C/K/F/N)', () => {
+    const today: Equal<TransmissionEventKind, 'S' | 'A' | 'R' | 'C' | 'K' | 'F' | 'N' | 'P' | 'D'> = assertType()
     expect(today).toBe(true)
     expect(FINAL_TRANSMISSION_KINDS.has('S')).toBe(false)
+    expect([FINAL_TRANSMISSION_KINDS.has('P'), FINAL_TRANSMISSION_KINDS.has('D')]).toEqual([false, true])
     expect(isLiveTransmission({ attempt: 1, accessKey: null, lastKind: 'S' })).toBe(true)
+    // a família de serviço segue sem S/P/D sobre o tipo comum ALARGADO (a lista dela deriva da constante — D-F106)
+    const stillSix: Equal<ServiceWrite, 'A' | 'R' | 'C' | 'K' | 'F' | 'N'> = assertType()
+    expect(stillSix).toBe(true)
   })
   it('[CORRIGIDO na sessão] ressalva do adversarial: o `Extract` era fail-OPEN se o tipo comum virasse `any` (dava `any` — a D-F106 evaporava calada); DERIVADO da constante literal, o tipo da família continua A/R/C/K/F/N com o comum `any` OU `string` — e o `satisfies` segue barrando kind fora do comum', () => {
     const open: Equal<Extract<any, 'A'>, any> = assertType()                  // por que a 1ª forma foi trocada
