@@ -17,7 +17,7 @@
 //    o cenário do `it.failing` vizinho monta de verdade (o `it.failing` só afirma a última coisa).
 //
 // REGRAS DO GATE: puro (sem banco, sem socket — `transport.request` trocado —, sem fisco). Lê o espelho do setes-api só como TEXTO.
-import { setesApiPath } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
+import { setesApiPathUntilF2a, setesApiSources, relWorkspace } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
 import fs from 'fs'
 import path from 'path'
 import { isLiveTransmission } from '../voice/reading'
@@ -250,9 +250,14 @@ describe('RESISTIU — D-F98: a causa do ambíguo é da lista FECHADA, do produt
       expect(again.ambiguousCauseOf(e)).toBe('evento-recusado')
     })
   })
-  it('resistiu: ESPELHO do setes-api — a lista `AMBIGUOUS_CAUSES`, a chave do Symbol e o código das duas funções são IDÊNTICOS (só o comentário de cabeçalho difere)', () => {
-    // D-F117: o espelho TEM de existir até a A3 da F2a (que o remove — e revisa esta cerca na mesma entrega)
-    const mirror = setesApiPath('src', 'shared', 'tax-authority', 'ambiguous-cause.ts')
+  it('resistiu: ESPELHO do setes-api — a lista `AMBIGUOUS_CAUSES`, a chave do Symbol e o código das duas funções são IDÊNTICOS (só o comentário de cabeçalho difere); com a F2a aplicada o espelho MORREU (nota (3)) e nada dele sobra', () => {
+    // D-F117 revisto na A3 da F2a: o espelho existe até a A3 (que o remove); depois, nenhuma marca do ambíguo no setes-api — o alarme é só da nfse-api
+    const mirror = setesApiPathUntilF2a('src', 'shared', 'tax-authority', 'ambiguous-cause.ts')
+    if (!mirror) {
+      const left = setesApiSources().filter(f => /AMBIGUOUS_CAUSES|fiscal.ambiguousCause|tagAmbiguous|logAmbiguousFiscal/.test(fs.readFileSync(f, 'utf8')))
+      expect(left.map(relWorkspace)).toEqual([])
+      return
+    }
     const core = path.join(SRC_ROOT, 'errors', 'ambiguous-cause.ts')
     const body = (f: string) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n').replace(/^\/\*\*[\s\S]*?\*\/\n/, '')
     expect(body(mirror)).toBe(body(core))

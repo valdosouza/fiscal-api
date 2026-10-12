@@ -27,3 +27,34 @@ export function relWorkspace(file: string): string {
   if (abs === SETES_API_DIR || abs.startsWith(SETES_API_DIR + path.sep)) return `setes-api/${path.relative(SETES_API_DIR, abs)}`.replace(/\\/g, '/')
   return path.relative(WORKSPACE, abs).replace(/\\/g, '/')
 }
+
+/** Arquivos do setes-api (src + scripts) — para as cercas do "depois da F2a" (nada do código fiscal pode ter sobrado). */
+export function setesApiSources(): string[] {
+  const walk = (dir: string): string[] => (!fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
+    d.isDirectory() ? (d.name === 'node_modules' ? [] : walk(path.join(dir, d.name))) : /\.ts$/.test(d.name) ? [path.join(dir, d.name)] : []))
+  return [...walk(path.join(SETES_API_DIR, 'src')), ...walk(path.join(SETES_API_DIR, 'scripts'))]
+}
+
+/**
+ * F2a, etapa A3 (D-F110/D-F50): o setes-api com a F2a APLICADA = a migration de nome FIXO `NNN_f2a_fiscal_passivo.sql` no disco do
+ * SETES_API_DIR (o mesmo nome que a nfse-api confere em `_migrations` antes do ato da virada).
+ */
+export function setesApiF2aApplied(): boolean {
+  const dir = path.join(SETES_API_DIR, 'src', 'migrations', 'sql')
+  return fs.existsSync(dir) && fs.readdirSync(dir).some(f => /^\d{3}_f2a_fiscal_passivo\.sql$/.test(f))
+}
+
+/**
+ * D-F117 revisto na A3: caminho que EXISTE até a A3 da F2a e MORRE nela. Existe → devolve o caminho (a cerca do "antes" vale). Não existe
+ * → só com a F2a APLICADA no SETES_API_DIR (senão falha ALTO, como o `mustExist`) e devolve null: quem chama confere o invariante do
+ * "depois" (o código fiscal saiu do setes-api). Uma árvore sem o arquivo e sem a F2a é um setes-api QUEBRADO, nunca "a cerca passa calada".
+ */
+export function setesApiPathUntilF2a(...parts: string[]): string | null {
+  const p = path.join(SETES_API_DIR, ...parts)
+  if (fs.existsSync(p)) return p
+  if (!setesApiF2aApplied()) {
+    throw new Error(`D-F117: a cerca vigia ${p}, que NÃO existe, e o setes-api em ${SETES_API_DIR} não tem a F2a aplicada `
+      + '(migration NNN_f2a_fiscal_passivo.sql) — arquivo sumido fora da A3, ou SETES_API_DIR errado')
+  }
+  return null
+}

@@ -21,7 +21,7 @@
 //
 // REGRAS DO GATE: puro (sem banco, sem socket, sem fisco). Lê a nfse-api e o setes-api só como TEXTO. Testemunhas de COMPILAÇÃO
 // (`@ts-expect-error`) são conferidas pelo ts-jest: um `@ts-expect-error` sem erro QUEBRA a compilação deste arquivo.
-import { setesApiPath, mustExist, relWorkspace } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
+import { setesApiPathUntilF2a, setesApiSources, relWorkspace } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
 import fs from 'fs'
 import path from 'path'
 import * as core from '../index'
@@ -36,7 +36,8 @@ const walk = (dir: string, ext: RegExp): string[] => (!fs.existsSync(dir) ? [] :
   d.isDirectory() ? (d.name === '__tests__' || d.name === 'node_modules' ? [] : walk(path.join(dir, d.name), ext)) : ext.test(d.name) ? [path.join(dir, d.name)] : []))
 const NFSE_REPO = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'repository.ts')
 const NFSE_FAMILY = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'voice-family.ts')
-const SETES_REPO = setesApiPath('src', 'shared', 'invoice-transmission', 'transmission.repository.ts')   // D-F117: tem de existir
+// D-F117 revisto na A3 da F2a: o escritor da voz do setes-api existe até a A3 (que o remove); depois, null = cerca do "depois"
+const SETES_REPO = setesApiPathUntilF2a('src', 'shared', 'invoice-transmission', 'transmission.repository.ts')
 const FENCE = path.join(WORKSPACE, 'nfse-api', 'src', '__tests__', 'voice-kind-fence.ts')
 
 // --- igualdade de tipos (testemunha de compilação) ---
@@ -72,10 +73,14 @@ describe('D-F106 (= Q-F112 (b)) sobre o vocabulário do NÚCLEO', () => {
     expect(core).toMatch(/const kind = e\?\.kind as unknown[\s\S]*?if \(typeof kind !== 'string' \|\| !writeSet\.has\(kind\)\) \{\s*throw new Error\(`D-F106:/)
     expect(core.indexOf('!writeSet.has(kind)')).toBeLessThan(core.indexOf('await conn.query'))
     if (fs.existsSync(NFSE_REPO)) expect(read(NFSE_REPO)).toMatch(/export const insertTransmissionEvent = SERVICE_VOICE_FAMILY\.insertTransmissionEvent/)
-    if (mustExist(SETES_REPO)) {
+    if (SETES_REPO) {
       const setes = read(SETES_REPO)
       for (const re of [list, derived, funnel, /kind:\s+ServiceVoiceWriteKind/]) expect(setes).toMatch(re)
       expect(setes).not.toMatch(/ServiceVoiceWriteKind = Extract</)
+    } else {
+      // F2a aplicada (D-F110): o setes-api NÃO escreve a voz — nenhum escritor nem lista de escrita sobrou nele
+      const left = setesApiSources().filter(f => /insertTransmissionEvent|SERVICE_VOICE_WRITE_KINDS|ServiceVoiceWriteKind/.test(read(f)))
+      expect(left.map(rel)).toEqual([])
     }
   })
   it('resistiu: sobre o tipo REAL do núcleo, a lista da família é EXATAMENTE A/R/C/K/F/N (S fora) — e continua a MESMA quando a NE-1a alargar o tipo comum com P/D (testemunhas de compilação)', () => {

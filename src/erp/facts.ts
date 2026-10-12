@@ -279,8 +279,9 @@ export async function establishmentCnpj(q: Queryable, institutionId: number): Pr
  * D-F39 (lacuna do guardião): o ERP tem habilitação SE PRÓPRIA (o caminho de emissão do setes-api — tabela que a F2a
  * aposenta) para esta institution? Viva OU excluída: o contador tem história (D-N18) — uma habilitação nova na API
  * começando do zero cunharia Ids de DPS que o ERP já usou (cenário R2-2). Só SE: o ERP nunca transmitiu 55/65 (a linha
- * 55 do ERP é a série do faturamento — D-F21). A F2a NÃO apaga a tabela (D-F44: aposenta SEM DROP; D-F110: a 068 do setes-api a
- * CONGELA — "origem congelada"); a tabela ausente (schema sem a migration 058, cliente que nunca emitiu pelo ERP) = não tem.
+ * 55 do ERP é a série do faturamento — D-F21). A F2a NÃO apaga a tabela (D-F44: aposenta SEM DROP; D-F110: a migration de nome fixo
+ * `f2a_fiscal_passivo` do setes-api — a 069, errata da numeração — a CONGELA por gatilhos: "origem congelada", só o ato N→S passa);
+ * a tabela ausente (schema sem a migration 058, cliente que nunca emitiu pelo ERP) = não tem.
  */
 export async function erpServiceIssuerExists(q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
   const s = assertSchema(schemaName)
@@ -312,6 +313,10 @@ export interface LockedInvoice {
  * serviços) + VIDA e último evento lidos da MESMA view de política do ERP (`vw_invoice_life` — D-F32: uma
  * regra só, gate socrático L-9) por leitura travante COMPARTILHADA (fresca: não depende do snapshot do
  * REPEATABLE READ). Primeira coisa que a transação faz no ERP. null = a linha não existe.
+ * D-F126 (= Q-F136 (a), Valdo 2026-10-12 — gates da A2 da F2a, F2A2-ADV-02 provado no MariaDB 10.4.20): a leitura travante da view só é
+ * fresca nas tabelas do JOIN — os NOT EXISTS de dentro dela ("último evento") leem o RETRATO do REPEATABLE READ. Retrato aberto ANTES
+ * desta trava + re-faturamento no intervalo = VÁRIAS linhas (vida × último, novas e velhas). Aqui a trava é o 1º comando (withInvoiceTx),
+ * mas a regra não depende disso: mais de uma linha = 409 RESOURCE_BUSY (PADROES_BANCO §11 regra 13) — nunca "a primeira".
  */
 export async function lockInvoice(conn: PoolConnection, schemaName: string, ref: InvoiceRef): Promise<LockedInvoice | null> {
   const s = assertSchema(schemaName)
@@ -323,6 +328,9 @@ export async function lockInvoice(conn: PoolConnection, schemaName: string, ref:
     `SELECT life_event AS lifeEvent, last_event AS lastEvent, last_kind AS lastKind FROM \`${s}\`.vw_invoice_life
       WHERE tb_institution_id = ? AND tb_invoice_id = ? AND terminal = ? LOCK IN SHARE MODE`,
     [ref.institutionId, ref.invoiceId, ref.terminal])
+  if (life.length > 1) {
+    throw new HttpError(409, `A nota ${ref.invoiceId} mudou durante a operação — tente novamente`, undefined, ErrorCodes.RESOURCE_BUSY)
+  }
   const l = life[0]
   return {
     alive: String(rows[0].deleted) !== 'S',
