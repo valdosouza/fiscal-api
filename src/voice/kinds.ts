@@ -18,7 +18,10 @@
  * D-F103 (= Q-F109 (a)): `kind` é CHAR(1) sem CHECK de domínio na migration 001 da nfse-api (colação _ci — o banco aceita "f", que o SQL
  * lê como F e o código como VIVA). Os escritores são TIPADOS — EXCETO a cópia do `migrate:setes` (`nfse-api/scripts/migrate-from-setes-api.ts`:
  * `INSERT IGNORE … SELECT … ev.kind` herda o domínio da ORIGEM, que também não tem CHECK — R21-05). NUNCA gravar voz por fora do código.
- * A migration da F2a ganha o CHECK do domínio em colação binária, conferido no boot (molde da D-F45) — item (7) da nota de implantação.
+ * A migration da F2a ganha o CHECK do domínio em colação binária, conferido no boot (molde da D-F45) — item (7) da nota de implantação;
+ * o domínio é a lista da FAMÍLIA (A/R/C/K/F/N — D-F107), não este tipo comum. Quando a máquina vier para cá (NE-1a), a lista de escrita
+ * vai no DESCRITOR da família (`VoiceFamily<K>`) e o escritor comum é genérico nela, com o funil em execução (D-F108 — nota no
+ * `prompt_onda_nfe_sefaz.md` §12.8): nunca um escritor do núcleo tipado por `TransmissionEventKind`.
  */
 export type TransmissionEventKind = 'S' | 'A' | 'R' | 'C' | 'K' | 'F' | 'N'
 /** P resposta direta ao nosso pedido · Q consulta. */

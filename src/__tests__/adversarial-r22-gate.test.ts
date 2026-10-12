@@ -144,12 +144,12 @@ function voiceWriterFor<K extends string>(family: VoiceFamily<K>) {
 }
 const SERVICE_FAMILY: VoiceFamily<typeof FAMILY_LIST[number]> = { eventTable: 'tb_invoice_service_transmission_event', writeKinds: FAMILY_LIST }
 
-describe('Q-F114 (MEDIUM latente, planejado) — onde mora a lista da família quando o escritor for para o núcleo', () => {
+describe('D-F108 (= Q-F114 (a), Rodada 23 — executa na NE-1a) — a lista da família mora no DESCRITOR quando o escritor for para o núcleo', () => {
   it('contexto: o escritor da máquina comum tipado pelo vocabulário COMUM (a forma que a extração literal produz) aceita S, P e D para QUALQUER família — inclusive a NFS-e — e a cerca no núcleo é `sqlOnly` com a tabela vinda do descritor (cega: ver o contexto Q-F114 do r22 da nfse-api)', () => {
     const toService: CoreVoiceInput[] = [{ kind: 'S', source: 'P' }, { kind: 'P', source: 'Q' }, { kind: 'D', source: 'Q' }]   // compila
     expect(toService.map(e => e.kind)).toEqual(['S', 'P', 'D'])
   })
-  it('contexto (a forma da alternativa (a)): com o DESCRITOR da família carregando a lista de escrita e o escritor do núcleo genérico nela, o TIPO recusa S/P/D na NFS-e e a EXECUÇÃO recusa o cast — a defesa vai junto com a máquina', () => {
+  it('contexto (a forma DECIDIDA — D-F108): com o DESCRITOR da família carregando a lista de escrita e o escritor do núcleo genérico nela, o TIPO recusa S/P/D na NFS-e e a EXECUÇÃO recusa o cast — a defesa vai junto com a máquina', () => {
     const writeService = voiceWriterFor(SERVICE_FAMILY)
     // @ts-expect-error — S fora da família de serviço, já no tipo do escritor do NÚCLEO
     expect(() => writeService({ kind: 'S', source: 'P' })).toThrow(/fora da família/)
