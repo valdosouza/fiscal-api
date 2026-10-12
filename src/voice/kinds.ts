@@ -10,7 +10,11 @@
  * NA MESMA ENTREGA (idade da voz S ≥ IN_FLIGHT_MINUTES + o veredito conclusivo do fisco da família → F); senão a prova da reconferência
  * (D-F101) fica falsa para sempre e o transmitir em 409. A CERCA (`nfse-api/src/__tests__/voice-kind-fence.ts`, por AST) pega o literal
  * S ao lado de `kind` em QUALQUER grafia e o SQL de escrita na voz, em todo lugar que escreve na voz da NFS-e — NÃO pega produtor
- * SEMÂNTICO (constante nomeada, shorthand, mapa, parâmetro): esse só o TIPO do escritor pega (Q-F112). Escopo por família: Q-F111.
+ * SEMÂNTICO (constante nomeada, shorthand, mapa, parâmetro): esse o TIPO do escritor pega — D-F106 (= Q-F112 (b)): o escritor da NFS-e
+ * aceita só a lista POSITIVA da família (`ServiceVoiceWriteKind` = A/R/C/K/F/N, na nfse-api e no setes-api); os kinds que a NE-1a trouxer
+ * para ESTE tipo comum (P da NF-e — viva, em processamento; D — FINAL, denegada) não entram lá. D-F105 (= Q-F111 (a)): a D-F102 vale SÓ
+ * para a família NFS-e — a NF-e PODE produzir S; quem o produzir dá a saída na mesma entrega (consulta pela NOSSA chave — §3.2/D-NE7 do
+ * prompt da NF-e; o P sai pela consulta do recibo — D-NE33); no núcleo a cerca só olha SQL na tabela da NFS-e.
  * D-F103 (= Q-F109 (a)): `kind` é CHAR(1) sem CHECK de domínio na migration 001 da nfse-api (colação _ci — o banco aceita "f", que o SQL
  * lê como F e o código como VIVA). Os escritores são TIPADOS — EXCETO a cópia do `migrate:setes` (`nfse-api/scripts/migrate-from-setes-api.ts`:
  * `INSERT IGNORE … SELECT … ev.kind` herda o domínio da ORIGEM, que também não tem CHECK — R21-05). NUNCA gravar voz por fora do código.
