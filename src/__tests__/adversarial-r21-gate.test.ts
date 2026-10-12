@@ -141,9 +141,14 @@ describe('D-F103 (= Q-F109 (a)) — domínio de `kind`', () => {
     }
     const checks = famSql().flatMap(f => checksOf(read(f).replace(/--[^\n]*/g, '')).map(expr => ({ f: rel(f), expr })))
       .filter(c => /`kind`/.test(c.expr))
-    expect(checks.map(c => c.f)).toEqual(['nfse-api/src/migrations/sql/002_cancel_event_code.sql', 'nfse-api/src/migrations/sql/005_service_transmission_domains.sql'])
+    expect(checks.map(c => c.f)).toEqual(['nfse-api/src/migrations/sql/002_cancel_event_code.sql', 'nfse-api/src/migrations/sql/005_service_transmission_domains.sql',
+      'nfse-api/src/migrations/sql/006_cancel_event_code_exact.sql'])
     expect(checks[0].expr.replace(/\s+/g, ' ')).toMatch(/^`kind` <> 'C' OR `authority_code` IS NULL OR `authority_code` IN \(/)
     expect(checks[1].expr.replace(/\s+/g, ' ')).toBe("`kind` COLLATE utf8mb4_bin IN ('A', 'R', 'C', 'K', 'F', 'N')")
+    // gates da A3 da F2a (F2A3-ADV-02): a 006 SUBSTITUI o CHECK do código da 002 (mesmo nome — DROP + ADD) pela forma EXATA (comprimento +
+    // lista binária — PAD SPACE da colação, PADROES §11 regra 16)
+    expect(checks[2].expr.replace(/\s+/g, ' ')).toBe("`kind` COLLATE utf8mb4_bin <> 'C' OR `authority_code` IS NULL "
+      + "OR (CHAR_LENGTH(`authority_code`) = 6 AND `authority_code` COLLATE utf8mb4_bin IN ('101101', '105102', '105104', '305101'))")
     expect(read(path.join(WORKSPACE, 'nfse-api', 'src', 'migrations', 'sql', '001_nfse_baseline.sql'))).toMatch(/`kind`\s+CHAR\(1\) NOT NULL COMMENT 'S · A · R · C · K · F · N'/)
   })
   it('[DECIDIDO — D-NE84/D-F107, F2a] (era o contexto: a sonda da D-F45 só levava \'ZZ\' e não distinguia o CHECK binário do _ci) — a sonda do modelo leva \'ZZ\' E a minúscula \'se\'; o modelo das duas comparações abaixo segue valendo para a sonda do `kind` (\'S\' e \'f\')', () => {
