@@ -6,9 +6,10 @@ import { MasterKeyRing } from '../secret/cipher'
 import { CertificateInfo, certificateInfo, pkcs12ToPem, validateIssuerPair, validatePrivateKeyPem } from '../secret/certificate'
 import {
   IssuerModel, IssuerEnvironment, IssuerRow, CertificateRow,
-  getIssuer, getCertificate, saveCertificate, eraseCertificate, issuerRowsState, assertEmitterWritable,
+  getIssuer, getCertificate, saveCertificate, issuerRowsState, assertCertificateWritable,
+  issuerModelStillInErp, establishmentStillInErp,
 } from './establishment.repository'
-import { erpServiceIssuerExists } from '../erp/facts'
+import { IssuerAuthority, authorityOf } from './issuer-models'
 
 /**
  * PEÇA do núcleo: "este estabelecimento fala com o fisco com o SEU A1, num ambiente, por modelo"
@@ -19,12 +20,9 @@ import { erpServiceIssuerExists } from '../erp/facts'
  *  - O `.pfx` e a senha existem SÓ na chamada de upload. A chave decifrada existe SÓ na chamada ao fisco.
  */
 
-export type IssuerAuthority = 'ADN' | 'SEFAZ'
-
-/** Autoridade fiscal DERIVADA do modelo — mapa constante, nunca coluna (D-E1). */
-export function authorityOf(model: IssuerModel): IssuerAuthority {
-  return model === 'SE' ? 'ADN' : 'SEFAZ'
-}
+// autoridade DERIVADA do modelo pelo catálogo `ISSUER_MODEL_FACTS` (D-E1/D-NE10 — `issuer-models.ts`); re-exportada com o mesmo nome
+export { authorityOf }
+export type { IssuerAuthority }
 
 /** AAD da chave cifrada: amarra o texto cifrado à LINHA (copiar para outro estabelecimento não abre). */
 export const certificateAad = (institutionId: number) => `tb_establishment_certificate:${institutionId}`
@@ -79,11 +77,11 @@ export async function openIssuer(
   const issuer = await getIssuer(q, institutionId, model, opts.forUpdate ?? false)
   if (!issuer) {
     // D-F39: réplica EXCLUÍDA continua réplica e a lacuna (b) é do ERP — "configure a habilitação" seria mentira, o PUT
-    // recusaria. Com [schemaName], o predicado COMPLETO (gates do delta de 2026-10-04 — F2); sem ele, só a réplica.
-    // Só no caminho da falha (sem custo no caminho feliz).
+    // recusaria. Com [schemaName], o predicado COMPLETO do MODELO (gates do delta de 2026-10-04 — F2; D-NE10); sem ele, só a
+    // réplica do modelo. Só no caminho da falha (sem custo no caminho feliz).
     const stillInErp = opts.schemaName
-      ? await emissionStillInErp(q, opts.schemaName, institutionId)
-      : (await issuerRowsState(q, institutionId)).replicas > 0
+      ? await emissionStillInErp(q, opts.schemaName, institutionId, model)
+      : (await issuerRowsState(q, institutionId, [model])).replicas > 0
     if (stillInErp) {
       throw new HttpError(409, 'A emissão fiscal deste estabelecimento ainda é do ERP — a API fiscal só consulta até a virada',
         undefined, ErrorCodes.FISCAL_CUTOVER_PENDING)
@@ -144,7 +142,7 @@ export async function storeCertificate(
   const info = validateIssuerPair(certPem, keyPem, opts.expectedCnpj)
   const sealedKey = deps.keyring.seal(keyPem, certificateAad(institutionId))
   await withTransaction(deps.pool, 'gravar A1', { institutionId }, async conn => {
-    await assertEmitterWritable(conn, opts.schemaName, institutionId)   // D-F39: 1ª instrução — trava + réplica/lacuna
+    await assertCertificateWritable(conn, opts.schemaName, institutionId)   // D-F39: 1ª instrução — trava + réplica/lacuna
     await saveCertificate(conn, {
       institutionId, cnpj: info.cnpj, certificatePem: certPem, sealedKey,
       subject: info.subject.slice(0, 512), issuedBy: info.issuer.slice(0, 512),
@@ -154,35 +152,28 @@ export async function storeCertificate(
   return certificateStatus(deps.pool, institutionId)
 }
 
+// Apagar o A1 é ato do EMITTER (`../emitter/emitter.ts` — `clearCertificate`): precisa das transmissões vivas de TODAS as famílias,
+// que esta peça (cega à voz) não lê — parte 2 da NE-1a (D-NE9).
+
+
 /**
- * Apaga o A1 (as habilitações ficam e deixam de estar habilitadas). [guard] roda DENTRO da transação, antes de apagar — a família confere ali o que é DELA
- * (ex.: a nfse-api trava a habilitação e recusa com transmissão viva: sem A1 nenhuma reconciliação fecha).
+ * D-F39 + D-NE10 (a) (parte 2 da NE-1a) — "a emissão deste MODELO ainda é do ERP": réplica do modelo no `fiscal_api` (viva ou
+ * excluída) OU, para o modelo que o ERP transmitia (SE) e sem linha dele, a habilitação própria no ERP (lacuna (b), lida pela fonte de
+ * fatos). 55/65 NASCEM virados (D-F42 — réplica só nasce do `migrate:setes` e só SE; a série/número deles é do ERP, D-F21) e NÃO
+ * dependem da SE. Quem age no fisco por um modelo confere ESTE predicado; [model] é obrigatório (sem padrão — prova de segurança não
+ * tem default, lição R18-04).
  */
-export async function clearCertificate(
-  deps: EstablishmentDeps, institutionId: number, userId: number | null,
-  opts: { schemaName: string; guard?: (conn: PoolConnection) => Promise<void> },
-): Promise<IssuerCertificateStatus> {
-  await withTransaction(deps.pool, 'apagar A1', { institutionId }, async conn => {
-    await assertEmitterWritable(conn, opts.schemaName, institutionId)    // 1ª instrução: TRAVA a habilitação (gates R4)
-    if (opts.guard) await opts.guard(conn)                                // a guarda da família lê DEPOIS da trava
-    return eraseCertificate(conn, institutionId, userId)
-  })
-  return certificateStatus(deps.pool, institutionId)
+export async function emissionStillInErp(q: Queryable, schemaName: string, institutionId: number, model: IssuerModel): Promise<boolean> {
+  return issuerModelStillInErp(q, schemaName, institutionId, model)
 }
 
-
 /**
- * D-F39 — "o estabelecimento ainda é emitido pelo ERP": réplica no `fiscal_api` (viva ou excluída) OU, sem linha
- * nenhuma, habilitação SE própria no ERP (lida pela fonte de fatos). Quem escreve o emitente ou age no fisco confere.
- * Réplica só nasce do `migrate:setes` e só SE (D-F42): a habilitação 55/65 NASCE virada (não existe virada de 55/65 —
- * a série/número dela é do ERP, D-F21); por isso "réplica em qualquer linha" não precisa saber de modelo.
+ * O MESMO no grão do ESTABELECIMENTO (o A1 é UM — D-N31; o ato da virada é por institution): réplica em QUALQUER linha OU a lacuna (b)
+ * da SE — o predicado de antes da D-NE10, = a disjunção de `emissionStillInErp` sobre o catálogo. Quem escreve o A1 (rotas do A1) e a
+ * pós-condição do ato confere ESTE.
  */
-export async function emissionStillInErp(q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
-  const { replicas, serviceRows } = await issuerRowsState(q, institutionId)
-  if (replicas > 0) return true
-  // D-F57 (= Q-F64 (a)): a lacuna (b) olha a LINHA SE — sem ela, a SE própria do ERP decide (uma 55/65 virada não esconde)
-  if (serviceRows > 0) return false
-  return erpServiceIssuerExists(q, schemaName, institutionId)
+export async function anyEmissionStillInErp(q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
+  return establishmentStillInErp(q, schemaName, institutionId)
 }
 
 /** Versões de chave-mestra que ainda cifram algum A1 vivo (health: todas têm que estar no anel). */

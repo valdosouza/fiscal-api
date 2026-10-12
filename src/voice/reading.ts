@@ -1,5 +1,5 @@
 import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
-import { InvoiceRef, invoiceRefFilter } from '../ref/invoice-ref'
+import { InvoiceBranch, InvoiceRef, invoiceRefFilter } from '../ref/invoice-ref'
 
 /**
  * CONTRATO DE LEITURA da voz do fisco (D-F33) — exportado pela biblioteca para a API da família
@@ -17,8 +17,8 @@ import { InvoiceRef, invoiceRefFilter } from '../ref/invoice-ref'
  *  - Vocabulário com P/D e estado derivado EXAUSTIVO (kind novo quebra a compilação em vez de virar "em voo" calado).
  */
 
-/** Família = RAMO da nota no `fiscal_api` (55 e 65 são a MESMA família — mercadoria). Nunca coluna. */
-export type InvoiceBranch = 'service' | 'merchandise'
+/** Família = RAMO da nota no `fiscal_api` — a definição mora em `ref/invoice-ref.ts` (parte 2 da NE-1a); re-exportada com o mesmo nome. */
+export type { InvoiceBranch }
 
 /** PROJEÇÃO COMUM de uma tentativa (linha da view de tentativas de QUALQUER família). Instantes em UTC. */
 export interface TransmissionView {
@@ -85,6 +85,8 @@ export const COMMON_TRANSMISSION_COLUMNS: readonly ViewColumn[] = frozenColumns(
  */
 export interface VoiceFamilyReading<V extends TransmissionView> {
   readonly branch:           InvoiceBranch
+  /** A view de tentativas — CONVENÇÃO: `vw_<x>` sobre a tabela `tb_<x>` da família (o "instalada?" da D-NE76 deriva a tabela daqui; o
+   *  teste da família confere contra o DDL). */
   readonly transmissionView: string
   readonly voiceView:        string
   readonly ownColumns:       readonly ViewColumn[]

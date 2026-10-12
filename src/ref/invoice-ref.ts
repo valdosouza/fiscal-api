@@ -13,6 +13,16 @@ export interface InvoiceRef {
   readonly terminal:      number
 }
 
+/**
+ * Família = RAMO da nota no `fiscal_api` (55 e 65 são a MESMA família — mercadoria). Nunca coluna. Mora aqui (e não em `voice/`) para
+ * que a habilitação (`establishment/` — catálogo `ISSUER_MODEL_FACTS`, D-NE10) a use sem depender da voz (parecer do guardião da parte 2
+ * da NE-1a); `voice/reading.ts` a re-exporta com o mesmo nome.
+ */
+export type InvoiceBranch = 'service' | 'merchandise'
+
+/** Escopo de LEITURAS EM LOTE (várias notas): o estabelecimento e o terminal — a nota inteira menos o id (D-NE12). */
+export type InvoiceScope = Pick<InvoiceRef, 'institutionId' | 'terminal'>
+
 /** Terminal das notas emitidas pela web/servidor (o legado e o PDV usam 1..N — D-NE12). Usar SÓ na borda. */
 export const WEB_TERMINAL = 0
 

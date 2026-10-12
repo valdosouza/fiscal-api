@@ -14,6 +14,8 @@ import { logger } from '../log/logger'
  *  - rede/timeout/5xx/429   → 503 FISCAL_AUTHORITY_UNAVAILABLE ("tente depois"; nada mudou)
  *  - handshake mTLS/401/403 → 409 FISCAL_AUTHORITY_AUTH_FAILED (é CREDENCIAL, não indisponibilidade —
  *                             mesma lição da Onda 2: "tente de novo" só empilha tentativas)
+ *  - cadeia do SERVIDOR     → 409 FISCAL_AUTHORITY_CHAIN_UNTRUSTED (D-NE57: NÓS não confiamos no certificado do fisco — não é o A1;
+ *    não confiável (código)   decidido pelo CÓDIGO do Node/OpenSSL, nunca pela mensagem; antes do aperto de mão nada chegou: voz F)
  *  - 404                    → 404 FISCAL_NFSE_NOT_FOUND
  *  - 4xx demais             → 422 FISCAL_DPS_REJECTED com os E0xxx do fisco em fields[]
  *  - 2xx ilegível           → cabe ao adaptador (502 FISCAL_AUTHORITY_UNKNOWN_RESPONSE)
@@ -26,6 +28,12 @@ export interface HttpsCall {
   body?:    string
   cert?:    Buffer
   key?:     Buffer
+  /**
+   * Raízes de confiança do SERVIDOR (D-NE57 — a SEFAZ usa a cadeia ICP-Brasil, fora da loja do Node). CONHECIMENTO NEGATIVO: no Node,
+   * passar `ca` SUBSTITUI a loja padrão (não soma) — NUNCA no ADN (o servidor do ADN é verificado pela loja padrão; com `ca` ele deixaria
+   * de ser). Ausente = loja padrão do Node. E nunca `rejectUnauthorized: false` (cerca nos testes do núcleo).
+   */
+  ca?:      Buffer | string | (Buffer | string)[]
   timeoutMs?: number
 }
 
@@ -70,6 +78,7 @@ export function httpsRequest(call: HttpsCall): Promise<HttpsResult> {
       protocol: u.protocol, hostname: u.hostname, port: u.port || 443,
       path: u.pathname + u.search, method: call.method,
       headers: call.headers, cert: call.cert, key: call.key,
+      ...(call.ca !== undefined ? { ca: call.ca } : {}),              // D-NE57: só quando dito — ausente = loja padrão do Node
       timeout: call.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     }, res => {
       const chunks: Buffer[] = []
@@ -123,6 +132,24 @@ export function isLocalCredentialError(err: any): boolean {
   const code = String(err?.code ?? '')
   if (LOCAL_CREDENTIAL_CODES.has(code) || code.startsWith('ERR_OSSL_')) return true
   return /PEM routines|key values mismatch/i.test(String(err?.message ?? ''))
+}
+/**
+ * D-NE57 (= Q-NE57 (a), Valdo 2026-10-11): falha ao VERIFICAR o certificado do SERVIDOR do fisco (códigos de verificação X.509 do
+ * Node/OpenSSL — lista da documentação do `tls` + o ERR_TLS_CERT_ALTNAME_INVALID do Node). Decide o CÓDIGO, nunca a mensagem: a mesma
+ * frase ("certificate has expired") vem também do alerta do SERVIDOR quando o A1 é que venceu — sem código, segue credencial.
+ */
+const SERVER_CHAIN_CODES = new Set([
+  'UNABLE_TO_GET_ISSUER_CERT', 'UNABLE_TO_GET_CRL', 'UNABLE_TO_DECRYPT_CERT_SIGNATURE', 'UNABLE_TO_DECRYPT_CRL_SIGNATURE',
+  'UNABLE_TO_DECODE_ISSUER_PUBLIC_KEY', 'CERT_SIGNATURE_FAILURE', 'CRL_SIGNATURE_FAILURE', 'CERT_NOT_YET_VALID', 'CERT_HAS_EXPIRED',
+  'CRL_NOT_YET_VALID', 'CRL_HAS_EXPIRED', 'ERROR_IN_CERT_NOT_BEFORE_FIELD', 'ERROR_IN_CERT_NOT_AFTER_FIELD', 'ERROR_IN_CRL_LAST_UPDATE_FIELD',
+  'ERROR_IN_CRL_NEXT_UPDATE_FIELD', 'DEPTH_ZERO_SELF_SIGNED_CERT', 'SELF_SIGNED_CERT_IN_CHAIN', 'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+  'UNABLE_TO_VERIFY_LEAF_SIGNATURE', 'CERT_CHAIN_TOO_LONG', 'CERT_REVOKED', 'INVALID_CA', 'PATH_LENGTH_EXCEEDED', 'INVALID_PURPOSE',
+  'CERT_UNTRUSTED', 'CERT_REJECTED', 'HOSTNAME_MISMATCH', 'ERR_TLS_CERT_ALTNAME_INVALID',
+])
+/** Só o host de uma URL (para log/alarme — nunca o caminho, que pode levar chave de acesso ou Id do DPS). */
+const hostOf = (url: string): string => { try { return new URL(url).host } catch { return '?' } }
+export function isServerChainError(err: any): boolean {
+  return SERVER_CHAIN_CODES.has(String(err?.code ?? ''))
 }
 export function isTlsCredentialError(err: any): boolean {
   const code = String(err?.code ?? '')
@@ -182,6 +209,14 @@ export async function authorityJson<T = any>(call: HttpsCall, label: string, opt
       logger.warn('Par PEM do emissor recusado LOCALMENTE (antes do fisco)', { label, code: err?.code, err: err?.message })
       throw new AuthorityHttpError(409, 'Certificado/chave do emissor no cofre não abrem (par inconsistente ou ilegível) — envie o .pfx novamente',
         ErrorCodes.FISCAL_CERT_INVALID, 0, String(err?.code ?? ''), [{ field: 'certificate', message: 'Par PEM inválido' }])
+    }
+    // D-NE57: a cadeia do SERVIDOR não fechou (NÓS recusamos o fisco) — antes do aperto de mão nada chegou: conclusivo (voz F, como
+    // antes), mas o código e a mensagem dizem o que é (não manda renovar o A1); `logger.error` = semente do alarme (F3)
+    if (isServerChainError(err) && err?.afterHandshake !== true) {
+      // o alarme leva o HOST, nunca a URL (no `GET /nfse/{chave}` e no `/dps/{Id}` a chave/o Id iriam junto — D-F91/D-F94/D-F98)
+      logger.error('Certificado do SERVIDOR do fisco não confiável (cadeia TLS) — nada enviado', { label, host: hostOf(call.url), code: err?.code })
+      throw new AuthorityHttpError(409, `Certificado do servidor do fisco não reconhecido (${String(err?.code)}) — não é o seu A1; nada foi enviado. Tente mais tarde; se persistir, acione o suporte`,
+        ErrorCodes.FISCAL_AUTHORITY_CHAIN_UNTRUSTED, 0, String(err?.code ?? ''))
     }
     // Q-ADV1a: erro TLS DEPOIS do handshake não é credencial — o corpo pode ter sido entregue
     if (isTlsCredentialError(err) && err?.afterHandshake !== true) {

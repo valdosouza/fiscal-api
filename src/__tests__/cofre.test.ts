@@ -6,7 +6,8 @@
 import { randomBytes } from 'crypto'
 import { MasterKeyRing } from '../secret/cipher'
 import { pkcs12ToPem, validateIssuerPair, cnpjFromSubject, cpfFromSubject } from '../secret/certificate'
-import { storeCertificate, openIssuer, certificateStatus, clearCertificate, certificateAad, isIssuerEnabled, authorityOf, storedKeyVersions, emissionStillInErp } from '../establishment/establishment'
+import { storeCertificate, openIssuer, certificateStatus, certificateAad, isIssuerEnabled, authorityOf, storedKeyVersions, anyEmissionStillInErp } from '../establishment/establishment'
+import { clearCertificate } from '../emitter/emitter'   // apagar o A1 é ato do EMITTER (D-NE9 — parte 2 da NE-1a)
 import { acquireRefreshLease, releaseRefreshLease, nextDpsNumber, lockIssuerRows, ISSUER_MODELS, assertIssuerModelDomainEnforced } from '../establishment/establishment.repository'
 import { makePfx } from './helpers'
 
@@ -191,14 +192,19 @@ describe('peça do estabelecimento — A1 cifrado no fiscal_api + habilitação 
     expect([authorityOf('SE'), authorityOf('55'), authorityOf('65')]).toEqual(['ADN', 'SEFAZ', 'SEFAZ'])
   })
 
-  it('guarda da FAMÍLIA roda DENTRO da transação antes de apagar: recusou → segredos intactos, rollback', async () => {
+  // parte 2 da NE-1a (D-NE9): a guarda INJETADA pela família morreu — o EMITTER do núcleo conta as vivas de TODAS as famílias pela leitura
+  // publicada (view); a promessa é a mesma: recusou DENTRO da transação, depois da trava → segredos intactos, rollback
+  it('guarda das VIVAS roda DENTRO da transação antes de apagar: recusou → segredos intactos, rollback', async () => {
     const db = fakeDb()
     const { pfx } = makePfx({ cn: `SETES:${CNPJ}`, password: PASSWORD })
     await storeCertificate({ pool: db.pool, keyring: ring }, 1, pfx, PASSWORD, { expectedCnpj: CNPJ, userId: 7, schemaName: 'setes_setes' })
     const before = { ...db.certs.get(1) }
-    const guard = jest.fn(async () => { throw Object.assign(new Error('viva'), { statusCode: 409, code: 'FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS' }) })
-    await expect(clearCertificate({ pool: db.pool, keyring: ring }, 1, 7, { schemaName: 'setes_setes', guard })).rejects.toMatchObject({ code: 'FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS' })
-    expect(guard).toHaveBeenCalledTimes(1)
+    const plain = db.query.getMockImplementation()!
+    db.query.mockImplementation(async (sql: string, p: any[] = []) => (/COUNT\(\*\) AS n FROM vw_invoice_service_transmission/.test(sql) ? [[{ n: 1 }]] : plain(sql, p)))
+    db.query.mockClear()
+    await expect(clearCertificate({ pool: db.pool, keyring: ring }, 1, 7, { schemaName: 'setes_setes' })).rejects.toMatchObject({ code: 'FISCAL_ISSUER_HAS_LIVE_TRANSMISSIONS' })
+    const sqls = db.query.mock.calls.map(([sql]) => String(sql))
+    expect(sqls.findIndex(s => /FOR UPDATE/.test(s))).toBeLessThan(sqls.findIndex(s => /FROM vw_invoice_service_transmission/.test(s)))   // trava ANTES de contar
     expect(db.certs.get(1)).toEqual(before)
     const conn = await db.pool.getConnection()
     expect(conn.rollback).toHaveBeenCalled()
@@ -357,13 +363,13 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
         return [[]]
       }),
     }) as any
-    expect(await emissionStillInErp(mk({ n: 1, r: 1 }, 'nao'), 'setes_setes', 1)).toBe(true)
-    expect(await emissionStillInErp(mk({ n: 2, r: 0 }, 'tem'), 'setes_setes', 1)).toBe(false)     // virada: o ERP não decide mais
-    expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)      // lacuna: ainda não migrada
-    expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)     // institution nova
-    expect(await emissionStillInErp(mk({ n: 0, r: 0 }, 'sem-tabela'), 'setes_setes', 1)).toBe(false)
+    expect(await anyEmissionStillInErp(mk({ n: 1, r: 1 }, 'nao'), 'setes_setes', 1)).toBe(true)
+    expect(await anyEmissionStillInErp(mk({ n: 2, r: 0 }, 'tem'), 'setes_setes', 1)).toBe(false)     // virada: o ERP não decide mais
+    expect(await anyEmissionStillInErp(mk({ n: 0, r: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)      // lacuna: ainda não migrada
+    expect(await anyEmissionStillInErp(mk({ n: 0, r: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)     // institution nova
+    expect(await anyEmissionStillInErp(mk({ n: 0, r: 0 }, 'sem-tabela'), 'setes_setes', 1)).toBe(false)
     // D-F57 (= Q-F64 (a)): só a 55 virada no fiscal_api + SE no ERP → AINDA do ERP (antes: "há linha" escondia a SE)
-    expect(await emissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)
-    expect(await emissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)
+    expect(await anyEmissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)
+    expect(await anyEmissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)
   })
 })

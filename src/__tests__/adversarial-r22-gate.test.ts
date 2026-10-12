@@ -34,6 +34,7 @@ const rel = (f: string) => path.relative(WORKSPACE, f).replace(/\\/g, '/')
 const walk = (dir: string, ext: RegExp): string[] => (!fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
   d.isDirectory() ? (d.name === '__tests__' || d.name === 'node_modules' ? [] : walk(path.join(dir, d.name), ext)) : ext.test(d.name) ? [path.join(dir, d.name)] : []))
 const NFSE_REPO = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'repository.ts')
+const NFSE_FAMILY = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'voice-family.ts')
 const SETES_REPO = path.join(WORKSPACE, 'setes-api', 'src', 'shared', 'invoice-transmission', 'transmission.repository.ts')
 const FENCE = path.join(WORKSPACE, 'nfse-api', 'src', '__tests__', 'voice-kind-fence.ts')
 
@@ -54,15 +55,22 @@ type ServiceWriteAfterNe1a = typeof FAMILY_LIST_AFTER_NE1A[number]
 // ===========================================================================
 
 describe('D-F106 (= Q-F112 (b)) sobre o vocabulário do NÚCLEO', () => {
-  it('[CORRIGIDO na sessão] a família define a lista como CONSTANTE (`SERVICE_VOICE_WRITE_KINDS = [\'A\', \'R\', \'C\', \'K\', \'F\', \'N\'] as const satisfies readonly TransmissionEventKind[]`) e `ServiceVoiceWriteKind` DERIVA dela — na nfse-api sobre o tipo DESTE núcleo (import de `fiscal-api`), no setes-api sobre o vocabulário próprio dele; o funil confere a MESMA constante em execução', () => {
-    if (!fs.existsSync(NFSE_REPO)) return                                    // núcleo isolado (sem o workspace)
-    const list = /export const SERVICE_VOICE_WRITE_KINDS = \['A', 'R', 'C', 'K', 'F', 'N'\] as const satisfies readonly TransmissionEventKind\[\]/
+  it('[CORRIGIDO na sessão] a família define a lista como CONSTANTE (`SERVICE_VOICE_WRITE_KINDS = [\'A\', \'R\', \'C\', \'K\', \'F\', \'N\'] as const satisfies readonly TransmissionEventKind[]`) e `ServiceVoiceWriteKind` DERIVA dela — na nfse-api sobre o tipo DESTE núcleo (import de `fiscal-api`), no DESCRITOR da família (`voice-family.ts`, NE-1a parte 2 — D-F108), no setes-api sobre o vocabulário próprio dele; o funil confere a MESMA constante em execução (na nfse-api, o funil GENÉRICO do núcleo sobre o `writeKinds` do descritor)', () => {
+    if (!fs.existsSync(NFSE_FAMILY)) return                                  // núcleo isolado (sem o workspace)
+    // a nfse-api a CONGELA em execução (gate NE1A2-11 da parte 2 da NE-1a — `Object.freeze(…)`); a cópia do setes-api fica como está (morre na F2a)
+    const list = /export const SERVICE_VOICE_WRITE_KINDS = (?:Object\.freeze\()?\['A', 'R', 'C', 'K', 'F', 'N'\] as const satisfies readonly TransmissionEventKind\[\]/
     const derived = /export type ServiceVoiceWriteKind = typeof SERVICE_VOICE_WRITE_KINDS\[number\]/
     const funnel = /if \(!SERVICE_VOICE_WRITE_SET\.has\(e\?\.kind as string\)\) \{\s*throw new Error\(`D-F106:/
-    const nfse = read(NFSE_REPO)
-    for (const re of [list, derived, funnel, /kind:\s+ServiceVoiceWriteKind/]) expect(nfse).toMatch(re)
+    const nfse = read(NFSE_FAMILY)
+    for (const re of [list, derived, /VoiceEventInput<ServiceVoiceWriteKind>/, /writeKinds: SERVICE_VOICE_WRITE_KINDS,/]) expect(nfse).toMatch(re)
     expect(nfse).toMatch(/import \{[^}]*\bTransmissionEventKind\b[^}]*\} from 'fiscal-api'/)
     expect(nfse).not.toMatch(/ServiceVoiceWriteKind = Extract</)               // a 1ª forma (fail-open com `any`) não volta
+    // o funil da nfse-api é o GENÉRICO do núcleo — sobre o `writeKinds` do descritor, ANTES de qualquer query
+    const core = read(path.join(SRC_ROOT, 'voice', 'event-table.ts'))
+    // gates da parte 2 (NE1A2-03): o funil confere o kind lido UMA vez (o mesmo valor vai ao INSERT)
+    expect(core).toMatch(/const kind = e\?\.kind as unknown[\s\S]*?if \(typeof kind !== 'string' \|\| !writeSet\.has\(kind\)\) \{\s*throw new Error\(`D-F106:/)
+    expect(core.indexOf('!writeSet.has(kind)')).toBeLessThan(core.indexOf('await conn.query'))
+    if (fs.existsSync(NFSE_REPO)) expect(read(NFSE_REPO)).toMatch(/export const insertTransmissionEvent = SERVICE_VOICE_FAMILY\.insertTransmissionEvent/)
     if (fs.existsSync(SETES_REPO)) {
       const setes = read(SETES_REPO)
       for (const re of [list, derived, funnel, /kind:\s+ServiceVoiceWriteKind/]) expect(setes).toMatch(re)
@@ -122,12 +130,14 @@ describe('D-F105 (= Q-F111 (a)) — a cerca é da FAMÍLIA; no núcleo, só SQL'
     expect(fence).toMatch(/\$\{INSERT_HEAD\}\[\^;\]\*\$\{VOICE_TABLE\}\\b\[\^;\]\*\$\{S_LIT\}/)
     expect(fence).not.toMatch(/transmission_event\\b\[\^;\]\*'S'/)             // a regex antiga (só aspa simples, tabela fixa) não volta
   })
-  it('resistiu: o núcleo NÃO tem escritor da voz de NENHUMA família hoje (nenhum INSERT/REPLACE/UPDATE em `*_transmission_event`, .ts ou .sql) nem tipo de ENTRADA de escrita com `kind` — o que a NE-1a trouxer é a 1ª vez', () => {
+  it('resistiu [convertido na NE-1a parte 2 — D-F108/D-NE74: o escritor VEIO]: o núcleo tem EXATAMENTE UM escritor da voz — o GENÉRICO `voice/event-table.ts`, exportado só como FÁBRICA de família (`defineVoiceFamily`), com a tabela do DESCRITOR (`${table}`) e o tipo de entrada GENÉRICO (`VoiceEventInput<K>`); nenhum INSERT/REPLACE/UPDATE com o NOME de uma tabela da voz (.ts ou .sql) e nenhum tipo de ENTRADA de família (`ServiceVoiceWriteKind`/`TransmissionEventInput`) no núcleo', () => {
     const WRITE = /\b(?:INSERT|REPLACE|UPDATE)\b[^;\n]*?transmission_event\b/i
     const files = walk(SRC_ROOT, /\.(?:ts|sql)$/)
     expect(files.length).toBeGreaterThan(20)
     expect(files.filter(f => WRITE.test(read(f))).map(rel)).toEqual([])
-    expect(Object.keys(core).filter(k => /insert.*(?:event|voice)|write.*(?:event|voice)|voiceWriter/i.test(k))).toEqual([])
+    expect(Object.keys(core).filter(k => /insert.*(?:event|voice)|write.*(?:event|voice)|voiceWriter|VoiceFamily/i.test(k))).toEqual(['defineVoiceFamily'])
+    const GENERIC_WRITE = /\b(?:INSERT|REPLACE)\b[^;]*?\$\{table\}/
+    expect(files.filter(f => GENERIC_WRITE.test(read(f))).map(rel)).toEqual(['fiscal-api/src/voice/event-table.ts'])
     expect(files.filter(f => /ServiceVoiceWriteKind|TransmissionEventInput/.test(read(f).replace(/\/\*[\s\S]*?\*\//g, ''))).map(rel)).toEqual([])
   })
 })

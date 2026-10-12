@@ -67,3 +67,20 @@ const kindsWhere = (pick: (c: { final: boolean; authorized: boolean }) => boolea
 export const FINAL_TRANSMISSION_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => c.final))
 /** Documento AUTORIZADO e vigente (A, ou N depois de um K — D-N17). Imutável em execução (NE1A-06). */
 export const AUTHORIZED_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => c.authorized))
+/**
+ * Tentativa VIVA COM voz: a última voz não encerra (S, K, P). A viva SEM voz (reserva em voo — `kind IS NULL`) é o outro caso, dito
+ * por quem pergunta. D-NE69 (= Q-NE69 (a), gates da NE-1a parte 1): o SQL da família deriva daqui, nunca de uma lista à mão.
+ */
+export const LIVE_VOICE_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => !c.final))
+
+/**
+ * Lista LITERAL para SQL (`'A','N'`) de kinds do VOCABULÁRIO (D-NE69): as CLASSES vêm dos conjuntos derivados acima; as letras que
+ * nomeiam UM fato (C fora do rodízio — D-F28; F da revisita — D-F52) o chamador acrescenta pelo nome. Recusa o que não é kind (nunca
+ * placeholder: o otimizador precisa da lista no texto, e nada de fora do vocabulário entra no SQL).
+ */
+export function sqlKindList(kinds: Iterable<string>): string {
+  const list = [...kinds]
+  if (!list.length) throw new Error('sqlKindList: lista vazia')
+  for (const k of list) if (!Object.prototype.hasOwnProperty.call(KIND_CLASS, k)) throw new Error(`sqlKindList: fora do vocabulário (${JSON.stringify(k)})`)
+  return list.map(k => `'${k}'`).join(',')
+}

@@ -25,9 +25,12 @@ export * from './auth/product-jwt'
 export * from './secret/cipher'
 export * from './secret/certificate'
 
-// emitente: certificado + habilitação por modelo (D-F34)
+// emitente: certificado + habilitação por modelo (D-F34); catálogo dos modelos (D-NE10 — parte 2 da NE-1a)
+export * from './establishment/issuer-models'
 export * from './establishment/establishment.repository'
 export * from './establishment/establishment'
+// o EMITTER: habilitação + A1 + transmissões vivas de TODAS as famílias (D-NE9 — parte 2 da NE-1a)
+export * from './emitter/emitter'
 
 // transporte fiscal comum
 export * from './transport/types'
@@ -45,6 +48,11 @@ export * from './voice/kinds'
 export * from './voice/reading'
 export * from './voice/families/service'
 export * from './voice/families'
+// a ESCRITA da voz por família (D-F108 — parte 2 da NE-1a) e a transação sob a trava da nota (D-NE74)
+export * from './voice/event-table'
+export * from './voice/outcome'
+export * from './voice/policy'
+export * from './erp/invoice-tx'
 
 // fonte de fatos Gestão 2027 — base (D-F10/D-F32)
 export * as erp from './erp/facts'

@@ -2,9 +2,27 @@
   "name": "fiscal-api",
   "version": "0.1.0",
   "private": true,
-  "description": "Núcleo comum das APIs fiscais do Gestão 2027 (biblioteca — D-F17): mTLS, XMLDSig, A1 cifrado, habilitação, tentativa × voz, fonte de fatos base, migrations do banco fiscal_api",
+  "description": "Núcleo comum das APIs fiscais do Gestão 2027 (biblioteca — D-F17): mTLS, XMLDSig, A1 cifrado, habilitação e emitente, voz do fisco (leitura publicada por família, escritor genérico sob a trava da nota, política em peças — os roteiros são da família), fonte de fatos base, migrations do banco fiscal_api",
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./reading": {
+      "types": "./dist/reading.d.ts",
+      "default": "./dist/reading.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "typesVersions": {
+    "*": {
+      "reading": [
+        "dist/reading.d.ts"
+      ]
+    }
+  },
   "files": [
     "dist",
     "src/migrations/sql"

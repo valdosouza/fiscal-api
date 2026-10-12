@@ -22,3 +22,49 @@ export function stripComments(code: string): string {
 export function erpWrites(code: string): string[] {
   return (stripComments(code).match(ERP_WRITE) ?? []).map(m => m.replace(/\s+/g, ' '))
 }
+
+/**
+ * EXCEÇÕES NOMEADAS da lista branca — arquivo + VERBO + ALVO + LIGAÇÃO exatos (nunca "o arquivo inteiro"). NE-1a parte 2 (D-F108/D-NE74):
+ * o escritor GENÉRICO da voz (`voice/event-table.ts`) só ACRESCENTA (`INSERT INTO`) na tabela que o DESCRITOR da família declara —
+ * `${table}`, e só ela. O nome não é literal ali por desenho (o núcleo é CEGO à família); quem garante que é um nome SIMPLES (banco da
+ * conexão = `fiscal_api`) é o `defineVoiceFamily` (provado em `ne1a-escritor.test.ts`). Gates da parte 2: o VERBO entra (o socrático
+ * provou `UPDATE`/`DELETE` em `${table}` passando — a voz é APPEND-ONLY) e a LIGAÇÃO também (NE1A2-08: um parâmetro chamado `table` no
+ * mesmo arquivo passava) — no arquivo, o ÚNICO nome `table` declarado é `const table = d.eventTable`.
+ */
+export const NAMED_WRITE_EXCEPTIONS: readonly {
+  readonly file: string; readonly verb: string; readonly target: string; readonly binding: string; readonly why: string
+}[] = Object.freeze([
+  Object.freeze({ file: 'voice/event-table.ts', verb: 'INSERT INTO', target: '${table}', binding: 'd.eventTable',
+    why: 'a voz é append-only: o escritor genérico só acrescenta na tabela do descritor da família — nome simples validado no defineVoiceFamily' }),
+])
+/** No código, o nome [name] é declarado UMA vez só, por `const name = <init>` (nenhum parâmetro, desestruturação ou função com o nome). */
+function bindingHolds(code: string, name: string, init: string): boolean {
+  const sf = ts.createSourceFile('x.ts', code, ts.ScriptTarget.Latest, true, ts.ScriptKind.TS)
+  const decls: string[] = []
+  const visit = (n: ts.Node): void => {
+    const named = (ts.isVariableDeclaration(n) || ts.isParameter(n) || ts.isBindingElement(n) || ts.isFunctionDeclaration(n)
+      || ts.isClassDeclaration(n) || ts.isImportSpecifier(n)) && n.name && ts.isIdentifier(n.name) && n.name.text === name
+    if (named) decls.push(ts.isVariableDeclaration(n) && n.initializer && ts.isVariableDeclarationList(n.parent) && (n.parent.flags & ts.NodeFlags.Const)
+      ? `const=${n.initializer.getText(sf)}` : ts.SyntaxKind[n.kind])
+    ts.forEachChild(n, visit)
+  }
+  visit(sf)
+  return decls.length === 1 && decls[0] === `const=${init}`
+}
+/** A escrita [verb] [target] em [relFile] (relativo a `src/`, barras normais) é exceção nomeada? ([code] = o arquivo, para a ligação) */
+export function isNamedWriteException(relFile: string, verb: string, target: string, code: string): boolean {
+  const f = relFile.replace(/\\/g, '/')
+  const v = verb.replace(/\s+/g, ' ').trim().toUpperCase()
+  return NAMED_WRITE_EXCEPTIONS.some(e => e.file === f && e.verb === v && e.target === target
+    && bindingHolds(code, e.target.slice(2, -1), e.binding))
+}
+/** As escritas fora da lista branca de um arquivo de `src/` — as exceções nomeadas dele (verbo, alvo e ligação exatos) fora. */
+export function erpWritesIn(relFile: string, code: string): string[] {
+  const c = stripComments(code)
+  const out: string[] = []
+  for (const m of c.matchAll(ERP_WRITE)) {
+    const target = c.slice((m.index ?? 0) + m[0].length).match(/^\S+/)?.[0] ?? ''
+    if (!isNamedWriteException(relFile, m[0], target, code)) out.push(m[0].replace(/\s+/g, ' ') + target)
+  }
+  return out
+}

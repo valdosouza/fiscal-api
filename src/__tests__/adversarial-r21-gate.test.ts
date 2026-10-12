@@ -86,16 +86,19 @@ describe('D-F104 (= Q-F110 (a)) — `reconfirmationProven` booleana até a F2a',
 })
 
 // ===========================================================================
-// D-F102 no núcleo — S segue no vocabulário (VIVA); o núcleo não escreve voz; a saída prometida devolve a prova (na reconferência seguinte)
+// D-F102 no núcleo — S segue no vocabulário (VIVA); o núcleo escreve a voz só pelo GENÉRICO da família (NE-1a parte 2); a saída prometida devolve a prova
 // ===========================================================================
 
 describe('D-F102 (= Q-F108 (a)) no núcleo', () => {
-  it('contexto: S segue no vocabulário (a opção (c) — tirar S — NÃO foi escolhida) e é VIVA (fora de FINAL); o núcleo NÃO tem escritor da voz (nenhum INSERT/UPDATE/REPLACE na tabela da voz em fiscal-api/src, .ts ou .sql) — a cerca de produtor mora na família', () => {
+  it('contexto [convertido na NE-1a parte 2 — D-F108/D-NE74]: S segue no vocabulário (a opção (c) — tirar S — NÃO foi escolhida) e é VIVA (fora de FINAL); o núcleo tem UM escritor da voz — o GENÉRICO `voice/event-table.ts`, pela tabela do DESCRITOR (`${table}`) e pela lista de escrita da FAMÍLIA; nenhum INSERT/UPDATE/REPLACE com o NOME de uma tabela da voz em fiscal-api/src (.ts ou .sql) — a cerca de produtor segue na família', () => {
     const s: TransmissionEventKind = 'S'
     expect(FINAL_TRANSMISSION_KINDS.has(s)).toBe(false)
     expect(isLiveTransmission({ attempt: 1, accessKey: null, lastKind: s })).toBe(true)
     const WRITE = /\b(?:INSERT(?:\s+IGNORE)?\s+INTO|REPLACE\s+INTO|UPDATE)\s+[^;\n]*?transmission_event\b/i
     expect(walk(SRC_ROOT, /\.(?:ts|sql)$/).filter(f => WRITE.test(read(f))).map(rel)).toEqual([])
+    const generic = read(path.join(SRC_ROOT, 'voice', 'event-table.ts'))
+    expect(generic).toMatch(/INSERT INTO \$\{table\}/)
+    expect(generic).not.toMatch(/['"`]S['"`]/)                                   // nenhum produtor de S no núcleo: a lista é da família
   })
   it('resistiu: com a irmã S VIVA nem um E2404 de 2099 prova; a saída que a D-F102 manda dar (S → F por CONSULTA) devolve a prova — mas SÓ na reconferência SEGUINTE (a candidata passa a ser a tentativa 2; o carimbo da 1 é anterior à nova apresentação e não serve)', () => {
     const live = [cand({ nfseNotGeneratedAt: '2099-01-01 00:00:00' }), sib('S')]

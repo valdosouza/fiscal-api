@@ -4,6 +4,7 @@ import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
 import { erpServiceIssuerExists } from '../erp/facts'
 import { SealedSecret } from '../secret/cipher'
+import { ISSUER_MODELS, IssuerModel, SERVICE_ISSUER_MODEL, erpTransmitted, isIssuerModel } from './issuer-models'
 
 /**
  * SQL das tabelas COMUNS do `fiscal_api` (migration 001 do núcleo — D-F34/D-F35):
@@ -11,10 +12,10 @@ import { SealedSecret } from '../secret/cipher'
  * (habilitação por modelo). Tabelas no banco DEFAULT da conexão (o `fiscal_api`).
  */
 
-export type IssuerModel = 'SE' | '55' | '65'
+// o DOMÍNIO e o catálogo dos modelos moram em `issuer-models.ts` (D-NE10 — parte 2 da NE-1a); re-exportados com os mesmos nomes
+export { ISSUER_MODELS, SERVICE_ISSUER_MODEL }
+export type { IssuerModel }
 export type IssuerEnvironment = 'H' | 'P'
-/** Os modelos que o núcleo habilita — também a lista de LINHAS que `lockIssuerRows` trava (PK pontual, nunca faixa). */
-export const ISSUER_MODELS: readonly IssuerModel[] = ['SE', '55', '65']
 
 export interface IssuerRow {
   institutionId: number
@@ -55,7 +56,8 @@ function mapIssuer(r: any): IssuerRow {
   }
 }
 
-const MODEL_IN = `model IN (${ISSUER_MODELS.map(() => '?').join(', ')})`
+const modelIn = (models: readonly IssuerModel[]) => `model IN (${models.map(() => '?').join(', ')})`
+const MODEL_IN = modelIn(ISSUER_MODELS)
 
 /**
  * Estado das linhas da habilitação da institution (D-F39: réplica = `cutover_at` NULL, viva OU excluída), TRAVANDO-as
@@ -76,28 +78,75 @@ const MODEL_IN = `model IN (${ISSUER_MODELS.map(() => '?').join(', ')})`
  * D-F57 (= Q-F64 (a), Valdo 2026-10-10): `serviceRows` = linhas da habilitação SE (vivas ou excluídas). A lacuna (b) da cerca
  * olha a LINHA SE — uma linha 55/65 (que nasce virada, D-F42) não pode esconder a SE que o ERP ainda emite.
  */
-export const SERVICE_ISSUER_MODEL: IssuerModel = 'SE'
 export interface IssuerRowsState { rows: number; replicas: number; serviceRows: number }
 
-export async function lockIssuerRows(q: Queryable, institutionId: number): Promise<IssuerRowsState> {
+/**
+ * As LINHAS da habilitação (vivas ou excluídas) da institution, TRAVADAS por PK — uma por modelo do domínio (`c` = cutover_at). D-NE84
+ * (gate adversarial da parte 2, NE1A2-07): o `model IN (…)` do SQL decide na colação da tabela (_ci — 'se' casa com 'SE'), então o modelo
+ * volta CANÔNICO e o filtro em JS decide igual à leitura (`issuerRowsState`): a trava e a leitura nunca discordam. O CHECK binário do
+ * `model` entra na migration da F2a (nota de implantação — junto da D-F107).
+ */
+async function lockIssuerRowList(q: Queryable, institutionId: number): Promise<{ model: string; c: unknown }[]> {
   const [rows] = await q.query(
     `SELECT model, cutover_at AS c FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${MODEL_IN} FOR UPDATE`,
     [institutionId, ...ISSUER_MODELS])
-  const list = rows as any[]
+  return (rows as any[]).map(r => ({ ...r, model: ISSUER_MODELS.find(m => m.toUpperCase() === String(r.model).toUpperCase()) ?? String(r.model) }))
+}
+
+export async function lockIssuerRows(q: Queryable, institutionId: number): Promise<IssuerRowsState> {
+  const list = await lockIssuerRowList(q, institutionId)
   return { rows: list.length, replicas: list.filter(r => r.c == null).length, serviceRows: list.filter(r => r.model === SERVICE_ISSUER_MODEL).length }
 }
 
 /**
  * O mesmo estado SEM travar — no MESMO domínio de modelos da trava (gates do delta de 2026-10-04: a contagem sem filtro e
- * a trava filtrada divergiam com um modelo fora da lista e a cerca se contradizia). O domínio vira fato do banco com a
- * Q-F56 (CHECK); até lá, modelo fora de `ISSUER_MODELS` não existe para a cerca.
+ * a trava filtrada divergiam com um modelo fora da lista e a cerca se contradizia). O domínio é fato do banco (CHECK da 004).
+ * [models] (parte 2 da NE-1a — D-NE10): restringe a contagem às linhas de ALGUNS modelos (a decisão POR MODELO da cerca); omitido
+ * = o domínio inteiro (o grão do ESTABELECIMENTO, como antes).
  */
-export async function issuerRowsState(q: Queryable, institutionId: number): Promise<IssuerRowsState> {
+export async function issuerRowsState(q: Queryable, institutionId: number, models: readonly IssuerModel[] = ISSUER_MODELS): Promise<IssuerRowsState> {
+  if (models.length === 0 || !models.every(isIssuerModel)) throw new Error(`Modelos fora do domínio da habilitação: ${models.join(', ')}`)
   const [rows] = await q.query(
-    `SELECT COUNT(*) AS n, SUM(cutover_at IS NULL) AS r, SUM(model = ?) AS s FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${MODEL_IN}`,
-    [SERVICE_ISSUER_MODEL, institutionId, ...ISSUER_MODELS])
+    `SELECT COUNT(*) AS n, SUM(cutover_at IS NULL) AS r, SUM(model = ?) AS s FROM tb_establishment_issuer WHERE tb_institution_id = ? AND ${modelIn(models)}`,
+    [SERVICE_ISSUER_MODEL, institutionId, ...models])
   const r0 = (rows as any[])[0]
   return { rows: Number(r0?.n ?? 0), replicas: Number(r0?.r ?? 0), serviceRows: Number(r0?.s ?? 0) }
+}
+
+/**
+ * D-NE10 (a) — a decisão "a emissão deste MODELO ainda é do ERP" sobre as linhas DESTE modelo (vivas ou excluídas):
+ *  - réplica do modelo (`cutover_at` NULL) → ERP;
+ *  - modelo que o ERP transmitia (`erpTransmitted` — só a SE) SEM linha no `fiscal_api` → a habilitação do ERP decide (lacuna (b));
+ *  - linha virada, ou modelo que NASCE virado (55/65 — não dependem da SE) → a API fiscal.
+ * Pura sobre o estado + a leitura do ERP (só consultada quando decide) — a MESMA regra para a trava e para a leitura sem trava.
+ */
+async function modelStillInErp(
+  state: { rows: number; replicas: number }, model: IssuerModel, q: Queryable, schemaName: string, institutionId: number,
+): Promise<boolean> {
+  if (state.replicas > 0) return true
+  if (!erpTransmitted(model)) return false
+  if (state.rows > 0) return false
+  // a lacuna (b) só existe para o modelo que o ERP transmitia; o leitor do ERP é o da habilitação de SERVIÇO (a única — D-F42)
+  if (model !== SERVICE_ISSUER_MODEL) throw new Error(`Modelo ${model} marcado como transmitido pelo ERP sem leitor da habilitação dele no ERP`)
+  return erpServiceIssuerExists(q, schemaName, institutionId)
+}
+
+/** O mesmo, no grão do ESTABELECIMENTO: réplica em QUALQUER linha OU a lacuna (b) da SE (D-F39/D-F57 — o predicado de antes). */
+async function anyStillInErp(state: IssuerRowsState, q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
+  if (state.replicas > 0) return true
+  // D-F57 (= Q-F64 (a)): a lacuna (b) olha a LINHA SE — sem ela, a SE própria do ERP decide (uma 55/65 virada não esconde)
+  if (state.serviceRows > 0) return false
+  return erpServiceIssuerExists(q, schemaName, institutionId)
+}
+
+/** Predicado POR MODELO sem trava (a borda, o rodízio, o caminho da falha do `openIssuer`) — `emissionStillInErp` em `establishment.ts`. */
+export async function issuerModelStillInErp(q: Queryable, schemaName: string, institutionId: number, model: IssuerModel): Promise<boolean> {
+  return modelStillInErp(await issuerRowsState(q, institutionId, [model]), model, q, schemaName, institutionId)
+}
+
+/** Predicado do ESTABELECIMENTO sem trava — `anyEmissionStillInErp` em `establishment.ts`. */
+export async function establishmentStillInErp(q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
+  return anyStillInErp(await issuerRowsState(q, institutionId), q, schemaName, institutionId)
 }
 
 /**
@@ -141,15 +190,33 @@ export async function getIssuer(q: Queryable, institutionId: number, model: Issu
 }
 
 /**
- * D-F39 (gates da Rodada 4) — o EMITENTE (A1 e habilitação) só se escreve se a emissão do estabelecimento NÃO é do ERP: as
- * linhas da habilitação são TRAVADAS primeiro (1ª instrução da transação — nada de snapshot antes da trava) e recusa-se a
- * réplica (viva OU excluída) e a lacuna (b): sem linha no `fiscal_api` e com habilitação SE no ERP. Vale para quem chama a
- * peça direto (script, a futura nfe-api), não só para a borda da nfse-api.
+ * D-F39 (gates da Rodada 4) — o EMITENTE só se escreve se a emissão NÃO é do ERP: as linhas da habilitação são TRAVADAS primeiro
+ * (1ª instrução da transação — nada de snapshot antes da trava; SEMPRE todas as linhas do estabelecimento, por PK — PADROES §9 regra 8:
+ * travar só a linha do modelo traria de volta o cruzamento SE × 55 dos gates de 04/10). Só a DECISÃO muda de grão (D-NE10 — parte 2
+ * da NE-1a): vale para quem chama a peça direto (script, a futura nfe-api), não só para a borda da nfse-api.
+ *
+ * A1 (`assertCertificateWritable`) = grão do ESTABELECIMENTO (o A1 é UM — D-N31): recusa réplica em QUALQUER linha (viva OU excluída) e
+ * a lacuna (b) (sem linha SE no `fiscal_api` e com SE no ERP) — o mesmo predicado de antes (D-NE10 (a): "a escrita do A1 segue barrada
+ * enquanto houver réplica").
  */
-export async function assertEmitterWritable(q: Queryable, schemaName: string, institutionId: number): Promise<void> {
-  const { replicas, serviceRows } = await lockIssuerRows(q, institutionId)
-  // D-F57: lacuna (b) = sem LINHA SE no `fiscal_api` e com SE no ERP (uma 55/65 virada não a esconde)
-  if (replicas > 0 || (serviceRows === 0 && await erpServiceIssuerExists(q, schemaName, institutionId))) {
+export async function assertCertificateWritable(q: Queryable, schemaName: string, institutionId: number): Promise<void> {
+  const state = await lockIssuerRows(q, institutionId)
+  if (await anyStillInErp(state, q, schemaName, institutionId)) {
+    throw new HttpError(409, 'A emissão fiscal deste estabelecimento ainda é do ERP — o emitente só muda pelo ERP até a virada',
+      undefined, ErrorCodes.FISCAL_CUTOVER_PENDING)
+  }
+}
+
+/**
+ * HABILITAÇÃO de um MODELO (`assertIssuerWritable`) = grão do MODELO (D-NE10 (a)): trava TODAS as linhas e decide só pelas linhas do
+ * modelo — réplica dele, ou (modelo que o ERP transmitia) sem linha e com a habilitação no ERP. 55/65 nascem virados e não dependem
+ * da SE: a réplica da SE não barra a habilitação da NF-e.
+ */
+export async function assertIssuerWritable(q: Queryable, schemaName: string, institutionId: number, model: IssuerModel): Promise<void> {
+  if (!isIssuerModel(model)) throw new Error(`Modelo fora do domínio da habilitação: ${String(model)}`)
+  const mine = (await lockIssuerRowList(q, institutionId)).filter(r => r.model === model)
+  const state = { rows: mine.length, replicas: mine.filter(r => r.c == null).length }
+  if (await modelStillInErp(state, model, q, schemaName, institutionId)) {
     throw new HttpError(409, 'A emissão fiscal deste estabelecimento ainda é do ERP — o emitente só muda pelo ERP até a virada',
       undefined, ErrorCodes.FISCAL_CUTOVER_PENDING)
   }
@@ -164,7 +231,7 @@ export async function upsertIssuer(
   conn: PoolConnection, schemaName: string, institutionId: number, model: IssuerModel,
   input: { environment: IssuerEnvironment; serie: string | null; userId: number | null },
 ): Promise<IssuerRow> {
-  await assertEmitterWritable(conn, schemaName, institutionId)
+  await assertIssuerWritable(conn, schemaName, institutionId, model)
   // D-F39: habilitação que NASCE pela API fiscal nasce virada (cutover_at = NOW()); revive/ON DUPLICATE KEY nunca toca a
   // coluna — uma réplica do ERP continua réplica (quem chama já conferiu que o ERP não emite por este estabelecimento)
   await conn.query(
@@ -180,7 +247,7 @@ export async function upsertIssuer(
 }
 
 export async function softDeleteIssuer(conn: PoolConnection, schemaName: string, institutionId: number, model: IssuerModel): Promise<boolean> {
-  await assertEmitterWritable(conn, schemaName, institutionId)          // a réplica do ERP não se exclui por aqui (D-F39)
+  await assertIssuerWritable(conn, schemaName, institutionId, model)    // a réplica do ERP não se exclui por aqui (D-F39)
   const [r] = await conn.query<any>(
     `UPDATE tb_establishment_issuer SET deleted = 'S', updated_at = NOW() WHERE tb_institution_id = ? AND model = ? AND deleted = 'N'`,
     [institutionId, model])

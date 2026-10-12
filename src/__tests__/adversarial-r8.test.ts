@@ -11,12 +11,12 @@
 //    (conferido: as escritas do núcleo são todas sem qualificador) — a defesa de produção é o GRANT (D-F15/D-F53).
 import fs from 'fs'
 import path from 'path'
-import { emissionStillInErp } from '../establishment/establishment'
-import { lockIssuerRows, issuerRowsState, assertEmitterWritable } from '../establishment/establishment.repository'
+import { anyEmissionStillInErp } from '../establishment/establishment'
+import { lockIssuerRows, issuerRowsState, assertCertificateWritable } from '../establishment/establishment.repository'
 
 // A cerca EXATAMENTE como o `contrato.test.ts` a usa (peça `./fence` — correção do ADV-R8-06: lista branca + comentários
 // tirados pelo compilador)
-import { erpWrites } from './fence'
+import { erpWrites, isNamedWriteException } from './fence'
 const STRIP_COMMENTS = (code: string) => code.replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')
 const caught = (code: string) => erpWrites(code).length > 0
 
@@ -60,6 +60,7 @@ describe('L6 — a cerca D-F31 do núcleo × formas reais de escrita no ERP', ()
       for (const m of code.matchAll(WRITE)) {
         const target = m[2].replace(/^\\?`|\\?`$/g, '')
         const multi = /^UPDATE/i.test(m[1]) && /\bJOIN\b/i.test(m[3].split(/\bSET\b/i)[0])
+        if (isNamedWriteException(path.relative(root, f), m[1], m[2], code) && !multi) continue   // NE-1a parte 2: verbo, alvo e ligação EXATOS nomeados na peça da cerca
         if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(target) || multi) out.push(`${path.relative(root, f)}: ${m[0].replace(/\s+/g, ' ').slice(0, 90)}`)
       }
       return out
@@ -127,9 +128,9 @@ describe('D-F57 — trava × contagem × predicado × guarda de escrita responde
         const locked = await lockIssuerRows(db, 1)
         const state = await issuerRowsState(db, 1)
         expect(state).toEqual(locked)                                                     // leitura travante = não travante
-        const still = await emissionStillInErp(db, 'setes_x', 1)
+        const still = await anyEmissionStillInErp(db, 'setes_x', 1)
         expect(still).toBe(EXPECTED_STILL_IN_ERP(rows, erpHasSe))
-        const writable = await assertEmitterWritable(db, 'setes_x', 1).then(() => true, (e: any) => (e?.code === 'FISCAL_CUTOVER_PENDING' ? false : e))
+        const writable = await assertCertificateWritable(db, 'setes_x', 1).then(() => true, (e: any) => (e?.code === 'FISCAL_CUTOVER_PENDING' ? false : e))
         expect(writable).toBe(!still)                                                     // a guarda de escrita é o MESMO predicado
       })
     }

@@ -32,6 +32,7 @@ export const ErrorCodes = {
   // Transporte fiscal
   FISCAL_AUTHORITY_UNAVAILABLE:      'FISCAL_AUTHORITY_UNAVAILABLE',
   FISCAL_AUTHORITY_AUTH_FAILED:      'FISCAL_AUTHORITY_AUTH_FAILED',
+  FISCAL_AUTHORITY_CHAIN_UNTRUSTED:  'FISCAL_AUTHORITY_CHAIN_UNTRUSTED',
   FISCAL_DPS_REJECTED:               'FISCAL_DPS_REJECTED',
   FISCAL_NFSE_NOT_FOUND:             'FISCAL_NFSE_NOT_FOUND',
   FISCAL_AUTHORITY_UNKNOWN_RESPONSE: 'FISCAL_AUTHORITY_UNKNOWN_RESPONSE',
@@ -78,6 +79,7 @@ export const ErrorCatalog: Record<ErrorCode, string> = {
   FISCAL_MASTER_KEY_UNAVAILABLE:     'Chave-mestra do cofre indisponível (versão ausente da configuração) — operação recusada sem tocar o A1 (D-F16)',
   FISCAL_AUTHORITY_UNAVAILABLE:      'Fisco indisponível (rede, timeout, 5xx ou limite) — tente depois; tentativa EM VOO quando houve envio',
   FISCAL_AUTHORITY_AUTH_FAILED:      'Fisco recusou o certificado do emissor (handshake mTLS, 401/403)',
+  FISCAL_AUTHORITY_CHAIN_UNTRUSTED:  'Certificado do SERVIDOR do fisco não confiável (cadeia TLS) — não é o A1 do emissor; nada foi enviado (D-NE57)',
   FISCAL_DPS_REJECTED:               'Fisco rejeitou o documento (regras E0xxx) — códigos em fields[]',
   FISCAL_NFSE_NOT_FOUND:             'Fisco não encontrou o recurso (NFS-e, DPS ou parâmetros municipais) / XML ausente',
   FISCAL_AUTHORITY_UNKNOWN_RESPONSE: 'Fisco respondeu sem envelope legível — desfecho ambíguo, reconciliar pela consulta',

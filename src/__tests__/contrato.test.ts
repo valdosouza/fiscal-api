@@ -15,7 +15,7 @@ import {
 import { ProductTokenVerifier, isAdmin, isSuper } from '../auth/product-jwt'
 import { FsFiscalStorage } from '../storage/fiscal-storage'
 import { splitStatements } from '../db/migrations'
-import { erpWrites } from './fence'
+import { erpWrites, erpWritesIn, NAMED_WRITE_EXCEPTIONS } from './fence'
 
 /** Gate da Rodada 18 (R18-03/R18-04): a prova exige a IDENTIDADE da candidata e a VIDA — os testes antigos de 1 argumento passam por aqui. */
 const proven = (c: any, life?: any[]) => {
@@ -172,8 +172,19 @@ describe('CERCA do núcleo cego (D-F10 / critério §12.8-1)', () => {
   // qualificador): escrita QUALIFICADA pelo schema do cliente (`${…}`.) ou pelo central (setes_*.) = escrita no ERP.
   it('CERCA D-F31 no núcleo: NENHUMA escrita no ERP em src/ (a única do produto é o ato da virada, nos scripts da nfse-api)', () => {
     // gate adversarial r8 (ADV-R8-06): LISTA BRANCA — todo alvo de escrita é nome simples de tabela (peça `./fence`)
-    const writes = files(srcRoot).flatMap(f => erpWrites(fs.readFileSync(f, 'utf8')).map(m => `${path.relative(srcRoot, f)}: ${m}`))
+    const writes = files(srcRoot).flatMap(f => erpWritesIn(path.relative(srcRoot, f), fs.readFileSync(f, 'utf8')).map(m => `${path.relative(srcRoot, f)}: ${m}`))
     expect(writes).toEqual([])
+    // NE-1a parte 2: a ÚNICA exceção nomeada é o escritor genérico da voz, e ela EXISTE (o alvo nomeado está mesmo lá — exceção morta sai)
+    expect(NAMED_WRITE_EXCEPTIONS.map(e => [e.file, e.target])).toEqual([['voice/event-table.ts', '${table}']])
+    for (const e of NAMED_WRITE_EXCEPTIONS) expect(erpWrites(fs.readFileSync(path.join(srcRoot, e.file), 'utf8')).length).toBeGreaterThan(0)
+    // a exceção é do ALVO exato naquele arquivo — outro alvo com substituição no MESMO arquivo, ou o mesmo alvo em OUTRO arquivo, segue violação
+    expect(erpWritesIn('voice/event-table.ts', 'q.query(`INSERT INTO ${other} (a) VALUES (1)`)')).toHaveLength(1)
+    // gates da parte 2: o VERBO (a voz é append-only — socrático) e a LIGAÇÃO (NE1A2-08) fazem parte da exceção
+    const realTable = fs.readFileSync(path.join(srcRoot, 'voice', 'event-table.ts'), 'utf8')
+    expect(erpWritesIn('voice/event-table.ts', realTable + '\nq.query(`UPDATE ${table} SET message = ?`, [m])\nq.query(`DELETE FROM ${table} WHERE attempt = ?`, [a])')).toHaveLength(2)
+    expect(erpWritesIn('voice/event-table.ts', realTable.replace('const table = d.eventTable', 'const table = d.eventTable as string || other'))).not.toEqual([])
+    expect(erpWritesIn('voice/event-table.ts', 'q.query(`UPDATE \\`${s}\\`.tb_invoice SET x = 1`)')).toHaveLength(1)
+    expect(erpWritesIn('voice/reading.ts', 'q.query(`INSERT INTO ${table} (a) VALUES (1)`)')).toHaveLength(1)
     // a cerca não é cega (senão passaria sempre) — e não acusa a escrita LEGÍTIMA no `fiscal_api` nem o `FOR UPDATE`
     expect(erpWrites('q.query(`UPDATE \\`${s}\\`.tb_invoice SET x = 1`)')).toHaveLength(1)
     expect(erpWrites('q.query(`DELETE FROM setes_central.tb_entity`)')).toHaveLength(1)
@@ -191,11 +202,13 @@ describe('CERCA do núcleo cego (D-F10 / critério §12.8-1)', () => {
     'http/http.ts': 'local: origens permitidas do CORS',
     'secret/cipher.ts': 'local: anel de chaves-mestras do processo',
     'auth/product-jwt.ts': 'local: chaves públicas do verificador',
+    'erp/invoice-tx.ts': 'D-NE81 (Valdo, gates da parte 2): WeakSet dos InvoiceTx EMITIDOS e abertos — identidade, não controle (a trava é o FOR UPDATE no banco)',
   }
-  it('nenhum Map/Set de CONTROLE em memória fora dos detentores de DADO declarados (com e sem genérico explícito)', () => {
+  it('nenhum Map/Set (nem WeakMap/WeakSet) de CONTROLE em memória fora dos detentores de DADO declarados (com e sem genérico explícito)', () => {
+    expect(['new WeakSet<object>()', 'new WeakMap()', 'new Set([1])', 'new Map<string, number>()'].every(s => /new (?:Weak)?(Map|Set)\s*[<(]/.test(s))).toBe(true)
     const offenders = files(srcRoot)
       .map(f => path.relative(srcRoot, f).replace(/\\/g, '/'))
-      .filter(f => /new (Map|Set)\s*[<(]/.test(fs.readFileSync(path.join(srcRoot, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')))
+      .filter(f => /new (?:Weak)?(Map|Set)\s*[<(]/.test(fs.readFileSync(path.join(srcRoot, f), 'utf8').replace(/\/\*[\s\S]*?\*\/|\/\/[^\n]*/g, '')))
       .filter(f => !(f in DATA_HOLDERS))
     expect(offenders).toEqual([])
   })

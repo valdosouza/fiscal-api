@@ -266,9 +266,9 @@ describe('NE1A-06 — imutabilidade em execução do que o núcleo publica', () 
       expect(mutated).toBe(false)
     }
   })
-  it('contexto: a nfse-api monta o SQL das vivas com o conteúdo do Set (`\'${k}\'`), sem placeholder', () => {
-    const repo = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'repository.ts')
-    if (!fs.existsSync(repo)) return
+  // parte 2 da NE-1a (D-NE9): a contagem das vivas saiu da nfse-api para o EMITTER do núcleo — o mesmo SQL montado com o conteúdo do Set
+  it('contexto: o EMITTER do núcleo monta o SQL das vivas com o conteúdo do Set (`\'${k}\'`), sem placeholder', () => {
+    const repo = path.join(WORKSPACE, 'fiscal-api', 'src', 'emitter', 'emitter.ts')
     expect(read(repo)).toMatch(/const finals = \[\.\.\.FINAL_TRANSMISSION_KINDS\]\.map\(k => `'\$\{k\}'`\)\.join\(','\)/)
     expect(Object.isFrozen(COMMON_TRANSMISSION_COLUMNS) && Object.isFrozen(SERVICE_VOICE_READING) && Object.isFrozen(VOICE_READINGS)).toBe(true)
   })
@@ -280,10 +280,10 @@ describe('NE1A-06 — imutabilidade em execução do que o núcleo publica', () 
 
 describe('NE1A-07 — cercas existentes × a mudança', () => {
   const contrato = read(path.join(SRC_ROOT, '__tests__', 'contrato.test.ts'))
-  const literal = /\/new \(Map\|Set\)[^/\n]*\//.exec(contrato)?.[0] ?? ''
+  const literal = /\/new (?:\(\?:Weak\)\?)?\(Map\|Set\)[^/\n]*\//.exec(contrato)?.[0] ?? ''
   const fence = new RegExp(literal.slice(1, -1))
   it('[CORRIGIDO na sessão] a cerca era `/new (Map|Set)\\s*</` (cega a `new Set(…)` sem genérico); agora pega as duas formas, com LISTA BRANCA nomeada dos detentores de DADO — o vocabulário e os códigos da família não usam mais `new Set` (vêm da peça do conjunto imutável)', () => {
-    expect(literal).toBe('/new (Map|Set)\\s*[<(]/')
+    expect(literal).toBe('/new (?:Weak)?(Map|Set)\\s*[<(]/')                     // gates da parte 2 (D-NE81): também WeakMap/WeakSet
     const users = walk(SRC_ROOT).filter(f => /new (?:Map|Set)\s*[<(]/.test(stripComments(read(f)))).map(rel)
     expect(users).not.toEqual(expect.arrayContaining(['voice/kinds.ts']))
     expect(users).not.toEqual(expect.arrayContaining(['voice/families/service.ts']))
