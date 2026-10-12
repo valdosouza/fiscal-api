@@ -150,10 +150,14 @@ describe('NE1A-03 — D (denegada) × barreira de nova tentativa', () => {
     const nfse = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'transmission.ts')
     if (fs.existsSync(nfse)) expect(read(nfse)).toMatch(/if \(latest && \(isLiveTransmission\(latest\) \|\| isAuthorized\(latest\)\)\) throw liveTransmissionError\(latest\)/)
   })
-  // ⚠️ AGUARDA DECISÃO DO VALDO: os gates recomendaram caminhos DIFERENTES — socrático Q-NE61 (a) (invariante da família: D sempre
-  // publicada com authority_recorded='S'; o mapa recusa D com 'N') × adversarial Q-NE67 (a) (D barra pela CLASSE do kind) — fica `failing`
-  it.failing('[LOW NE1A-03] (latente — NE-2) o comentário de `blocksNewAttempt` promete "a NF-e DENEGADA também barra (D-E7: não se retransmite; o número queimou)", mas o código só barra D quando `authorityRecorded` — uma voz D gravada sem o protocolo (definição da view da NE-2, consulta sem `nProt`) libera retransmitir o número queimado', () => {
-    expect(blocksNewAttempt({ lastKind: 'D', authorityRecorded: false })).toBe(true)
+  // DECIDIDO (Valdo 2026-10-12): D-NE61 (= Q-NE61 (a) do socrático) — invariante da FAMÍLIA; a Q-NE67 (a) do adversarial (barrar pela CLASSE
+  // da letra) foi REJEITADA. A garantia mora no MAPA (a linha D sem registro falha alto), não num 2º critério do predicado.
+  it('[DECIDIDO — D-NE61] [LOW NE1A-03] (NE-2) a NF-e DENEGADA barra porque a família a publica SEMPRE registrada: a linha D sem registro (consulta sem `nProt`, view torta) falha ALTO no mapa — nunca chega à barreira para liberar o número queimado; com registro, barra', () => {
+    expect(outcome(() => mapCommonView(RAW({ lastKind: 'D', authorityRecorded: 'N' })))).toBe('lança')
+    const denied = mapCommonView(RAW({ lastKind: 'D', authorityRecorded: 'S' }))
+    expect(blocksNewAttempt(denied)).toBe(true)
+    // limite conhecido: objeto montado À MÃO (sem o mapa) com D sem registro passa — o caminho público da F2a é o leitor que já mapeia (D-NE66 (b))
+    expect(blocksNewAttempt({ lastKind: 'D', authorityRecorded: false })).toBe(false)
   })
 })
 

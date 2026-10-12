@@ -165,6 +165,12 @@ export function mapCommonView(r: any): TransmissionView {
   if (!Number.isInteger(terminal) || terminal < 0) {
     throw new Error(`Linha da view sem terminal (inteiro ≥ 0) — projeção torta? (recebido: ${JSON.stringify(r.terminal)})`)
   }
+  // D-NE61 (= Q-NE61 (a), Valdo 2026-10-12 — Q-NE67 rejeitada): INVARIANTE DA FAMÍLIA — toda voz D (denegada; o número queimou, D-E7)
+  // é publicada REGISTRADA. A barreira de nova tentativa segue SÓ pelo fato (D-NE56); uma linha D sem registro é família inconsistente e
+  // falha ALTO aqui — nunca libera retransmitir o número queimado. A família NF-e confere o invariante na NE-2 (teste da view dela).
+  if (r.lastKind === 'D' && r.authorityRecorded !== 'S') {
+    throw new Error('Linha da view com voz D (denegada) SEM registro — a família publica a denegada sempre registrada (D-NE61)')
+  }
   return {
     institutionId: Number(r.institutionId), invoiceId: Number(r.invoiceId), terminal,
     attempt: Number(r.attempt), lifeEvent: Number(r.lifeEvent), environment: r.environment,
@@ -269,7 +275,8 @@ export function isFiscalRecord(tx: Pick<TransmissionView, 'authorityRecorded' | 
 
 /**
  * Barreira de NOVA tentativa (NE-1a): a vigente está VIVA ou o fisco REGISTROU o documento — a NF-e DENEGADA (D: final e não
- * autorizada) também barra (D-E7: não se retransmite; o número queimou). A NFS-e segue com a ordem dos 409 dela (os mesmos códigos).
+ * autorizada) também barra (D-E7: não se retransmite; o número queimou) PORQUE a família a publica sempre registrada (D-NE61 — o mapa
+ * recusa D sem registro); nenhuma 2ª regra pela letra (Q-NE67 rejeitada). A NFS-e segue com a ordem dos 409 dela (os mesmos códigos).
  */
 export function blocksNewAttempt(tx: Pick<TransmissionView, 'lastKind' | 'authorityRecorded'> | null): boolean {
   if (!tx) return false
