@@ -17,6 +17,7 @@
 //    o cenário do `it.failing` vizinho monta de verdade (o `it.failing` só afirma a última coisa).
 //
 // REGRAS DO GATE: puro (sem banco, sem socket — `transport.request` trocado —, sem fisco). Lê o espelho do setes-api só como TEXTO.
+import { setesApiPath } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
 import fs from 'fs'
 import path from 'path'
 import { isLiveTransmission } from '../voice/reading'
@@ -250,8 +251,8 @@ describe('RESISTIU — D-F98: a causa do ambíguo é da lista FECHADA, do produt
     })
   })
   it('resistiu: ESPELHO do setes-api — a lista `AMBIGUOUS_CAUSES`, a chave do Symbol e o código das duas funções são IDÊNTICOS (só o comentário de cabeçalho difere)', () => {
-    const mirror = path.join(WORKSPACE, 'setes-api', 'src', 'shared', 'tax-authority', 'ambiguous-cause.ts')
-    if (!fs.existsSync(mirror)) return                                   // núcleo isolado (sem o workspace): nada a comparar
+    // D-F117: o espelho TEM de existir até a A3 da F2a (que o remove — e revisa esta cerca na mesma entrega)
+    const mirror = setesApiPath('src', 'shared', 'tax-authority', 'ambiguous-cause.ts')
     const core = path.join(SRC_ROOT, 'errors', 'ambiguous-cause.ts')
     const body = (f: string) => fs.readFileSync(f, 'utf8').replace(/\r\n/g, '\n').replace(/^\/\*\*[\s\S]*?\*\/\n/, '')
     expect(body(mirror)).toBe(body(core))

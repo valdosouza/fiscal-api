@@ -279,7 +279,8 @@ export async function establishmentCnpj(q: Queryable, institutionId: number): Pr
  * D-F39 (lacuna do guardião): o ERP tem habilitação SE PRÓPRIA (o caminho de emissão do setes-api — tabela que a F2a
  * aposenta) para esta institution? Viva OU excluída: o contador tem história (D-N18) — uma habilitação nova na API
  * começando do zero cunharia Ids de DPS que o ERP já usou (cenário R2-2). Só SE: o ERP nunca transmitiu 55/65 (a linha
- * 55 do ERP é a série do faturamento — D-F21). Tabela ausente (depois da F2a) = não tem.
+ * 55 do ERP é a série do faturamento — D-F21). A F2a NÃO apaga a tabela (D-F44: aposenta SEM DROP; D-F110: a 068 do setes-api a
+ * CONGELA — "origem congelada"); a tabela ausente (schema sem a migration 058, cliente que nunca emitiu pelo ERP) = não tem.
  */
 export async function erpServiceIssuerExists(q: Queryable, schemaName: string, institutionId: number): Promise<boolean> {
   const s = assertSchema(schemaName)

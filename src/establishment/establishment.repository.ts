@@ -1,5 +1,6 @@
 import { Pool, PoolConnection } from 'mysql2/promise'
 import { Queryable } from '../db/tx'
+import { assertCheckRefuses } from '../db/check'
 import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
 import { erpServiceIssuerExists } from '../erp/facts'
@@ -83,8 +84,8 @@ export interface IssuerRowsState { rows: number; replicas: number; serviceRows: 
 /**
  * As LINHAS da habilitação (vivas ou excluídas) da institution, TRAVADAS por PK — uma por modelo do domínio (`c` = cutover_at). D-NE84
  * (gate adversarial da parte 2, NE1A2-07): o `model IN (…)` do SQL decide na colação da tabela (_ci — 'se' casa com 'SE'), então o modelo
- * volta CANÔNICO e o filtro em JS decide igual à leitura (`issuerRowsState`): a trava e a leitura nunca discordam. O CHECK binário do
- * `model` entra na migration da F2a (nota de implantação — junto da D-F107).
+ * volta CANÔNICO e o filtro em JS decide igual à leitura (`issuerRowsState`): a trava e a leitura nunca discordam. Desde a A1 da F2a o
+ * CHECK do `model` é BINÁRIO (migration 005 do núcleo — 'se' recusado); a canonização fica como defesa (banco anterior à 005).
  */
 async function lockIssuerRowList(q: Queryable, institutionId: number): Promise<{ model: string; c: unknown }[]> {
   const [rows] = await q.query(
@@ -154,27 +155,23 @@ export async function establishmentStillInErp(q: Queryable, schemaName: string, 
  * (MySQL < 8.0.16 aceita o CHECK e ignora em silêncio; MySQL 8 pode tê-lo NOT ENFORCED). A prova é o próprio ato: um
  * modelo fora do domínio, numa transação SEMPRE desfeita, tem de ser RECUSADO pelo banco — senão o boot falha alto.
  */
-export async function assertIssuerModelDomainEnforced(pool: Pool): Promise<void> {
-  const conn = await pool.getConnection()
-  let accepted = false
-  try {
-    await conn.beginTransaction()
-    try {
-      await conn.query(
-        `INSERT INTO tb_establishment_issuer (tb_institution_id, model, environment, dps_last_number, deleted) VALUES (0, 'ZZ', 'H', 0, 'N')`)
-      accepted = true
-    } catch (err: any) {
-      // ER_CONSTRAINT_FAILED (MariaDB 4025) · ER_CHECK_CONSTRAINT_VIOLATED (MySQL 3819) = o motor aplicou o CHECK
-      if (!(err?.errno === 4025 || err?.errno === 3819 || /CONSTRAINT/.test(String(err?.code ?? '')))) throw err
-    }
-  } finally {
-    try { await conn.rollback() } catch { /* a conexão pode ter caído — o release resolve */ }
-    conn.release()
-  }
-  if (accepted) {
-    throw new Error('O banco ACEITOU um modelo fora do domínio na habilitação — o motor não aplica CHECK (exige MariaDB ≥ 10.2 '
-      + 'ou MySQL ≥ 8.0.16 com o CHECK ENFORCED; D-F45, migration 004 do núcleo)')
-  }
+export async function assertIssuerModelDomainEnforced(pool: Pick<Pool, 'getConnection'>): Promise<void> {
+  // D-NE84 (gates da NE-1a parte 2; executada na F2a — migration 005 do núcleo): o CHECK é BINÁRIO — 'ZZ' prova que o motor aplica CHECK,
+  // 'se' prova que a colação é binária (um CHECK _ci aceitaria a minúscula — a cerca da virada por modelo não a enxergaria)
+  const probe = (value: string) => ({ value, constraint: 'ck_establishment_issuer_model_bin', params: [value],
+    sql: `INSERT INTO tb_establishment_issuer (tb_institution_id, model, environment, dps_last_number, deleted) VALUES (0, ?, 'H', 0, 'N')` })
+  await assertCheckRefuses(pool, 'o modelo da habilitação', [probe('ZZ'), probe('se')])
+}
+
+/**
+ * D-F120 (= Q-F131 (a), Valdo 2026-10-12 — gates da A1 da F2a): o AMBIENTE da habilitação é H/P em colação BINÁRIA (migration 005 do núcleo)
+ * — 'h' minúsculo era H para o SQL e outra coisa para o código (o ambiente congelado na tentativa decide registro fiscal e prova). Sonda:
+ * 'X' (fora) e 'h' (minúscula); cada linha com PK própria (um motor sem CHECK não colide a 2ª sonda na 1ª — F2A1-07).
+ */
+export async function assertIssuerEnvironmentDomainEnforced(pool: Pick<Pool, 'getConnection'>): Promise<void> {
+  const probe = (value: string, model: string) => ({ value, constraint: 'ck_establishment_issuer_environment_bin', params: [model, value],
+    sql: `INSERT INTO tb_establishment_issuer (tb_institution_id, model, environment, dps_last_number, deleted) VALUES (0, ?, ?, 0, 'N')` })
+  await assertCheckRefuses(pool, 'o ambiente da habilitação', [probe('X', '55'), probe('h', '65')])
 }
 
 export async function listIssuers(q: Queryable, institutionId: number): Promise<IssuerRow[]> {

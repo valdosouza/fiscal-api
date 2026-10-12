@@ -244,9 +244,9 @@ describe('D-F45 — boot confere que o motor APLICA o CHECK do domínio do model
     const conn = { beginTransaction: jest.fn(), rollback: jest.fn(), release: jest.fn(), query: jest.fn(async () => insert()) }
     return { conn, pool: { getConnection: jest.fn(async () => conn) } as any }
   }
-  it('o banco RECUSA o modelo fora do domínio (MariaDB 4025 / MySQL 3819) → boot segue; a transação é sempre desfeita', async () => {
+  it('o banco RECUSA o modelo fora do domínio (MariaDB 4025 / MySQL 3819) pelo CHECK BINÁRIO da 005 (D-NE84; a recusa conta só se vier dele — F2A1-05) → boot segue; a transação é sempre desfeita', async () => {
     for (const errno of [4025, 3819]) {
-      const { conn, pool } = poolWith(async () => { throw Object.assign(new Error('CONSTRAINT `ck_establishment_issuer_model` failed'), { errno }) })
+      const { conn, pool } = poolWith(async () => { throw Object.assign(new Error('CONSTRAINT `ck_establishment_issuer_model_bin` failed'), { errno }) })
       await expect(assertIssuerModelDomainEnforced(pool)).resolves.toBeUndefined()
       expect(conn.rollback).toHaveBeenCalledTimes(1)
       expect(conn.release).toHaveBeenCalledTimes(1)
@@ -256,6 +256,11 @@ describe('D-F45 — boot confere que o motor APLICA o CHECK do domínio do model
     const { conn, pool } = poolWith(async () => [{ affectedRows: 1 }])
     await expect(assertIssuerModelDomainEnforced(pool)).rejects.toThrow(/não aplica CHECK/)
     expect(conn.rollback).toHaveBeenCalledTimes(1)
+  })
+  it('[F2A1-05, F2a] a recusa pelo CHECK _ci ANTIGO da 004 (`ck_establishment_issuer_model`) NÃO prova o domínio binário — falha ALTO com o diagnóstico ("recusada por OUTRO CHECK")', async () => {
+    const e = Object.assign(new Error('CONSTRAINT `ck_establishment_issuer_model` failed'), { errno: 4025 })
+    const { pool } = poolWith(async () => { throw e })
+    await expect(assertIssuerModelDomainEnforced(pool)).rejects.toThrow(/recusada por OUTRO CHECK, não pelo ck_establishment_issuer_model_bin/)
   })
   it('outro erro (ex.: sem permissão) sobe como está — nunca vira "o motor aplica"', async () => {
     const { pool } = poolWith(async () => { throw Object.assign(new Error('INSERT command denied'), { errno: 1142, code: 'ER_TABLEACCESS_DENIED_ERROR' }) })

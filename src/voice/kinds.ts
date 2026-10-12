@@ -17,11 +17,11 @@ import { readonlySet } from '../util/readonly-set'
  * para ESTE tipo comum (P da NF-e — viva, em processamento; D — FINAL, denegada) não entram lá. D-F105 (= Q-F111 (a)): a D-F102 vale SÓ
  * para a família NFS-e — a NF-e PODE produzir S; quem o produzir dá a saída na mesma entrega (consulta pela NOSSA chave — §3.2/D-NE7 do
  * prompt da NF-e; o P sai pela consulta do recibo — D-NE33); no núcleo a cerca só olha SQL na tabela da NFS-e.
- * D-F103 (= Q-F109 (a)): `kind` é CHAR(1) sem CHECK de domínio na migration 001 da nfse-api (colação _ci — o banco aceita "f", que o SQL
- * lê como F e o código como VIVA). Os escritores são TIPADOS — EXCETO a cópia do `migrate:setes` (`nfse-api/scripts/migrate-from-setes-api.ts`:
- * `INSERT IGNORE … SELECT … ev.kind` herda o domínio da ORIGEM, que também não tem CHECK — R21-05). NUNCA gravar voz por fora do código.
- * A migration da F2a ganha o CHECK do domínio em colação binária, conferido no boot (molde da D-F45) — item (7) da nota de implantação;
- * o domínio é a lista da FAMÍLIA (A/R/C/K/F/N — D-F107), não este tipo comum. Quando a máquina vier para cá (NE-1a), a lista de escrita
+ * D-F103/D-F107 (executadas na A1 da F2a, 2026-10-12): na tabela da NFS-e o domínio de `kind` é FATO DO BANCO — CHECK BINÁRIO com a lista
+ * da FAMÍLIA (A/R/C/K/F/N — não este tipo comum), migration 005 da nfse-api, conferido no boot (`assertServiceVoiceDomainsEnforced` — 'S' e
+ * 'f' recusados); `source` e `environment` também (D-F120). A cópia do `migrate:setes` (`INSERT IGNORE … SELECT`, que REBAIXARIA a violação
+ * do CHECK a aviso — F2A1-08) confere o domínio da ORIGEM antes de copiar. NUNCA gravar voz por fora do código; nunca desligar o CHECK na
+ * sessão (`check_constraint_checks` — D-F122). Quando a máquina vier para cá (NE-1a), a lista de escrita
  * vai no DESCRITOR da família (`VoiceFamily<K>`) e o escritor comum é genérico nela, com o funil em execução (D-F108 — nota no
  * `prompt_onda_nfe_sefaz.md` §12.8): nunca um escritor do núcleo tipado por `TransmissionEventKind`.
  *

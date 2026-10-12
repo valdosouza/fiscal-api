@@ -1,5 +1,5 @@
 import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
-import { InvoiceBranch, InvoiceRef, invoiceRefFilter } from '../ref/invoice-ref'
+import { InvoiceBranch } from '../ref/invoice-ref'
 
 /**
  * CONTRATO DE LEITURA da voz do fisco (D-F33) — exportado pela biblioteca para a API da família
@@ -126,28 +126,6 @@ export function familyViewSelect(reading: VoiceFamilyReading<TransmissionView>, 
     FROM \`${db}\`.${reading.transmissionView} ${alias}`
 }
 
-/** As tentativas de UMA nota na view da família (a referência inteira por parâmetro — o terminal nunca é literal; D-NE12). */
-export function familyViewQuery(reading: VoiceFamilyReading<TransmissionView>, db: string, ref: InvoiceRef, alias = 'v'): { sql: string; params: number[] } {
-  const f = invoiceRefFilter(ref, alias)
-  return { sql: `${familyViewSelect(reading, db, alias)} WHERE ${f.sql} ORDER BY ${alias}.attempt`, params: f.params }
-}
-
-/**
- * As tentativas de VÁRIAS notas do MESMO estabelecimento e terminal (lote — o selo da lista de OS na F2a; gate socrático da NE-1a, M3):
- * a chave da nota inteira por parâmetro (simétrico ao `invoiceLives`), nunca um WHERE próprio do leitor com `terminal = 0`. Lista vazia
- * é erro de quem chama (não há SQL para "nenhuma nota").
- */
-export function familyViewQueryMany(
-  reading: VoiceFamilyReading<TransmissionView>, db: string, scope: Pick<InvoiceRef, 'institutionId' | 'terminal'>, invoiceIds: readonly number[], alias = 'v',
-): { sql: string; params: unknown[] } {
-  if (!invoiceIds.length) throw new Error('familyViewQueryMany: lista de notas vazia')
-  return {
-    sql: `${familyViewSelect(reading, db, alias)} WHERE ${alias}.tb_institution_id = ? AND ${alias}.tb_invoice_id IN (?) AND ${alias}.terminal = ?`
-      + ` ORDER BY ${alias}.tb_invoice_id, ${alias}.attempt`,
-    params: [scope.institutionId, [...invoiceIds], scope.terminal],
-  }
-}
-
 /**
  * Mapeia a PROJEÇÃO COMUM de uma linha da view. Toda coluna que DECIDE é obrigatória e falha ALTO fora do domínio (gates da NE-1a parte 1):
  * `authority_recorded` ('S'/'N' — view sem a coluna = migration da família não aplicada; nunca vira "não registrado" calado: o cancelamento
@@ -227,11 +205,11 @@ export function authorityRecordedOf(tx: Pick<TransmissionView, 'authorityRecorde
  * (nos campos que as linhas trazem) é erro de quem chama e falha alto, nunca uma "vigente" de outra nota. A família não está na linha
  * (projeção comum) — quem mistura famílias é a composição que percorre `VOICE_READINGS`, uma de cada vez.
  */
-function assertOneInvoiceLife(list: readonly object[]): void {
+export function assertOneInvoiceLife(list: readonly object[], who = 'currentOf'): void {
   for (const key of ['institutionId', 'invoiceId', 'terminal', 'lifeEvent'] as const) {
     const first = (list[0] as Record<string, unknown>)[key]
     for (const t of list) {
-      if ((t as Record<string, unknown>)[key] !== first) throw new Error(`currentOf: lista mistura ${key} (${String(first)} × ${String((t as Record<string, unknown>)[key])})`)
+      if ((t as Record<string, unknown>)[key] !== first) throw new Error(`${who}: lista mistura ${key} (${String(first)} × ${String((t as Record<string, unknown>)[key])})`)
     }
   }
 }

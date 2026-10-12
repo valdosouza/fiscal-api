@@ -25,9 +25,10 @@ import * as familiesMod from '../voice/families'
 import * as refMod from '../ref/invoice-ref'
 import { KIND_CLASS, FINAL_TRANSMISSION_KINDS, AUTHORIZED_KINDS, TransmissionEventKind } from '../voice/kinds'
 import {
-  COMMON_TRANSMISSION_COLUMNS, TransmissionView, VoiceFamilyReading, ViewColumn, blocksNewAttempt, currentOf, familyViewQuery,
+  COMMON_TRANSMISSION_COLUMNS, TransmissionView, VoiceFamilyReading, ViewColumn, blocksNewAttempt, currentOf,
   familyViewSelect, fiscalStateOf, isAuthorized, isFiscalRecord, isLiveTransmission, mapCommonView,
 } from '../voice/reading'
+import { familyViewQuery } from '../voice/view-query'          // D-NE66 (b): o SQL cru é INTERNO desde a F2a
 import {
   SERVICE_VOICE_READING, ServiceTransmissionView, mapTransmissionView, reconfirmationCandidate, transmissionViewSelect,
   HUMAN_EFFECT_CANCEL_CODES, CANCEL_EVENT_CODES,

@@ -21,6 +21,7 @@
 //
 // REGRAS DO GATE: puro (sem banco, sem socket, sem fisco). Lê a nfse-api e o setes-api só como TEXTO. Testemunhas de COMPILAÇÃO
 // (`@ts-expect-error`) são conferidas pelo ts-jest: um `@ts-expect-error` sem erro QUEBRA a compilação deste arquivo.
+import { setesApiPath, mustExist, relWorkspace } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
 import fs from 'fs'
 import path from 'path'
 import * as core from '../index'
@@ -30,12 +31,12 @@ import { isLiveTransmission } from '../voice/reading'
 const SRC_ROOT = path.resolve(__dirname, '..')
 const WORKSPACE = path.resolve(SRC_ROOT, '..', '..')
 const read = (f: string) => fs.readFileSync(f, 'utf8')
-const rel = (f: string) => path.relative(WORKSPACE, f).replace(/\\/g, '/')
+const rel = (f: string) => relWorkspace(f)                                  // D-F117
 const walk = (dir: string, ext: RegExp): string[] => (!fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
   d.isDirectory() ? (d.name === '__tests__' || d.name === 'node_modules' ? [] : walk(path.join(dir, d.name), ext)) : ext.test(d.name) ? [path.join(dir, d.name)] : []))
 const NFSE_REPO = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'repository.ts')
 const NFSE_FAMILY = path.join(WORKSPACE, 'nfse-api', 'src', 'nfse', 'voice-family.ts')
-const SETES_REPO = path.join(WORKSPACE, 'setes-api', 'src', 'shared', 'invoice-transmission', 'transmission.repository.ts')
+const SETES_REPO = setesApiPath('src', 'shared', 'invoice-transmission', 'transmission.repository.ts')   // D-F117: tem de existir
 const FENCE = path.join(WORKSPACE, 'nfse-api', 'src', '__tests__', 'voice-kind-fence.ts')
 
 // --- igualdade de tipos (testemunha de compilação) ---
@@ -71,7 +72,7 @@ describe('D-F106 (= Q-F112 (b)) sobre o vocabulário do NÚCLEO', () => {
     expect(core).toMatch(/const kind = e\?\.kind as unknown[\s\S]*?if \(typeof kind !== 'string' \|\| !writeSet\.has\(kind\)\) \{\s*throw new Error\(`D-F106:/)
     expect(core.indexOf('!writeSet.has(kind)')).toBeLessThan(core.indexOf('await conn.query'))
     if (fs.existsSync(NFSE_REPO)) expect(read(NFSE_REPO)).toMatch(/export const insertTransmissionEvent = SERVICE_VOICE_FAMILY\.insertTransmissionEvent/)
-    if (fs.existsSync(SETES_REPO)) {
+    if (mustExist(SETES_REPO)) {
       const setes = read(SETES_REPO)
       for (const re of [list, derived, funnel, /kind:\s+ServiceVoiceWriteKind/]) expect(setes).toMatch(re)
       expect(setes).not.toMatch(/ServiceVoiceWriteKind = Extract</)

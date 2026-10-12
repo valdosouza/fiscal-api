@@ -116,8 +116,9 @@ describe('r8 — assertIssuerModelDomainEnforced (D-F45): o boot só passa se o 
     }
   })
 
-  it('recusa pelo CHECK (MariaDB 4025 / MySQL 3819) → passa, e a conexão volta ao pool', async () => {
-    for (const e of [dbErr('ER_CONSTRAINT_FAILED', 4025), dbErr('ER_CHECK_CONSTRAINT_VIOLATED', 3819)]) {
+  it('recusa pelo CHECK (MariaDB 4025 / MySQL 3819) → passa, e a conexão volta ao pool — [F2A1-05, F2a] a mensagem do motor traz o NOME da constraint do domínio (MariaDB `ck`, MySQL \'ck\')', async () => {
+    for (const e of [Object.assign(dbErr('ER_CONSTRAINT_FAILED', 4025), { message: 'CONSTRAINT `ck_establishment_issuer_model_bin` failed for `fiscal_api`.`tb_establishment_issuer`' }),
+      Object.assign(dbErr('ER_CHECK_CONSTRAINT_VIOLATED', 3819), { message: "Check constraint 'ck_establishment_issuer_model_bin' is violated." })]) {
       const { pool, conn } = poolWith(async () => { throw e })
       await expect(assertIssuerModelDomainEnforced(pool)).resolves.toBeUndefined()
       expect(conn.release).toHaveBeenCalledTimes(1)

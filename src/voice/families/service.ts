@@ -1,6 +1,6 @@
-import { FINAL_TRANSMISSION_KINDS } from '../kinds'
 import {
-  TransmissionView, ViewColumn, VoiceFamilyReading, authorityRecordedOf, familyViewSelect, frozenColumns, localCancelPendingIn, mapCommonView,
+  TransmissionView, ViewColumn, VoiceFamilyReading, assertOneInvoiceLife, authorityRecordedOf, familyViewSelect, frozenColumns, isLiveTransmission,
+  localCancelPendingIn, mapCommonView,
 } from '../reading'
 import { readonlySet } from '../../util/readonly-set'
 
@@ -100,8 +100,8 @@ type ReconfirmLike = Pick<ServiceTransmissionView, 'attempt' | 'lastKind' | 'las
  */
 export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: readonly T[]): T | null {
   if (lifeList.some(t => authorityRecordedOf(t))) return null
-  // D-F103 (= Q-F109 (a)): `=== 'F'` é sensível a caixa e o banco não confere o domínio de `kind` (colação _ci) — os escritores são
-  // tipados; voz gravada por fora do código ("f") some daqui. O CHECK binário entra na migration da F2a.
+  // D-F103/D-F107/D-F120: `=== 'F'`/`'Q'`/`'P'` são sensíveis a caixa — e o banco confere o MESMO domínio: CHECK binário de `kind`,
+  // `source` e `environment` (migration 005 da nfse-api). Antes da 005 a voz gravada por fora do código ("f", "q") sumia daqui calada.
   const c = lifeList
     .filter(t => t.lastKind === 'F' && t.lastSource === 'Q' && t.environment === 'P' && !!t.dpsId)
     .sort((a, b) => a.attempt - b.attempt)
@@ -126,35 +126,88 @@ export function reconfirmationCandidate<T extends ReconfirmLike>(lifeList: reado
  * cancelamento e do rodízio (`isLiveTransmission`: sem voz OU última voz não final — S "enviado", K) — a voz S tem instante, mas a
  * apresentação dela pode não ter chegado ao fisco. `lastKind` entra no contrato; AUSENTE conta como viva (falha FECHADO).
  * D-F102 (= Q-F108 (a)): S não tem saída hoje (ver `kinds.ts`) — quem criar produtor de S dá a ela a saída da D-F51.
- * D-F104 (= Q-F110 (a), Valdo 2026-10-11): a prova fica BOOLEANA até a F2a; o veredito com MOTIVO (barreira e prova numa chamada só —
- * molde `verdictOf`, D-IB47) se decide na rodada da F2a, com o caso real (itens (5)/(6) da nota de implantação, §21.14).
+ * D-F104 (= Q-F110 (a), Valdo 2026-10-11): a prova fica BOOLEANA até a F2a — REVISTA pela D-F109 (abaixo): o booleano é o motivo
+ * `provada` da MESMA regra (`proofReason`), uma implementação só.
  */
 // R20-02 do gate da Rodada 20: `lastKind` é OBRIGATÓRIO no tipo (o valor pode ser `null` = viva) — projeção que o esquece não compila
 // (antes compilava e a prova nunca passava: laço "reconfira" silencioso na F2a); o fallback de execução segue falhando FECHADO
 type PresentationLike = Partial<Pick<ServiceTransmissionView, 'lastEventAt' | 'createdAt' | 'dpsId' | 'environment'>> & Pick<ServiceTransmissionView, 'lastKind'>
+type ProofCandidate = Pick<ServiceTransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt'> & PresentationLike
 /** Instante do banco como o leitor do núcleo o entrega (`DATE_FORMAT` — UTC); só nesse formato a comparação por texto é cronológica. */
 const DB_INSTANT = /^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/
+
+/**
+ * D-F109 (= Q-F115 (b), Valdo 2026-10-12 — Rodada 1 da F2a, `prompt_apis_fiscais_isoladas.md` §22.6): o VEREDITO da reconferência com
+ * MOTIVO — a pergunta do plano de cancelamento do setes-api (F2a) e do `/reconfirm` da nfse-api, numa regra só:
+ *  - `irma-viva`          — há tentativa VIVA na vida (transmissão em andamento — barreira do plano, `isLiveTransmission`); vem ANTES da
+ *                           prova (nota (1) da F2a: com tentativa em voo a reconferência carimbaria um E2404 que não prova — laço "reconfira");
+ *  - `nao-exigida`        — nada a reconferir (a vida tem registro do fisco, ou nenhuma tentativa fechou com F por consulta em PRODUÇÃO);
+ *  - `sem-identidade`     — a candidata ou uma irmã sem Id do DPS/ambiente (falha FECHADO — R18-03/R19-01);
+ *  - `instante-invalido`  — instante fora do formato do leitor, ou a candidata sem o instante da voz (R18-06);
+ *  - `sem-e2404`          — o fisco ainda não respondeu E2404 a uma pergunta desta candidata (D-F90) — a ação é RECONFERIR;
+ *  - `apresentada-depois` — o E2404 que existe é ANTERIOR à última apresentação do Id na vida (D-F97) — reconferir de novo;
+ *  - `provada`            — o E2404 é posterior à última apresentação do Id em toda tentativa da mesma identidade (D-F90/D-F97/D-F99/D-F101).
+ * A política do ERP (homologação não prende a nota — Q-CA5b; destino da nota) segue no plano do ERP (D-F29).
+ */
+export type ReconfirmReason =
+  'provada' | 'irma-viva' | 'apresentada-depois' | 'sem-e2404' | 'sem-identidade' | 'instante-invalido' | 'nao-exigida'
+export interface ReconfirmVerdict<T> {
+  readonly reason:    ReconfirmReason
+  /** A candidata da reconferência (`reconfirmationCandidate`) — null em `irma-viva` e `nao-exigida`. */
+  readonly candidate: T | null
+}
+/**
+ * O que a VIDA precisa trazer para o veredito — a projeção da view (`ServiceTransmissionView`) tem tudo; nenhum campo opcional (R20-02).
+ * A nota e a vida vêm em cada linha: o veredito recusa ALTO lista que mistura notas ou vidas (gates da A1 da F2a, F2A1-01 — uma vida H
+ * registrada e cancelada localmente misturada à vida nova em P dava `nao-exigida` e liberava o cancelamento local sem reconferir).
+ */
+type VerdictLike = ReconfirmLike & Pick<ServiceTransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt' | 'createdAt' | 'invoiceId' | 'lifeEvent'>
+
+export function reconfirmationVerdict<T extends VerdictLike>(lifeList: readonly T[]): ReconfirmVerdict<T> {
+  // UMA nota, UMA vida (D-NE71 — a mesma guarda do `currentOf`; D-F119: o leitor público já entrega só a vida pedida)
+  if (lifeList.length) assertOneInvoiceLife(lifeList, 'reconfirmationVerdict')
+  // a barreira ANTES da prova (nota (1) da F2a): tentativa VIVA na vida = transmissão em andamento, em QUALQUER identidade
+  if (lifeList.some(t => isLiveTransmission(t))) return Object.freeze({ reason: 'irma-viva', candidate: null })
+  const candidate = reconfirmationCandidate(lifeList)
+  if (!candidate) return Object.freeze({ reason: 'nao-exigida', candidate: null })
+  return Object.freeze({ reason: proofReason(candidate, lifeList), candidate })
+}
+
+/**
+ * A prova de UMA candidata contra a vida (D-F90/D-F97/D-F99/D-F101) — o booleano histórico é o motivo `provada` desta regra, SEM a barreira
+ * da vida (uma tentativa viva de OUTRA identidade não entra na prova). D-F118 (= Q-F124, Valdo 2026-10-12): por isso ele NÃO sai pela
+ * superfície `fiscal-api/reading` — quem decide o cancelamento (setes-api, F2a) só enxerga o VEREDITO; o booleano fica no barrel (nfse-api,
+ * testes dos gates R18–R21).
+ */
 export function reconfirmationProven(
-  candidate: Pick<ServiceTransmissionView, 'nfseNotGeneratedAt' | 'lastEventAt'> & PresentationLike,
+  candidate: ProofCandidate,
   /** A VIDA inteira (as tentativas da vida vigente) — obrigatória (gate da Rodada 18, R18-04: o padrão `[candidata]` voltava em
    *  silêncio à regra de antes da D-F97). */
   lifeList: readonly PresentationLike[],
 ): boolean {
-  if (!candidate.nfseNotGeneratedAt || !candidate.lastEventAt) return false
+  return proofReason(candidate, lifeList) === 'provada'
+}
+
+function proofReason(candidate: ProofCandidate, lifeList: readonly PresentationLike[]): Exclude<ReconfirmReason, 'nao-exigida'> {
   // R18-03: sem a IDENTIDADE da candidata (Id do DPS + ambiente) não há como achar as reapresentações — falha FECHADO
-  if (!candidate.dpsId || !candidate.environment) return false
-  // R18-06: instante fora do formato do leitor (ISO com T/Z, etc.) — a comparação por texto mentiria; falha FECHADO
+  if (!candidate.dpsId || !candidate.environment) return 'sem-identidade'
+  // R18-06: instante fora do formato do leitor (ISO com T/Z, etc.) — a comparação por texto mentiria; falha FECHADO. A candidata sem o
+  // instante da voz (o F dela) é projeção incompleta — mesmo motivo
+  if (!candidate.lastEventAt) return 'instante-invalido'
   const instants = [candidate.nfseNotGeneratedAt, candidate.lastEventAt, ...lifeList.flatMap(t => [t.createdAt, t.lastEventAt])]
-  if (instants.some(at => at != null && !DB_INSTANT.test(at))) return false
+  if (instants.some(at => at != null && !DB_INSTANT.test(at))) return 'instante-invalido'
   let lastPresentation = candidate.lastEventAt
   for (const t of [candidate, ...lifeList]) {
     // R19-01 do gate da Rodada 19: irmã sem a identidade (projeção sem Id do DPS ou ambiente) não pode ser descartada como "outra
     // identidade" — falha FECHADO (a view entrega `dps_id` e `environment` em toda linha da vida)
-    if (!t.dpsId || !t.environment) return false
+    if (!t.dpsId || !t.environment) return 'sem-identidade'
     if (t.dpsId !== candidate.dpsId || t.environment !== candidate.environment) continue
-    // D-F99/D-F101: em voo (sem voz) ou VIVA (S/K — `isLiveTransmission`) — a apresentação dela é desconhecida; `lastKind` ausente = viva
-    if (!t.lastEventAt || !FINAL_TRANSMISSION_KINDS.has(t.lastKind ?? '')) return false
+    // D-F99/D-F101: VIVA (sem voz, S, K — `isLiveTransmission`; `lastKind` ausente = viva) — a apresentação dela é desconhecida
+    if (isLiveTransmission(t)) return 'irma-viva'
+    // voz FINAL sem o instante dela (gates da A1, F2A1-02): projeção incompleta, não tentativa viva — `irma-viva` é SÓ `isLiveTransmission`
+    if (!t.lastEventAt) return 'instante-invalido'
     for (const at of [t.createdAt, t.lastEventAt]) if (at && at > lastPresentation) lastPresentation = at
   }
-  return candidate.nfseNotGeneratedAt > lastPresentation
+  if (!candidate.nfseNotGeneratedAt) return 'sem-e2404'
+  return candidate.nfseNotGeneratedAt > lastPresentation ? 'provada' : 'apresentada-depois'
 }

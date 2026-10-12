@@ -16,6 +16,7 @@
 //  * CONTEXTO (`it('contexto: …')`) — fixa o comportamento atual que fundamenta um achado ou uma QUESTÃO (decisão do Valdo).
 //
 // REGRAS DO GATE: puro (sem banco, sem socket, sem fisco). Lê a nfse-api (script, migrations) e o setes-api só como TEXTO.
+import { setesApiPath, relWorkspace } from './setes-api-dir'   // D-F117: SETES_API_DIR, falha alto
 import fs from 'fs'
 import path from 'path'
 import * as core from '../index'
@@ -29,7 +30,7 @@ import { FINAL_TRANSMISSION_KINDS, TransmissionEventKind } from '../voice/kinds'
 const SRC_ROOT = path.resolve(__dirname, '..')
 const WORKSPACE = path.resolve(SRC_ROOT, '..', '..')
 const read = (f: string) => fs.readFileSync(f, 'utf8')
-const rel = (f: string) => path.relative(WORKSPACE, f).replace(/\\/g, '/')
+const rel = (f: string) => relWorkspace(f)                                  // D-F117
 const walk = (dir: string, ext: RegExp): string[] => (!fs.existsSync(dir) ? [] : fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
   d.isDirectory() ? (d.name === '__tests__' || d.name === 'node_modules' ? [] : walk(path.join(dir, d.name), ext)) : ext.test(d.name) ? [path.join(dir, d.name)] : []))
 const workspaceHas = (...p: string[]) => fs.existsSync(path.join(WORKSPACE, ...p))
@@ -73,13 +74,13 @@ describe('D-F104 (= Q-F110 (a)) — `reconfirmationProven` booleana até a F2a',
       expect(typeof r).toBe('boolean')
     }
   })
-  it('resistiu: o índice do núcleo NÃO antecipa o veredito com motivo — de "reconfirm*" só o seletor e a prova; nada "verdict"', () => {
-    expect(Object.keys(core).filter(k => /reconfirm/i.test(k)).sort()).toEqual(['reconfirmationCandidate', 'reconfirmationProven'])
-    expect(Object.keys(core).filter(k => /verdict/i.test(k))).toEqual([])
+  it('[DECIDIDO — D-F109, Rodada 1 da F2a] (era: "o índice NÃO antecipa o veredito") — o índice expõe o seletor, a prova e o VEREDITO com motivo; a prova segue booleana (é o motivo `provada` da mesma regra)', () => {
+    expect(Object.keys(core).filter(k => /reconfirm/i.test(k)).sort()).toEqual(['reconfirmationCandidate', 'reconfirmationProven', 'reconfirmationVerdict'])
+    expect(Object.keys(core).filter(k => /verdict/i.test(k))).toEqual(['reconfirmationVerdict'])
   })
   it('resistiu: nenhum consumidor de PRODUÇÃO chama `reconfirmationProven` (nfse-api src/scripts, setes-api src — fora de __tests__): o 1º é a F2a, que troca este teste', () => {
     if (!workspaceHas('nfse-api')) return                                    // núcleo isolado (sem o workspace)
-    const files = [['nfse-api', 'src'], ['nfse-api', 'scripts'], ['setes-api', 'src']].flatMap(p => walk(path.join(WORKSPACE, ...p), /\.ts$/))
+    const files = [path.join(WORKSPACE, 'nfse-api', 'src'), path.join(WORKSPACE, 'nfse-api', 'scripts'), setesApiPath('src')].flatMap(d => walk(d, /\.ts$/))
     expect(files.length).toBeGreaterThan(50)
     expect(files.filter(f => /\breconfirmationProven\s*\(/.test(read(f))).map(rel)).toEqual([])
   })
@@ -125,32 +126,44 @@ describe('D-F103 (= Q-F109 (a)) — domínio de `kind`', () => {
     ...walk(path.join(WORKSPACE, 'nfse-api', 'src', 'migrations', 'sql'), /\.sql$/),
     ...walk(path.join(SRC_ROOT, 'migrations', 'sql'), /\.sql$/),
   ]
-  it('contexto: nenhuma migration (família nfse-api + núcleo) confere o DOMÍNIO de `kind` — o único CHECK que cita `kind` é o da 002 (`kind <> \'C\' OR …`, o código do cancelamento), avaliado na colação _ci da coluna', () => {
+  it('[DECIDIDO — D-F103 (b)/D-F107, executada na F2a] (era o contexto: nenhuma migration conferia o DOMÍNIO de `kind` — só o CHECK da 002, do código do cancelamento, na colação _ci) — a 005 da nfse-api fecha o domínio na lista da família, em colação BINÁRIA', () => {
     if (!workspaceHas('nfse-api')) return
-    const checks = famSql().flatMap(f => [...read(f).matchAll(/CHECK\s*\(([^;]*?)\)\s*;/g)].map(m => ({ f: rel(f), expr: m[1] })))
-      .filter(c => /`?kind`?/.test(c.expr))
-    expect(checks.map(c => c.f)).toEqual(['nfse-api/src/migrations/sql/002_cancel_event_code.sql'])
+    // cada CHECK isolado (a 005 tem várias constraints no MESMO ALTER): a expressão vai até o parêntese que fecha o CHECK
+    const checksOf = (sql: string): string[] => {
+      const out: string[] = []
+      for (let i = sql.search(/CHECK\s*\(/); i >= 0; i = sql.slice(i + 1).search(/CHECK\s*\(/) < 0 ? -1 : i + 1 + sql.slice(i + 1).search(/CHECK\s*\(/)) {
+        const open = sql.indexOf('(', i)
+        let depth = 0, j = open
+        for (; j < sql.length; j++) { if (sql[j] === '(') depth++; else if (sql[j] === ')' && --depth === 0) break }
+        out.push(sql.slice(open + 1, j))
+      }
+      return out
+    }
+    const checks = famSql().flatMap(f => checksOf(read(f).replace(/--[^\n]*/g, '')).map(expr => ({ f: rel(f), expr })))
+      .filter(c => /`kind`/.test(c.expr))
+    expect(checks.map(c => c.f)).toEqual(['nfse-api/src/migrations/sql/002_cancel_event_code.sql', 'nfse-api/src/migrations/sql/005_service_transmission_domains.sql'])
     expect(checks[0].expr.replace(/\s+/g, ' ')).toMatch(/^`kind` <> 'C' OR `authority_code` IS NULL OR `authority_code` IN \(/)
+    expect(checks[1].expr.replace(/\s+/g, ' ')).toBe("`kind` COLLATE utf8mb4_bin IN ('A', 'R', 'C', 'K', 'F', 'N')")
     expect(read(path.join(WORKSPACE, 'nfse-api', 'src', 'migrations', 'sql', '001_nfse_baseline.sql'))).toMatch(/`kind`\s+CHAR\(1\) NOT NULL COMMENT 'S · A · R · C · K · F · N'/)
   })
-  it('contexto (para a F2a): o molde da D-F45 SONDA o motor com um valor FORA do domínio em qualquer caixa (\'ZZ\') — copiado literalmente para a D-F103 ele NÃO distingue o CHECK binário do CHECK _ci (o defeito que a D-F103 quer fechar); a sonda que distingue é a MINÚSCULA de um kind válido (\'f\') — modelo das duas comparações, não o motor', () => {
-    expect(read(path.join(SRC_ROOT, 'establishment', 'establishment.repository.ts'))).toMatch(/VALUES \(0, 'ZZ', 'H', 0, 'N'\)/)
+  it('[DECIDIDO — D-NE84/D-F107, F2a] (era o contexto: a sonda da D-F45 só levava \'ZZ\' e não distinguia o CHECK binário do _ci) — a sonda do modelo leva \'ZZ\' E a minúscula \'se\'; o modelo das duas comparações abaixo segue valendo para a sonda do `kind` (\'S\' e \'f\')', () => {
+    expect(read(path.join(SRC_ROOT, 'establishment', 'establishment.repository.ts'))).toMatch(/\[probe\('ZZ'\), probe\('se'\)\]/)
     const DOMAIN = ['S', 'A', 'R', 'C', 'K', 'F', 'N']
     const acceptsCi = (v: string) => DOMAIN.some(d => d.toLowerCase() === v.toLowerCase())   // CHECK em colação _ci
     const acceptsBin = (v: string) => DOMAIN.includes(v)                                    // CHECK em colação binária
     expect([acceptsCi('Z'), acceptsBin('Z')]).toEqual([false, false])                       // 'Z' recusado pelos dois: não prova o binário
     expect([acceptsCi('f'), acceptsBin('f')]).toEqual([true, false])                        // 'f' só o binário recusa: ESTA é a sonda
   })
-  it('contexto: o `migrate:setes` é escritor de voz que NÃO passa pelo tipo — `INSERT IGNORE … SELECT … ev.kind` da ORIGEM, sem filtrar o domínio; e a origem (setes-api 058) também não tem CHECK de `kind` — a garantia "escritores TIPADOS" vale só por transitividade', () => {
+  it('[CORRIGIDO — gates da A1 da F2a, F2A1-08] (era o contexto: o `migrate:setes` copiava a voz da ORIGEM por `INSERT IGNORE … SELECT` sem filtrar o domínio — e essa forma REBAIXA a violação do CHECK da 005 a aviso, a linha sumia calada) — a cópia confere o domínio da origem (kind da família, source P/Q, binários) ANTES de copiar; a origem (setes-api 058) segue sem CHECK de `kind` (é congelada na janela — D-F110)', () => {
     if (!workspaceHas('nfse-api', 'scripts', 'migrate-from-setes-api.ts')) return
     const script = read(path.join(WORKSPACE, 'nfse-api', 'scripts', 'migrate-from-setes-api.ts')).replace(/\s+/g, ' ')
     expect(script).toMatch(/INSERT IGNORE INTO tb_invoice_service_transmission_event \([^)]*\bkind\b[^)]*\) SELECT [^;]*\bev\.kind\b/)
-    const origin = path.join(WORKSPACE, 'setes-api', 'src', 'migrations', 'sql', '058_nfse_service_branch_issuer_transmission.sql')
-    if (fs.existsSync(origin)) {
-      const ddl = read(origin)
-      expect(ddl).toMatch(/`kind`\s+CHAR\(1\) NOT NULL COMMENT 'S enviado/)
-      expect(ddl).not.toMatch(/CHECK\s*\(\s*`?kind`?\s+(?:COLLATE\s+\w+\s+)?IN/i)
-    }
+    const check = script.indexOf('ev.kind COLLATE utf8mb4_bin NOT IN (?) OR ev.source COLLATE utf8mb4_bin NOT IN')
+    expect(check).toBeGreaterThan(0)
+    expect(check).toBeLessThan(script.indexOf('INSERT IGNORE INTO tb_invoice_service_transmission_event'))
+    const ddl = read(setesApiPath('src', 'migrations', 'sql', '058_nfse_service_branch_issuer_transmission.sql'))
+    expect(ddl).toMatch(/`kind`\s+CHAR\(1\) NOT NULL COMMENT 'S enviado/)
+    expect(ddl).not.toMatch(/CHECK\s*\(\s*`?kind`?\s+(?:COLLATE\s+\w+\s+)?IN/i)
   })
   it('[CORRIGIDO na sessão] [LOW R21-05] o aviso da D-F103 (`kinds.ts`) nomeia o ÚNICO escritor que não passa pelo tipo — a cópia do `migrate:setes` (herda o domínio da ORIGEM; com o CHECK binário da F2a, `INSERT IGNORE` × CHECK precisa de decisão de ordem/conferência)', () => {
     const kinds = read(path.join(SRC_ROOT, 'voice', 'kinds.ts'))

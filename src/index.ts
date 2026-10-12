@@ -15,6 +15,7 @@ export * from './time/zone'
 // banco
 export * from './db/pool'
 export * from './db/tx'
+export * from './db/check'
 export * from './db/schema'
 export * from './db/migrations'
 
@@ -48,6 +49,7 @@ export * from './ref/invoice-ref'
 // voz: vocabulário + contrato de leitura (D-F33) — projeção comum + leitura POR família (NE-1a, D-NE56)
 export * from './voice/kinds'
 export * from './voice/reading'
+export * from './voice/family-reader'
 export * from './voice/families/service'
 export * from './voice/families'
 // a ESCRITA da voz por família (D-F108 — parte 2 da NE-1a) e a transação sob a trava da nota (D-NE74)

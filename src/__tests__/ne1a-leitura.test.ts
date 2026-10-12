@@ -5,9 +5,10 @@ import fs from 'fs'
 import path from 'path'
 import { KIND_CLASS, FINAL_TRANSMISSION_KINDS, AUTHORIZED_KINDS, TransmissionEventKind } from '../voice/kinds'
 import {
-  COMMON_TRANSMISSION_COLUMNS, TransmissionView, VoiceFamilyReading, blocksNewAttempt, currentOf, familyViewQuery, familyViewQueryMany, familyViewSelect,
+  COMMON_TRANSMISSION_COLUMNS, TransmissionView, VoiceFamilyReading, blocksNewAttempt, currentOf, familyViewSelect,
   fiscalStateOf, isFiscalRecord, isLiveTransmission, localCancelPendingIn, mapCommonView,
 } from '../voice/reading'
+import { familyViewQuery, familyViewQueryLives } from '../voice/view-query'   // D-NE66 (b): o SQL cru é INTERNO desde a F2a
 import { SERVICE_VOICE_READING, mapTransmissionView, localCancelPending } from '../voice/families/service'
 import { VOICE_READINGS } from '../voice/families'
 import { WEB_TERMINAL, invoiceRef, invoiceRefFilter } from '../ref/invoice-ref'
@@ -100,12 +101,12 @@ describe('leitura PUBLICADA por família (VoiceFamilyReading) — views por fam�
     expect(q.sql).toMatch(/WHERE v\.tb_institution_id = \? AND v\.tb_invoice_id = \? AND v\.terminal = \? ORDER BY v\.attempt$/)
     expect(q.params).toEqual([1, 6200, 3])
   })
-  it('leitura em LOTE (gate socrático M3 — o selo da lista de OS na F2a): várias notas do MESMO estabelecimento e terminal, tudo por parâmetro; lista vazia é erro de quem chama', () => {
-    const q = familyViewQueryMany(SERVICE_VOICE_READING, 'fiscal_api', { institutionId: 1, terminal: 0 }, [6200, 6201])
-    expect(q.sql).toMatch(/WHERE v\.tb_institution_id = \? AND v\.tb_invoice_id IN \(\?\) AND v\.terminal = \? ORDER BY v\.tb_invoice_id, v\.attempt$/)
-    expect(q.params).toEqual([1, [6200, 6201], 0])
+  it('leitura em LOTE (gate socrático M3 — o selo da lista de OS na F2a; D-F119: por PARES nota × vida): várias notas do MESMO estabelecimento e terminal, tudo por parâmetro; lista vazia é erro de quem chama', () => {
+    const q = familyViewQueryLives(SERVICE_VOICE_READING, 'fiscal_api', { institutionId: 1, terminal: 0 }, [{ invoiceId: 6200, lifeEvent: 1 }, { invoiceId: 6201, lifeEvent: 4 }])
+    expect(q.sql).toMatch(/WHERE v\.tb_institution_id = \? AND v\.terminal = \? AND \(v\.tb_invoice_id, v\.life_event\) IN \(\?\) ORDER BY v\.tb_invoice_id, v\.attempt$/)
+    expect(q.params).toEqual([1, 0, [[6200, 1], [6201, 4]]])
     expect(q.sql).not.toMatch(/terminal\s*=\s*\d/)
-    expect(() => familyViewQueryMany(SERVICE_VOICE_READING, 'fiscal_api', { institutionId: 1, terminal: 0 }, [])).toThrow(/vazia/)
+    expect(() => familyViewQueryLives(SERVICE_VOICE_READING, 'fiscal_api', { institutionId: 1, terminal: 0 }, [])).toThrow(/vazia/)
   })
   it('a pendência do efeito usa a regra de efeito HUMANO da família (a NF-e define a dela) — a da NFS-e é a de sempre', () => {
     const anyCancelIsHuman = { humanEffectCancel: () => true }

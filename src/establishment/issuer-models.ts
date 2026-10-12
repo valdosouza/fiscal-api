@@ -17,7 +17,8 @@ import type { InvoiceBranch } from '../ref/invoice-ref'
 
 export type IssuerAuthority = 'ADN' | 'SEFAZ'
 
-/** Domínio do modelo (= CHECK `ck_establishment_issuer_model` da migration 004) — também a lista de LINHAS que `lockIssuerRows` trava. */
+/** Domínio do modelo (= CHECK BINÁRIO `ck_establishment_issuer_model_bin` da migration 005, que substituiu o _ci da 004 — D-NE84) — também a
+ *  lista de LINHAS que `lockIssuerRows` trava. */
 export const ISSUER_MODELS = Object.freeze(['SE', '55', '65'] as const)
 export type IssuerModel = typeof ISSUER_MODELS[number]
 

@@ -14,11 +14,14 @@ import { assertIssuerWritable, assertCertificateWritable, lockIssuerRows, issuer
 import { MasterKeyRing } from '../secret/cipher'
 
 describe('catálogo ISSUER_MODEL_FACTS (D-NE10/D-NE73)', () => {
-  it('o domínio é o do CHECK da migration 004 (mesma lista, mesma ordem) e o catálogo cobre EXATAMENTE o domínio', () => {
-    const sql = fs.readFileSync(path.resolve(__dirname, '../migrations/sql/004_issuer_model_domain.sql'), 'utf8')
-    const m = /CHECK \(`model` IN \(([^)]*)\)\)/.exec(sql)
+  it('o domínio é o do CHECK BINÁRIO da migration 005 (D-NE84 — mesma lista e ordem da 004, que ela substitui) e o catálogo cobre EXATAMENTE o domínio', () => {
+    const sql = fs.readFileSync(path.resolve(__dirname, '../migrations/sql/005_issuer_domains_binary.sql'), 'utf8')
+    const m = /CHECK \(`model` COLLATE utf8mb4_bin IN \(([^)]*)\)\)/.exec(sql)
     expect(m).not.toBeNull()
     expect(m![1].split(',').map(s => s.trim().replace(/'/g, ''))).toEqual([...ISSUER_MODELS])
+    expect(sql).toMatch(/DROP CONSTRAINT IF EXISTS `ck_establishment_issuer_model`,/)          // a 004 (_ci) sai no MESMO ALTER (re-executável — D-F123)
+    const old = fs.readFileSync(path.resolve(__dirname, '../migrations/sql/004_issuer_model_domain.sql'), 'utf8')
+    expect(/CHECK \(`model` IN \(([^)]*)\)\)/.exec(old)![1]).toBe(m![1])
     expect(Object.keys(ISSUER_MODEL_FACTS).sort()).toEqual([...ISSUER_MODELS].sort())
   })
   it('autoridade, ramo e "o ERP transmitia" por modelo — só a SE é transmitida pelo ERP (D-F42) e é a habilitação de serviço', () => {
