@@ -1,4 +1,5 @@
 import { SignedXml } from 'xml-crypto'
+import { parseXml, elementsOf, attrOf } from '../xml/reader'
 
 /**
  * Assinatura XMLDSig ENVELOPED no padrão do Sistema Nacional NFS-e (Manual
@@ -72,10 +73,13 @@ export function signXml(xml: string, opts: SignXmlOptions): string {
  */
 export function verifyXml(signedXml: string, certPem: Buffer | string): boolean {
   try {
-    const m = signedXml.match(/<Signature[^>]*xmlns="http:\/\/www\.w3\.org\/2000\/09\/xmldsig#"[^>]*>[\s\S]*?<\/Signature>/)
-    if (!m) return false
+    // N17 (D-NE72 — parte 2 da NE-1a, passo 7): a Signature pelo LEITOR do núcleo (parser estrito), não por recorte — a 1ª `<Signature>`
+    // do namespace XMLDSig que DECLARA o namespace nela mesma (a forma do recorte antigo); documento ilegível = false (nunca lança)
+    const sig = elementsOf(parseXml(signedXml))
+      .find(e => e.localName === 'Signature' && e.namespaceURI === DSIG_NS && attrOf(e, 'xmlns') === DSIG_NS)
+    if (!sig) return false
     const v = new SignedXml({ publicCert: firstCertificatePem(certPem) })
-    v.loadSignature(m[0])
+    v.loadSignature(sig as any)                                  // o nó do MESMO @xmldom que o xml-crypto usa (tipos do DOM fora do núcleo)
     return v.checkSignature(signedXml) === true
   } catch {
     return false

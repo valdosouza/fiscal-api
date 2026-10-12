@@ -36,6 +36,8 @@ export * from './emitter/emitter'
 export * from './transport/types'
 export * from './transport/https-json'
 export * from './transport/xmldsig'
+// leitura de XML do fisco por PARSER (N17 — D-NE72; parte 2 da NE-1a, passo 7)
+export * from './xml/reader'
 
 // arquivo fiscal (XML)
 export * from './storage/fiscal-storage'
