@@ -23,7 +23,8 @@ describe('D-F167 — kid distinto no log do 401', () => {
     t = 60_000
     log({ authClass: 'unknown_kid', kid: 'k2026-11', route: 'GET /x' })
     expect(warn.mock.calls[16][1]).toEqual({ authClass: 'unknown_kid', suppressed: 24, windowStartedAt: new Date(0).toISOString() })
-    expect(warn.mock.calls[17][1].kid).toBe('k2026-11')
+    expect(warn.mock.calls[17][1].topKids).toHaveLength(16)                                  // D-F170: os kids mais frequentes da janela
+    expect(warn.mock.calls[18][1].kid).toBe('k2026-11')
   })
 
   it('o mesmo kid em OUTRA classe conta como novo (expirado para uns, assinatura inválida para outros); sem kid só o limite por classe', () => {

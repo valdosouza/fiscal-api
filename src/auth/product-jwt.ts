@@ -9,7 +9,7 @@ import { logger as defaultLogger, Logger } from '../log/logger'
 /**
  * Autenticação pelo LOGIN DO PRODUTO (D-F13): o setes-api assina o JWT em RS256; as APIs fiscais
  * só têm a(s) chave(s) PÚBLICA(S) — conseguem verificar, nunca forjar. Rotação por `kid` (cada
- * chave pública com seu id; token sem `kid` usa a padrão). HS256 é recusado por construção
+ * chave pública com seu id; `kid` e `exp` OBRIGATÓRIOS desde a D-F165 — como no setes-api). HS256 é recusado por construção
  * (`algorithms: ['RS256']`). Payload = o mesmo do setes-api (PADROES_BANCO §7).
  */
 
@@ -66,33 +66,62 @@ const safeRoute = (r: string): string => r.replace(/[^\x20-\x7e]/g, '?').slice(0
  * na janela também vai ao log, ALÉM do limite por classe — o kid é lido antes da assinatura, então um anônimo com kids inventados ocupava a
  * cota de `unknown_kid` e o kid REAL de uma rotação mal publicada (o caso para o qual a D-F157 existe) sumia. Conjunto LIMITADO a
  * [maxKids] por janela (uma lista curta — memória fixa); passou disso, vale só o limite por classe.
+ *
+ * D-F170 (= Q-F178 (b), Valdo 2026-10-13 — gate socrático da Rodada 7, R7-SOC-01): 16 kids forjados no começo da janela esgotavam o
+ * conjunto da D-F167 e o kid real sumia. O resumo da janela passa a listar os kids MAIS FREQUENTES — [maxKids] contadores pelo algoritmo
+ * Space-Saving (memória fixa; a contagem pode SUPERESTIMAR, nunca subestimar): todo kid com mais de 1/(maxKids+1) das recusas com kid
+ * fica na lista — o de uma rotação mal publicada (toda sessão, toda requisição) vence qualquer volume de kids inventados. Sai junto do
+ * resumo das suprimidas (só quando houve supressão — sem ela, cada recusa já foi ao log).
  */
 export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinute = 5, now: () => number = Date.now, maxKids = 16): (r: AuthReject) => void {
   let windowStart = Number.NEGATIVE_INFINITY
   let counts: Partial<Record<AuthRejectClass, number>> = {}
   let logged: Partial<Record<AuthRejectClass, number>> = {}
   let kidsSeen: string[] = []
+  let topKeys: string[] = []          // D-F170: Space-Saving — "classe:kid"
+  let topCounts: number[] = []
+  const countKid = (key: string): void => {
+    const i = topKeys.indexOf(key)
+    if (i >= 0) { topCounts[i] += 1; return }
+    if (topKeys.length < maxKids) { topKeys.push(key); topCounts.push(1); return }
+    let m = 0
+    for (let j = 1; j < topCounts.length; j++) if (topCounts[j] < topCounts[m]) m = j
+    topKeys[m] = key
+    topCounts[m] += 1
+  }
   return r => {
     const t = now()
     // relógio que VOLTA (NTP/VM) também abre janela nova — senão ela ficaria aberta e o excedente calado até o relógio alcançar (R6-ADV-02)
     if (t - windowStart >= 60_000 || t < windowStart) {
       // o resumo sai na 1ª recusa de uma janela SEGUINTE (pode ser horas depois): diz QUANDO a janela suprimida começou (R6-SOC-02)
       const since = Number.isFinite(windowStart) ? new Date(windowStart).toISOString() : null
+      let anySuppressed = false
       for (const [cls, n] of Object.entries(counts) as [AuthRejectClass, number][]) {
         const suppressed = n - (logged[cls] ?? 0)
         if (suppressed > 0) {
+          anySuppressed = true
           log.warn(`401 do produto: ${suppressed} recusa(s) "${cls}" suprimida(s) no minuto iniciado em ${since} (D-F157)`,
             { authClass: cls, suppressed, windowStartedAt: since })
         }
+      }
+      if (anySuppressed && topKeys.length) {
+        const topKids = topKeys
+          .map((key, i) => ({ authClass: key.slice(0, key.indexOf(':')), kid: key.slice(key.indexOf(':') + 1), count: topCounts[i] }))
+          .sort((a, b) => b.count - a.count)
+        log.warn(`401 do produto: kids mais frequentes no minuto iniciado em ${since} (D-F170 — contagem pode superestimar)`,
+          { windowStartedAt: since, topKids })
       }
       windowStart = t
       counts = {}
       logged = {}
       kidsSeen = []
+      topKeys = []
+      topCounts = []
     }
     counts[r.authClass] = (counts[r.authClass] ?? 0) + 1
     // D-F167: 1ª ocorrência deste kid NESTA classe (o mesmo kid pode ser "expirado" para uns e "assinatura inválida" para outros)
     const kidKey = r.kid !== undefined ? `${r.authClass}:${r.kid}` : null
+    if (kidKey !== null) countKid(kidKey)
     const firstOfKid = kidKey !== null && kidsSeen.length < maxKids && !kidsSeen.includes(kidKey)
     if (firstOfKid) kidsSeen.push(kidKey)
     if ((logged[r.authClass] ?? 0) >= perMinute && !firstOfKid) return
@@ -142,8 +171,11 @@ export class ProductTokenVerifier {
   }
 
   verify(token: string): InstitutionPayload {
-    const decoded = jwt.decode(token, { complete: true }) as { header: JwtHeader } | null
-    if (!decoded) throw new ProductAuthError('Token inválido', 'malformed')
+    // gate adversarial da Rodada 7 (R7-ADV-01): o `jws` faz JSON.parse do corpo — corpo que não é JSON LANÇA (SyntaxError) e virava 500
+    // com stack no log, sem o limite do log do 401 (o setes-api responde 401 ao mesmo token): token que não decodifica = malformado
+    let decoded: { header: JwtHeader } | null
+    try { decoded = jwt.decode(token, { complete: true }) as { header: JwtHeader } | null } catch { decoded = null }
+    if (!decoded || typeof decoded.header !== 'object' || decoded.header === null) throw new ProductAuthError('Token inválido', 'malformed')
     // D-F165 (= Q-F173 (a), Valdo 2026-10-13 — gate socrático da Rodada 6, R6-SOC-05): `kid` OBRIGATÓRIO, como no setes-api (que sempre
     // assina com ele — F2A2-ADV-07); a chave "padrão" para token sem kid era uma 2ª regra: dois leitores, uma resposta
     const kid = decoded.header.kid

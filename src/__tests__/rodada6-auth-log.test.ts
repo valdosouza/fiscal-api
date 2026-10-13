@@ -72,6 +72,7 @@ describe('D-F157 — a CLASSE do 401 no log (nunca o token)', () => {
     log({ authClass: 'expired', route: 'GET /x' })
     expect(warn.mock.calls.slice(6).map(c => c[1])).toEqual([
       { authClass: 'expired', suppressed: 3, windowStartedAt: new Date(0).toISOString() },     // R6-SOC-02: QUANDO foi
+      { windowStartedAt: new Date(0).toISOString(), topKids: [{ authClass: 'unknown_kid', kid: 'k9', count: 1 }] },   // D-F170
       { authClass: 'expired', route: 'GET /x' },
     ])
   })
