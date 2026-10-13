@@ -4,6 +4,7 @@ import type { Request, Response, NextFunction } from 'express'
 import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
 import { SCHEMA_RE } from '../db/schema'
+import { logger as defaultLogger, Logger } from '../log/logger'
 
 /**
  * Autenticação pelo LOGIN DO PRODUTO (D-F13): o setes-api assina o JWT em RS256; as APIs fiscais
@@ -29,6 +30,55 @@ export function isSuper(p?: InstitutionPayload | null): boolean {
 /** Admin da PRÓPRIA institution (super também passa) — "admin passa" (D32 do produto). */
 export function isAdmin(p?: InstitutionPayload | null): boolean {
   return isSuper(p) || p?.role === 'admin'
+}
+
+/**
+ * D-F157 (= Q-F165 (a), Valdo 2026-10-13 — gate socrático da F2b, F2B-SOCD-01): a CLASSE de cada 401 do produto vai ao LOG — antes nenhum
+ * rastro (o app mostra "sessão não aceita" e o suporte só sabia pelo telefone). NUNCA o token. O `kid` não é segredo (identifica a chave
+ * pública) e vai SANEADO (`[A-Za-z0-9._-]`, até 64). A ordem da rotação do `JWT_KID` (publicar a pública aqui ANTES de o setes-api virar)
+ * está em PADROES_BANCO §7.
+ */
+export type AuthRejectClass = 'missing' | 'malformed' | 'unknown_kid' | 'expired' | 'invalid' | 'no_identity' | 'identity_mismatch'
+
+export class ProductAuthError extends HttpError {
+  constructor(message: string, public readonly authClass: AuthRejectClass, public readonly kid?: string) {
+    super(401, message, undefined, ErrorCodes.UNAUTHORIZED)
+    this.name = 'ProductAuthError'
+  }
+}
+
+/** O kid do cabeçalho é do ATACANTE até prova em contrário: só a forma segura vai ao log/mensagem. */
+export const safeKid = (k: unknown): string | undefined =>
+  typeof k === 'string' ? k.replace(/[^A-Za-z0-9._-]/g, '?').slice(0, 64) : undefined
+
+export interface AuthReject { authClass: AuthRejectClass; kid?: string; institutionId?: number; route: string }
+
+/**
+ * O log do 401 com LIMITE por classe por minuto (D-F157): até [perMinute] linhas por classe na janela; o excedente vira UMA linha de
+ * "suprimidas" na 1ª recusa da janela seguinte. Throttle de LOG — nenhuma decisão depende dele (não é estado de controle; regra 3 do
+ * núcleo). Contadores num objeto simples por classe (lista fechada).
+ */
+export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinute = 5, now: () => number = Date.now): (r: AuthReject) => void {
+  let windowStart = Number.NEGATIVE_INFINITY
+  let counts: Partial<Record<AuthRejectClass, number>> = {}
+  return r => {
+    const t = now()
+    if (t - windowStart >= 60_000) {
+      for (const [cls, n] of Object.entries(counts) as [AuthRejectClass, number][]) {
+        if (n > perMinute) log.warn(`401 do produto: ${n - perMinute} recusa(s) "${cls}" suprimida(s) no minuto anterior (D-F157)`, { authClass: cls, suppressed: n - perMinute })
+      }
+      windowStart = t
+      counts = {}
+    }
+    const n = (counts[r.authClass] ?? 0) + 1
+    counts[r.authClass] = n
+    if (n > perMinute) return
+    log.warn(`401 do produto: ${r.authClass} (D-F157)`, {
+      authClass: r.authClass, route: r.route,
+      ...(r.kid !== undefined ? { kid: r.kid } : {}),
+      ...(r.institutionId !== undefined ? { institutionId: r.institutionId } : {}),
+    })
+  }
 }
 
 export class ProductTokenVerifier {
@@ -66,23 +116,27 @@ export class ProductTokenVerifier {
   }
 
   verify(token: string): InstitutionPayload {
-    const unauthorized = (msg: string) => new HttpError(401, msg, undefined, ErrorCodes.UNAUTHORIZED)
     const decoded = jwt.decode(token, { complete: true }) as { header: JwtHeader } | null
-    if (!decoded) throw unauthorized('Token inválido')
+    if (!decoded) throw new ProductAuthError('Token inválido', 'malformed')
     const kid = decoded.header.kid ?? this.defaultKid
     const key = this.keys.get(kid)
-    if (!key) throw unauthorized('Token assinado com chave desconhecida')
+    if (!key) {
+      // D-F157: o kid (saneado) vai na frase — o suporte vê "chave desconhecida (kid X)" pelo código de origem do app (F2B-SOCD-07)
+      const shown = safeKid(kid)
+      throw new ProductAuthError(`Token assinado com chave desconhecida (kid ${shown})`, 'unknown_kid', shown)
+    }
     let payload: any
     try {
       payload = jwt.verify(token, key, { algorithms: ['RS256'] })
     } catch (err: any) {
-      throw unauthorized(err?.name === 'TokenExpiredError' ? 'Token expirado' : 'Token inválido')
+      if (err?.name === 'TokenExpiredError') throw new ProductAuthError('Token expirado', 'expired', safeKid(kid))
+      throw new ProductAuthError('Token inválido', 'invalid', safeKid(kid))
     }
     const ok = payload && Number.isInteger(payload.institutionId) && payload.institutionId > 0
       && Number.isInteger(payload.userId) && payload.userId >= 0
       && typeof payload.role === 'string' && payload.role.length > 0
       && typeof payload.schemaName === 'string' && SCHEMA_RE.test(payload.schemaName)
-    if (!ok) throw unauthorized('Token sem a identidade da institution (token de seleção não serve aqui)')
+    if (!ok) throw new ProductAuthError('Token sem a identidade da institution (token de seleção não serve aqui)', 'no_identity', safeKid(kid))
     return { institutionId: payload.institutionId, userId: payload.userId, role: payload.role, schemaName: payload.schemaName }
   }
 }
@@ -94,20 +148,36 @@ export function institutionOf(req: Request): InstitutionPayload {
   return inst
 }
 
+/** O log padrão do 401 (D-F157) — um por processo. */
+const defaultAuthReject = authRejectLog()
+
 /**
  * Middleware de autenticação. [check] (opcional) confere a identidade contra o banco — a fonte de
- * fatos garante que o `schemaName` do token é o da institution (defesa em profundidade).
+ * fatos garante que o `schemaName` do token é o da institution (defesa em profundidade). [onReject] = o log da CLASSE de cada 401
+ * (D-F157; nunca o token); um 401 do [check] é "identity_mismatch". O log nunca derruba a resposta.
  */
-export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload) => Promise<void>) {
+export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload) => Promise<void>,
+  onReject: (r: AuthReject) => void = defaultAuthReject) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    let payload: InstitutionPayload | undefined
     try {
       const header = req.headers.authorization
-      if (!header?.startsWith('Bearer ')) throw new HttpError(401, 'Token ausente', undefined, ErrorCodes.UNAUTHORIZED)
-      const payload = verifier.verify(header.slice(7).trim())
+      if (!header?.startsWith('Bearer ')) throw new ProductAuthError('Token ausente', 'missing')
+      payload = verifier.verify(header.slice(7).trim())
       if (check) await check(payload)
       ;(req as any).institution = payload
       next()
     } catch (err) {
+      if (err instanceof HttpError && err.statusCode === 401) {
+        try {
+          onReject({
+            authClass: err instanceof ProductAuthError ? err.authClass : 'identity_mismatch',
+            kid: err instanceof ProductAuthError ? err.kid : undefined,
+            institutionId: payload?.institutionId,
+            route: `${req.method} ${req.baseUrl ?? ''}${req.path ?? ''}`,
+          })
+        } catch { /* o log nunca derruba a resposta */ }
+      }
       if (err instanceof HttpError) {
         res.status(err.statusCode).json({ error: err.message, ...(err.code ? { code: err.code } : {}) })
         return
