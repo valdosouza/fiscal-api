@@ -30,7 +30,10 @@ describe('D-F136 — voz A/N ⇒ registro (invariante comum, como a D-NE61)', ()
       const h = mapTransmissionView(RAW({ lastKind: kind, environment: 'H' }))
       expect([isAuthorized(h), isFiscalRecord(h)]).toEqual([true, false])
     }
-    for (const kind of ['R', 'F', 'S', 'K', null]) {
+    for (const kind of ['C', 'K']) {                                          // D-F154: pressupõem a autorização
+      expect(() => mapTransmissionView(RAW({ lastKind: kind, authorityRecorded: 'N', accessKey: null, nfseNumber: null, dhProc: null }))).toThrow(/D-F154/)
+    }
+    for (const kind of ['R', 'F', 'S', null]) {
       expect(() => mapTransmissionView(RAW({ lastKind: kind, authorityRecorded: 'N', accessKey: null, nfseNumber: null, dhProc: null }))).not.toThrow()
     }
   })

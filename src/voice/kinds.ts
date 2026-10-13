@@ -68,6 +68,11 @@ export const FINAL_TRANSMISSION_KINDS: ReadonlySet<string> = readonlySet(kindsWh
 /** Documento AUTORIZADO e vigente (A, ou N depois de um K — D-N17). Imutável em execução (NE1A-06). */
 export const AUTHORIZED_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => c.authorized))
 /**
+ * Vozes que PRESSUPÕEM a autorização do fisco — C (cancelada) e K (cancelamento em voo): só se cancela no fisco o que ele autorizou =
+ * registrou. D-F154 (= Q-F159 (a), Valdo 2026-10-13): o mapa comum recusa estas vozes sem registro (como a D-F136 com A/N).
+ */
+export const AUTHORIZATION_PRESUPPOSED_KINDS: ReadonlySet<string> = readonlySet(['C', 'K'])
+/**
  * Tentativa VIVA COM voz: a última voz não encerra (S, K, P). A viva SEM voz (reserva em voo — `kind IS NULL`) é o outro caso, dito
  * por quem pergunta. D-NE69 (= Q-NE69 (a), gates da NE-1a parte 1): o SQL da família deriva daqui, nunca de uma lista à mão.
  */

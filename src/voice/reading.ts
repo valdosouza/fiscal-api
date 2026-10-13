@@ -1,4 +1,4 @@
-import { AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
+import { AUTHORIZATION_PRESUPPOSED_KINDS, AUTHORIZED_KINDS, FINAL_TRANSMISSION_KINDS, TransmissionEnvironment, TransmissionEventKind, TransmissionSource } from './kinds'
 import { InvoiceBranch } from '../ref/invoice-ref'
 
 /**
@@ -157,6 +157,13 @@ export function mapCommonView(r: any): TransmissionView {
   // em produção. Falha ALTO aqui (o plano cai em erro fechado). 0 linhas assim no dado de 2026-10-13 (fiscal_api e origem).
   if (AUTHORIZED_KINDS.has(r.lastKind ?? '') && r.authorityRecorded !== 'S') {
     throw new Error(`Linha da view com voz ${r.lastKind} (autorizada) SEM registro — a família publica a autorizada sempre registrada (D-F136)`)
+  }
+  // D-F154 (= Q-F159 (a), Valdo 2026-10-13 — gate adversarial do delta da Rodada 4 da F2a): o MESMO invariante para a voz que PRESSUPÕE
+  // a autorização — C (cancelada no fisco) e K (cancelamento em voo): só se cancela no fisco o que ele autorizou = registrou. Sem registro
+  // é família inconsistente; antes um C sem registro em P dava efeito `apply` e o POST SOFT-DELETAVA a nota (número liberado) em vez de
+  // mantê-la viva com o C (D3/D4). 0 linhas assim no dado de 2026-10-13 (as 3 vozes C, nos dois lados, registradas em P).
+  if (AUTHORIZATION_PRESUPPOSED_KINDS.has(r.lastKind ?? '') && r.authorityRecorded !== 'S') {
+    throw new Error(`Linha da view com voz ${r.lastKind} (pressupõe a autorização) SEM registro — só se cancela no fisco o que ele registrou (D-F154)`)
   }
   return {
     institutionId: Number(r.institutionId), invoiceId: Number(r.invoiceId), terminal,

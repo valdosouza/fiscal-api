@@ -138,8 +138,12 @@ describe('NE1A-02 — duas definições do registro no núcleo (fato × chave)',
   it('[D-F136] a linha incoerente com voz AUTORIZADA (A/N) sem registro nem passa pelo mapa — falha ALTO, nunca chega a currentOf/veredito', () => {
     for (const k of ['A', 'N']) expect(() => incoherent(k).map(mapTransmissionView)).toThrow(/D-F136/)
   })
+  it('[D-F154] a linha com voz que PRESSUPÕE a autorização (C cancelada, K cancelamento em voo) sem registro também falha ALTO no mapa', () => {
+    for (const k of ['C', 'K']) expect(() => incoherent(k).map(mapTransmissionView)).toThrow(/D-F154/)
+  })
   it('[CORRIGIDO na sessão — D-NE68 (b)] na linha incoerente o núcleo agora diz UMA coisa só: `currentOf` escolhe a ÚLTIMA (sem registro), não é registro fiscal e a F/Q/P em P precisa da prova (`reconfirmationCandidate` lê o mesmo FATO)', () => {
-    const life = incoherent().map(mapTransmissionView)
+    // D-F154: a voz C/K sem registro nem passa pelo mapa — a incoerência "chave sem registro" da D-NE68 (b) segue provada com a R
+    const life = incoherent('R').map(mapTransmissionView)
     expect([currentOf(life)?.attempt, isFiscalRecord(currentOf(life)), reconfirmationCandidate(life)?.attempt]).toEqual([2, false, 1])
   })
 })
