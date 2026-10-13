@@ -42,25 +42,29 @@ export type TransmissionSource = 'P' | 'Q'
 export type TransmissionEnvironment = 'H' | 'P'
 
 /**
- * Classificação TOTAL do vocabulário (NE-1a): todo kind diz se ENCERRA a tentativa (final) e se deixa o documento AUTORIZADO e
- * vigente. Kind novo sem classe não compila (`satisfies Record<…>`); os conjuntos abaixo DERIVAM daqui — nunca uma 2ª lista.
+ * Classificação TOTAL do vocabulário (NE-1a): todo kind diz se ENCERRA a tentativa (final), se deixa o documento AUTORIZADO e
+ * vigente, e se PRESSUPÕE a autorização (só se cancela no fisco o que ele autorizou — D-F154; atributo da classe desde o gate adversarial
+ * da Rodada 5, R5-ADV-06: era uma 2ª lista à mão, e o kind novo — o evento da NF-e na NE-1b — entraria aqui e ficaria fora da regra, calado).
+ * Kind novo sem classe não compila (`satisfies Record<…>`); os conjuntos abaixo DERIVAM daqui — nunca uma 2ª lista.
  * Autorizado implica final (conferido em teste).
  */
-const kindClass = <F extends boolean, A extends boolean>(final: F, authorized: A) => Object.freeze({ final, authorized })
+const kindClass = <F extends boolean, A extends boolean, P extends boolean>(final: F, authorized: A, presupposesAuthorization: P) =>
+  Object.freeze({ final, authorized, presupposesAuthorization })
 // congelado em PROFUNDIDADE (gate NE-1a, NE1A-06): `as const` é só tipo — sem o freeze um módulo do processo trocava a classe
 export const KIND_CLASS = Object.freeze({
-  S: kindClass(false, false),   // enviado (sem produtor na NFS-e — D-F102)
-  A: kindClass(true,  true),    // autorizada
-  R: kindClass(true,  false),   // rejeitada
-  C: kindClass(true,  false),   // cancelada
-  K: kindClass(false, false),   // cancelamento em voo
-  F: kindClass(true,  false),   // falha explícita
-  N: kindClass(true,  true),    // pedido de cancelamento NÃO consta — segue autorizada (D-N17)
-  P: kindClass(false, false),   // NF-e: em processamento (consulta do recibo — D-NE33)
-  D: kindClass(true,  false),   // NF-e: uso denegado
-} satisfies Record<TransmissionEventKind, { readonly final: boolean; readonly authorized: boolean }>)
+  S: kindClass(false, false, false),   // enviado (sem produtor na NFS-e — D-F102)
+  A: kindClass(true,  true,  false),   // autorizada
+  R: kindClass(true,  false, false),   // rejeitada
+  C: kindClass(true,  false, true),    // cancelada — pressupõe a autorização (D-F154)
+  K: kindClass(false, false, true),    // cancelamento em voo — pressupõe a autorização (D-F154)
+  F: kindClass(true,  false, false),   // falha explícita
+  N: kindClass(true,  true,  false),   // pedido de cancelamento NÃO consta — segue autorizada (D-N17)
+  P: kindClass(false, false, false),   // NF-e: em processamento (consulta do recibo — D-NE33)
+  D: kindClass(true,  false, false),   // NF-e: uso denegado
+} satisfies Record<TransmissionEventKind, { readonly final: boolean; readonly authorized: boolean; readonly presupposesAuthorization: boolean }>)
 
-const kindsWhere = (pick: (c: { final: boolean; authorized: boolean }) => boolean): string[] =>
+type KindClass = { final: boolean; authorized: boolean; presupposesAuthorization: boolean }
+const kindsWhere = (pick: (c: KindClass) => boolean): string[] =>
   Object.entries(KIND_CLASS).filter(([, c]) => pick(c)).map(([k]) => k)
 
 /** Tentativa ENCERRADA: o fisco não vai dizer mais nada útil sobre ela sozinho. Imutável em execução (NE1A-06). */
@@ -71,7 +75,7 @@ export const AUTHORIZED_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c =>
  * Vozes que PRESSUPÕEM a autorização do fisco — C (cancelada) e K (cancelamento em voo): só se cancela no fisco o que ele autorizou =
  * registrou. D-F154 (= Q-F159 (a), Valdo 2026-10-13): o mapa comum recusa estas vozes sem registro (como a D-F136 com A/N).
  */
-export const AUTHORIZATION_PRESUPPOSED_KINDS: ReadonlySet<string> = readonlySet(['C', 'K'])
+export const AUTHORIZATION_PRESUPPOSED_KINDS: ReadonlySet<string> = readonlySet(kindsWhere(c => c.presupposesAuthorization))
 /**
  * Tentativa VIVA COM voz: a última voz não encerra (S, K, P). A viva SEM voz (reserva em voo — `kind IS NULL`) é o outro caso, dito
  * por quem pergunta. D-NE69 (= Q-NE69 (a), gates da NE-1a parte 1): o SQL da família deriva daqui, nunca de uma lista à mão.
