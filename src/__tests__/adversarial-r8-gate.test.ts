@@ -68,15 +68,15 @@ describe('1 — D-F170: os kids mais frequentes contra quem manda volume', () =>
     expect(hasReal(top)).toBe(true)
   })
 
-  it('[FATO — base do R8-ADV-01] o limite é o do algoritmo: intercalado 1:15 (6,25 % — acima de 1/16) o kid real FICA; 1:16 (5,88 %) ele SAI; rajada de 1.500 inventados DEPOIS de 100 recusas reais ele fica, 1.600 ele sai. E a linha não separa a contagem HERDADA da real: no 1:15 o kid real aparece com ~100 e cada inventado (visto UMA vez) também com ~100 — o operador não tem como saber qual é o kid de verdade só pela linha', () => {
+  it('[FATO — base do R8-ADV-01; D-F175 mudou a CONTAGEM] o limite é o do algoritmo: intercalado 1:15 (6,25 % — acima de 1/16) o kid real FICA; 1:16 (5,88 %) ele SAI; rajada de 1.500 inventados DEPOIS de 100 recusas reais ele fica, 1.600 ele sai. Desde a D-F175 a linha imprime o MÍNIMO GARANTIDO: cada inventado (visto UMA vez) aparece com ≤ 1 — a herança não se passa por contagem; o real, despejado e readmitido no 1:15, só garante o que viu desde a última entrada (limite conhecido — D-F173)', () => {
     const run = (ratio: number) => { const s: AuthReject[] = []; for (let i = 0; i < 100; i++) { s.push(real()); for (let j = 0; j < ratio; j++) s.push(forged()) } return windowOf(s).top }
     const burst = (n: number) => { const s: AuthReject[] = []; for (let i = 0; i < 100; i++) s.push(real()); for (let i = 0; i < n; i++) s.push(forged()); return windowOf(s).top }
     expect([hasReal(run(15)), hasReal(run(16)), hasReal(burst(1500)), hasReal(burst(1600))]).toEqual([true, false, true, false])
     const top = run(15)!
     const realCount = top.find(x => x.kid === REAL)!.count
     const forgedCounts = top.filter(x => x.kid !== REAL).map(x => x.count)
-    expect(realCount).toBeGreaterThanOrEqual(100)                                     // nunca subestima (correto)
-    expect(Math.max(...forgedCounts)).toBeGreaterThanOrEqual(realCount - 2)           // inventados (vistos 1×) com contagem do MESMO tamanho
+    expect(realCount).toBeLessThanOrEqual(100)                                        // D-F175: o mínimo garantido (nunca superestima)
+    expect(Math.max(...forgedCounts)).toBeLessThanOrEqual(1)                          // os inventados (vistos 1×) com ≤ 1 — a herança some da linha
     expect(top).toHaveLength(16)
   })
 
@@ -93,7 +93,8 @@ describe('1 — D-F170: os kids mais frequentes contra quem manda volume', () =>
     expect(metas[16]).toEqual({ authClass: 'unknown_kid', suppressed: 1_000_000 - 16, windowStartedAt: new Date(0).toISOString() })
     expect(metas[17].topKids.length).toBe(16)
     expect(JSON.stringify(metas[17]).length).toBeLessThan(2_000)
-    expect(metas[17].topKids.reduce((a: number, x: Top) => a + x.count, 0)).toBe(1_000_000)    // Space-Saving: a soma dos contadores = N
+    expect(metas[17].topKids.reduce((a: number, x: Top) => a + x.count, 0)).toBeLessThanOrEqual(1_000_000)   // D-F175: mínimos garantidos (≤ N)
+    expect(metas[17].topKids.every((x: Top) => x.count <= 1)).toBe(true)                        // todos distintos (vistos 1×): ≤ 1 cada
     expect(Date.now() - s0).toBeLessThan(30_000)
   })
 

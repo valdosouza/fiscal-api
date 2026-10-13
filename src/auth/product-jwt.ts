@@ -69,7 +69,7 @@ const safeRoute = (r: string): string => r.replace(/[^\x20-\x7e]/g, '?').slice(0
  *
  * D-F170 (= Q-F178 (b), Valdo 2026-10-13 — gate socrático da Rodada 7, R7-SOC-01): 16 kids forjados no começo da janela esgotavam o
  * conjunto da D-F167 e o kid real sumia. O resumo da janela passa a listar os kids MAIS FREQUENTES — [maxKids] contadores pelo algoritmo
- * Space-Saving (memória fixa; a contagem pode SUPERESTIMAR, nunca subestimar): todo kid com MAIS DE 1/maxKids das recusas com kid da
+ * Space-Saving (memória fixa; a linha imprime o MÍNIMO GARANTIDO — `count − erro` do contador, D-F175): todo kid com MAIS DE 1/maxKids das recusas com kid da
  * janela fica na lista (com 16 contadores, > N/16 — gate socrático da Rodada 8, R8-SOC-01). Sai junto do resumo das suprimidas (só quando
  * houve supressão — sem ela, cada recusa já foi ao log). CONHECIMENTO NEGATIVO (limite conhecido): um kid não autenticado não se distingue
  * de um forjado com memória fixa — um atacante com ~16× o volume do kid real (distintos) ou com 16 kids REPETIDOS um pouco mais frequentes
@@ -82,13 +82,18 @@ export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinu
   let kidsSeen: string[] = []
   let topKeys: string[] = []          // D-F170: Space-Saving — "classe:kid"
   let topCounts: number[] = []
+  // D-F175 (= Q-F183 (b), Valdo 2026-10-13 — R8-ADV-01): o ERRO de cada contador (o mínimo herdado ao entrar no lugar de outro) — a linha
+  // imprime `count − erro`, o mínimo GARANTIDO: o kid inventado visto uma vez aparece com ~1, o real com a sua contagem (antes os dois
+  // apareciam com ~a mesma contagem herdada e o operador não sabia qual era o verdadeiro)
+  let topErrors: number[] = []
   const countKid = (key: string): void => {
     const i = topKeys.indexOf(key)
     if (i >= 0) { topCounts[i] += 1; return }
-    if (topKeys.length < maxKids) { topKeys.push(key); topCounts.push(1); return }
+    if (topKeys.length < maxKids) { topKeys.push(key); topCounts.push(1); topErrors.push(0); return }
     let m = 0
     for (let j = 1; j < topCounts.length; j++) if (topCounts[j] < topCounts[m]) m = j
     topKeys[m] = key
+    topErrors[m] = topCounts[m]
     topCounts[m] += 1
   }
   return r => {
@@ -108,9 +113,10 @@ export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinu
       }
       if (anySuppressed && topKeys.length) {
         const topKids = topKeys
-          .map((key, i) => ({ authClass: key.slice(0, key.indexOf(':')), kid: key.slice(key.indexOf(':') + 1), count: topCounts[i] }))
+          // D-F175: `count` = o mínimo GARANTIDO (a contagem real é ≥ ele); ordenado por ele
+          .map((key, i) => ({ authClass: key.slice(0, key.indexOf(':')), kid: key.slice(key.indexOf(':') + 1), count: topCounts[i] - topErrors[i] }))
           .sort((a, b) => b.count - a.count)
-        log.warn(`401 do produto: kids mais frequentes no minuto iniciado em ${since} (D-F170 — contagem pode superestimar)`,
+        log.warn(`401 do produto: kids mais frequentes no minuto iniciado em ${since} (D-F170/D-F175 — contagem = mínimo garantido)`,
           { windowStartedAt: since, topKids })
       }
       windowStart = t
@@ -119,6 +125,7 @@ export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinu
       kidsSeen = []
       topKeys = []
       topCounts = []
+      topErrors = []
     }
     counts[r.authClass] = (counts[r.authClass] ?? 0) + 1
     // D-F167: 1ª ocorrência deste kid NESTA classe (o mesmo kid pode ser "expirado" para uns e "assinatura inválida" para outros)

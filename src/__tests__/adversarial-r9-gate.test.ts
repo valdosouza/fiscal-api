@@ -63,7 +63,7 @@ describe('D-F173 — a garantia escrita no JSDoc contra o código', () => {
         const [authClass, kid] = [key.slice(0, key.indexOf(':')), key.slice(key.indexOf(':') + 1)]
         const listed = top.find(x => x.authClass === authClass && x.kid === kid)
         expect([run, key, !!listed]).toEqual([run, key, true])
-        expect(listed!.count).toBeGreaterThanOrEqual(count)
+        expect(listed!.count).toBeLessThanOrEqual(count)                              // D-F175: o MÍNIMO GARANTIDO — nunca passa da real
       }
     }
     expect(checked).toBeGreaterThan(500)                                              // a propriedade foi exercitada de verdade
