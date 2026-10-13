@@ -69,9 +69,11 @@ const safeRoute = (r: string): string => r.replace(/[^\x20-\x7e]/g, '?').slice(0
  *
  * D-F170 (= Q-F178 (b), Valdo 2026-10-13 — gate socrático da Rodada 7, R7-SOC-01): 16 kids forjados no começo da janela esgotavam o
  * conjunto da D-F167 e o kid real sumia. O resumo da janela passa a listar os kids MAIS FREQUENTES — [maxKids] contadores pelo algoritmo
- * Space-Saving (memória fixa; a contagem pode SUPERESTIMAR, nunca subestimar): todo kid com mais de 1/(maxKids+1) das recusas com kid
- * fica na lista — o de uma rotação mal publicada (toda sessão, toda requisição) vence qualquer volume de kids inventados. Sai junto do
- * resumo das suprimidas (só quando houve supressão — sem ela, cada recusa já foi ao log).
+ * Space-Saving (memória fixa; a contagem pode SUPERESTIMAR, nunca subestimar): todo kid com MAIS DE 1/maxKids das recusas com kid da
+ * janela fica na lista (com 16 contadores, > N/16 — gate socrático da Rodada 8, R8-SOC-01). Sai junto do resumo das suprimidas (só quando
+ * houve supressão — sem ela, cada recusa já foi ao log). CONHECIMENTO NEGATIVO (limite conhecido): um kid não autenticado não se distingue
+ * de um forjado com memória fixa — um atacante com ~16× o volume do kid real (distintos) ou com 16 kids REPETIDOS um pouco mais frequentes
+ * que o real o esconde do log; o canal confiável do kid real é a frase do 401 que o app mostra (D-F157/F2B-SOCD-07).
  */
 export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinute = 5, now: () => number = Date.now, maxKids = 16): (r: AuthReject) => void {
   let windowStart = Number.NEGATIVE_INFINITY

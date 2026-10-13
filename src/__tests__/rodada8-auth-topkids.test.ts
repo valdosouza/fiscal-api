@@ -21,7 +21,7 @@ describe('D-F170 — os kids mais frequentes no resumo da janela', () => {
     expect(top[0].count).toBeGreaterThanOrEqual(50)                                    // Space-Saving: herda o mínimo (51) — nunca subestima
   })
 
-  it('1.000 kids distintos (um de cada) intercalados com 100 recusas do kid real: ele FICA na lista (Space-Saving: > 1/17 das recusas)', () => {
+  it('1.000 kids distintos (um de cada) intercalados com 100 recusas do kid real: ele FICA na lista (Space-Saving com 16 contadores: > N/16 das recusas — R8-SOC-01)', () => {
     const warn = jest.fn()
     let t = 0
     const log = authRejectLog({ warn }, 5, () => t)
