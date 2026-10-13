@@ -47,8 +47,16 @@ const SERVICE_COLUMNS: readonly ViewColumn[] = frozenColumns([
 
 export function mapTransmissionView(r: any): ServiceTransmissionView {
   const n = (v: unknown) => (v === null || v === undefined ? null : Number(v))
+  const common = mapCommonView(r)
+  // INVARIANTE DA FAMÍLIA (gate do delta da Rodada 4 da F2a — F2AR4-ADV-05): na NFS-e o registro VEM COM a chave (a view 004 da nfse-api
+  // publica `authority_recorded = (access_key IS NOT NULL)`). Linha "registrada SEM chave" é família inconsistente e falha ALTO AQUI —
+  // dentro da porta do leitor (no setes-api: 503 tipado da D-F130), nunca depois (o `fiscalRecordKey` lançava fora da porta → 500).
+  // O inverso (chave sem registro) segue a D-NE68 (b): as regras leem o FATO do registro — não é recusado aqui.
+  if (common.authorityRecorded && !(typeof common.accessKey === 'string' && common.accessKey.trim() !== '')) {
+    throw new Error('Linha da view da NFS-e REGISTRADA sem chave de acesso — na família de serviço o registro vem com a chave (F2AR4-ADV-05)')
+  }
   return {
-    ...mapCommonView(r),
+    ...common,
     serie: r.serie ?? null, dpsNumber: n(r.dpsNumber), dpsId: r.dpsId ?? null, nfseNumber: r.nfseNumber ?? null,
     dhProc: r.dhProc ?? null, nfseNotGeneratedAt: r.nfseNotGeneratedAt ?? null,
   }

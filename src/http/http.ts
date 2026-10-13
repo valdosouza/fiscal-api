@@ -71,16 +71,57 @@ export function errorMiddleware(err: any, req: Request, res: Response, _next: Ne
   sendError(res, err, `${req.method} ${req.path}`)
 }
 
+/** Hosts em que o `http://` é aceito (o dev — `flutter run -d web-server`); fora deles, só `https://`. IPv6 fica de fora (a regra da
+ *  D-F146 nunca o aceitou e o app do dev não o usa). */
+const LOCAL_HOSTS: ReadonlySet<string> = new Set(['localhost', '127.0.0.1'])
+
+/**
+ * Por que [origin] NÃO é uma origem que o navegador manda (null = é). D-F146 (= Q-F154 (a), Valdo 2026-10-13) — a regra mora no NÚCLEO
+ * (gate do delta da Rodada 4 da F2a, F2AR4-SOC-07/ADV-09: estava só no boot da nfse-api; a nfe-api teria de lembrar dela). A comparação
+ * do `corsFor` é por IGUALDADE com a Origin do navegador, então só passa a forma CANÔNICA (`new URL(o).origin === o`): esquema e host em
+ * minúsculas, sem porta padrão explícita (`:80`/`:443`), porta ≤ 65535, sem caminho nem barra final — e nada de curinga `*`.
+ */
+export function corsOriginProblem(origin: string): string | null {
+  if (origin === '*') return 'curinga (* deixaria qualquer site com o token do usuário falar com a API fiscal)'
+  let u: URL
+  try { u = new URL(origin) } catch { return 'não é uma URL' }
+  if (u.protocol !== 'https:' && u.protocol !== 'http:') return 'esquema fora de http/https'
+  if (u.origin !== origin) return `fora da forma canônica (o navegador manda ${u.origin})`
+  // o `new URL` aceita `*` e outros no host (a WHATWG não os proíbe): host = rótulos DNS (ou IPv4) — curinga de subdomínio não é origem
+  if (!/^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)*$/.test(u.hostname)) return `host fora da forma DNS (${u.hostname})`
+  if (u.protocol === 'http:' && !LOCAL_HOSTS.has(u.hostname)) return 'http:// só em localhost — fora dele, https://'
+  return null
+}
+
+/**
+ * D-F146: a LISTA de origens do app web (o navegador chama a API fiscal DIRETO — D-F4). O boot RECUSA lista vazia (o app cairia em
+ * "Failed to fetch" sem diagnóstico) e qualquer item que não seja uma origem canônica (`corsOriginProblem`). Devolve a lista para o log.
+ */
+export function assertCorsOrigins(origins: readonly string[]): string {
+  if (!origins.length) {
+    throw new Error('CORS_ORIGINS vazia — declare a(s) origem(ns) do app web (dev: http://localhost:5051; produção: a origem do Plesk) — D-F146')
+  }
+  const bad = origins.map(o => [o, corsOriginProblem(o)] as const).filter(([, p]) => p)
+  if (bad.length) {
+    throw new Error(`CORS_ORIGINS com valor que não é uma ORIGEM canônica: ${bad.map(([o, p]) => `${o} (${p})`).join('; ')} — D-F146`)
+  }
+  return origins.join(', ')
+}
+
 /**
  * CORS por LISTA de origens (o build Flutter publicado no Plesk chama a API direto — D-F4/D-F9).
  * Origem fora da lista: sem cabeçalhos (o navegador bloqueia); requisição sem Origin (servidor,
- * curl) passa — a autenticação é o JWT, não o CORS.
+ * curl) passa — a autenticação é o JWT, não o CORS. Item que não é origem canônica (inclusive `*`) RECUSA na montagem (D-F146 —
+ * `corsOriginProblem`); lista vazia = nenhuma origem de navegador (o boot do serviço é quem exige a lista — `assertCorsOrigins`).
  */
 export function corsFor(allowedOrigins: string[]): RequestHandler {
-  const allowed = new Set(allowedOrigins.map(o => o.trim().replace(/\/$/, '')).filter(Boolean))
+  const list = allowedOrigins.map(o => o.trim()).filter(Boolean)
+  const bad = list.filter(o => corsOriginProblem(o))
+  if (bad.length) throw new Error(`corsFor: origem(ns) fora da forma canônica ou curinga: ${bad.join(', ')} — D-F146`)
+  const allowed = new Set(list)
   return (req, res, next) => {
     const origin = req.headers.origin
-    if (origin && (allowed.has(origin) || allowed.has('*'))) {
+    if (origin && allowed.has(origin)) {
       res.setHeader('Access-Control-Allow-Origin', origin)
       res.setHeader('Vary', 'Origin')
       res.setHeader('Access-Control-Allow-Headers', 'Authorization, Content-Type')
