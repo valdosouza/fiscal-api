@@ -41,7 +41,8 @@ export function isAdmin(p?: InstitutionPayload | null): boolean {
 export type AuthRejectClass = 'missing' | 'malformed' | 'unknown_kid' | 'expired' | 'invalid' | 'no_identity' | 'identity_mismatch'
 
 export class ProductAuthError extends HttpError {
-  constructor(message: string, public readonly authClass: AuthRejectClass, public readonly kid?: string) {
+  /** [alg] (saneado) vai só ao LOG da classe `invalid` — separa a falsificação HS256 de uma assinatura RS256 errada (R6-SOC-04). */
+  constructor(message: string, public readonly authClass: AuthRejectClass, public readonly kid?: string, public readonly alg?: string) {
     super(401, message, undefined, ErrorCodes.UNAUTHORIZED)
     this.name = 'ProductAuthError'
   }
@@ -51,37 +52,62 @@ export class ProductAuthError extends HttpError {
 export const safeKid = (k: unknown): string | undefined =>
   typeof k === 'string' ? k.replace(/[^A-Za-z0-9._-]/g, '?').slice(0, 64) : undefined
 
-export interface AuthReject { authClass: AuthRejectClass; kid?: string; institutionId?: number; route: string }
+export interface AuthReject { authClass: AuthRejectClass; kid?: string; alg?: string; institutionId?: number; route: string }
+
+/** A rota vem do ATACANTE (caminho da URL): só ASCII visível e curta no log (gate socrático da Rodada 6, R6-SOC-03). */
+const safeRoute = (r: string): string => r.replace(/[^\x20-\x7e]/g, '?').slice(0, 200)
 
 /**
  * O log do 401 com LIMITE por classe por minuto (D-F157): até [perMinute] linhas por classe na janela; o excedente vira UMA linha de
  * "suprimidas" na 1ª recusa da janela seguinte. Throttle de LOG — nenhuma decisão depende dele (não é estado de controle; regra 3 do
  * núcleo). Contadores num objeto simples por classe (lista fechada).
+ *
+ * D-F167 (= Q-F175 (a→b), Valdo 2026-10-13 — gate adversarial da Rodada 6, R6-ADV-01): a 1ª ocorrência de cada KID DISTINTO (por classe)
+ * na janela também vai ao log, ALÉM do limite por classe — o kid é lido antes da assinatura, então um anônimo com kids inventados ocupava a
+ * cota de `unknown_kid` e o kid REAL de uma rotação mal publicada (o caso para o qual a D-F157 existe) sumia. Conjunto LIMITADO a
+ * [maxKids] por janela (uma lista curta — memória fixa); passou disso, vale só o limite por classe.
  */
-export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinute = 5, now: () => number = Date.now): (r: AuthReject) => void {
+export function authRejectLog(log: Pick<Logger, 'warn'> = defaultLogger, perMinute = 5, now: () => number = Date.now, maxKids = 16): (r: AuthReject) => void {
   let windowStart = Number.NEGATIVE_INFINITY
   let counts: Partial<Record<AuthRejectClass, number>> = {}
+  let logged: Partial<Record<AuthRejectClass, number>> = {}
+  let kidsSeen: string[] = []
   return r => {
     const t = now()
-    if (t - windowStart >= 60_000) {
+    // relógio que VOLTA (NTP/VM) também abre janela nova — senão ela ficaria aberta e o excedente calado até o relógio alcançar (R6-ADV-02)
+    if (t - windowStart >= 60_000 || t < windowStart) {
+      // o resumo sai na 1ª recusa de uma janela SEGUINTE (pode ser horas depois): diz QUANDO a janela suprimida começou (R6-SOC-02)
+      const since = Number.isFinite(windowStart) ? new Date(windowStart).toISOString() : null
       for (const [cls, n] of Object.entries(counts) as [AuthRejectClass, number][]) {
-        if (n > perMinute) log.warn(`401 do produto: ${n - perMinute} recusa(s) "${cls}" suprimida(s) no minuto anterior (D-F157)`, { authClass: cls, suppressed: n - perMinute })
+        const suppressed = n - (logged[cls] ?? 0)
+        if (suppressed > 0) {
+          log.warn(`401 do produto: ${suppressed} recusa(s) "${cls}" suprimida(s) no minuto iniciado em ${since} (D-F157)`,
+            { authClass: cls, suppressed, windowStartedAt: since })
+        }
       }
       windowStart = t
       counts = {}
+      logged = {}
+      kidsSeen = []
     }
-    const n = (counts[r.authClass] ?? 0) + 1
-    counts[r.authClass] = n
-    if (n > perMinute) return
+    counts[r.authClass] = (counts[r.authClass] ?? 0) + 1
+    // D-F167: 1ª ocorrência deste kid NESTA classe (o mesmo kid pode ser "expirado" para uns e "assinatura inválida" para outros)
+    const kidKey = r.kid !== undefined ? `${r.authClass}:${r.kid}` : null
+    const firstOfKid = kidKey !== null && kidsSeen.length < maxKids && !kidsSeen.includes(kidKey)
+    if (firstOfKid) kidsSeen.push(kidKey)
+    if ((logged[r.authClass] ?? 0) >= perMinute && !firstOfKid) return
+    logged[r.authClass] = (logged[r.authClass] ?? 0) + 1
     log.warn(`401 do produto: ${r.authClass} (D-F157)`, {
-      authClass: r.authClass, route: r.route,
+      authClass: r.authClass, route: safeRoute(r.route),
       ...(r.kid !== undefined ? { kid: r.kid } : {}),
+      ...(r.alg !== undefined ? { alg: r.alg } : {}),
       ...(r.institutionId !== undefined ? { institutionId: r.institutionId } : {}),
     })
   }
 }
 
 export class ProductTokenVerifier {
+  /** [defaultKid] só nomeia a 1ª chave da configuração (precisa existir) — não serve de fallback para token sem kid (D-F165). */
   constructor(private readonly keys: Map<string, string>, private readonly defaultKid: string) {
     if (!keys.has(defaultKid)) throw new Error(`Chave pública padrão '${defaultKid}' ausente`)
   }
@@ -118,7 +144,10 @@ export class ProductTokenVerifier {
   verify(token: string): InstitutionPayload {
     const decoded = jwt.decode(token, { complete: true }) as { header: JwtHeader } | null
     if (!decoded) throw new ProductAuthError('Token inválido', 'malformed')
-    const kid = decoded.header.kid ?? this.defaultKid
+    // D-F165 (= Q-F173 (a), Valdo 2026-10-13 — gate socrático da Rodada 6, R6-SOC-05): `kid` OBRIGATÓRIO, como no setes-api (que sempre
+    // assina com ele — F2A2-ADV-07); a chave "padrão" para token sem kid era uma 2ª regra: dois leitores, uma resposta
+    const kid = decoded.header.kid
+    if (typeof kid !== 'string' || kid.length === 0) throw new ProductAuthError('Token sem kid (a chave que o assinou)', 'malformed')
     const key = this.keys.get(kid)
     if (!key) {
       // D-F157: o kid (saneado) vai na frase — o suporte vê "chave desconhecida (kid X)" pelo código de origem do app (F2B-SOCD-07)
@@ -130,8 +159,10 @@ export class ProductTokenVerifier {
       payload = jwt.verify(token, key, { algorithms: ['RS256'] })
     } catch (err: any) {
       if (err?.name === 'TokenExpiredError') throw new ProductAuthError('Token expirado', 'expired', safeKid(kid))
-      throw new ProductAuthError('Token inválido', 'invalid', safeKid(kid))
+      throw new ProductAuthError('Token inválido', 'invalid', safeKid(kid), safeKid(decoded.header.alg))
     }
+    // D-F165: validade OBRIGATÓRIA — token sem `exp` (só quem tem a chave privada forja) nunca vale para sempre (molde do setes-api)
+    if (!Number.isFinite(payload?.exp)) throw new ProductAuthError('Token sem validade (exp)', 'invalid', safeKid(kid))
     const ok = payload && Number.isInteger(payload.institutionId) && payload.institutionId > 0
       && Number.isInteger(payload.userId) && payload.userId >= 0
       && typeof payload.role === 'string' && payload.role.length > 0
@@ -162,7 +193,10 @@ export function productAuth(verifier: ProductTokenVerifier, check?: (p: Institut
     let payload: InstitutionPayload | undefined
     try {
       const header = req.headers.authorization
-      if (!header?.startsWith('Bearer ')) throw new ProductAuthError('Token ausente', 'missing')
+      // sem cabeçalho (ou só "Bearer") = ausente; cabeçalho com OUTRO esquema (`bearer`, `Token`…) veio e não serve = malformado — o log
+      // não diz "não veio token" quando veio um (gate adversarial da Rodada 6, R6-ADV-03)
+      if (!header || !header.trim() || header.trim() === 'Bearer') throw new ProductAuthError('Token ausente', 'missing')
+      if (!header.startsWith('Bearer ')) throw new ProductAuthError('Esquema de autenticação inesperado — use "Bearer <token>"', 'malformed')
       payload = verifier.verify(header.slice(7).trim())
       if (check) await check(payload)
       ;(req as any).institution = payload
@@ -173,6 +207,7 @@ export function productAuth(verifier: ProductTokenVerifier, check?: (p: Institut
           onReject({
             authClass: err instanceof ProductAuthError ? err.authClass : 'identity_mismatch',
             kid: err instanceof ProductAuthError ? err.kid : undefined,
+            alg: err instanceof ProductAuthError ? err.alg : undefined,
             institutionId: payload?.institutionId,
             route: `${req.method} ${req.baseUrl ?? ''}${req.path ?? ''}`,
           })

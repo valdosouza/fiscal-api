@@ -71,8 +71,30 @@ describe('D-F157 — a CLASSE do 401 no log (nunca o token)', () => {
     t = 60_000
     log({ authClass: 'expired', route: 'GET /x' })
     expect(warn.mock.calls.slice(6).map(c => c[1])).toEqual([
-      { authClass: 'expired', suppressed: 3 },
+      { authClass: 'expired', suppressed: 3, windowStartedAt: new Date(0).toISOString() },     // R6-SOC-02: QUANDO foi
       { authClass: 'expired', route: 'GET /x' },
     ])
+  })
+
+  it('gate socrático da Rodada 6: a rota do atacante vai curta e só ASCII visível (R6-SOC-03); HS256 = invalid COM o alg no log e kid não-texto/vazio dito como tal (R6-SOC-04)', async () => {
+    const warn = jest.fn()
+    authRejectLog({ warn })({ authClass: 'missing', route: 'GET /v1/nfse/' + 'é'.repeat(300) + 'x'.repeat(8000) })
+    expect(warn.mock.calls[0][1].route).toMatch(/^GET \/v1\/nfse\/\?+$/)
+    expect(warn.mock.calls[0][1].route.length).toBe(200)
+    const hs = (await call(`Bearer ${jwt.sign(claims, pubPem, { algorithm: 'HS256', keyid: 'k1' })}`)).seen[0]
+    expect([hs.authClass, hs.alg]).toEqual(['invalid', 'HS256'])
+  })
+
+  it('D-F165 (= Q-F173 (a)): kid e exp OBRIGATÓRIOS como no setes-api — sem kid (ausente, vazio, não-texto) = malformed; sem exp = invalid', async () => {
+    const noKid = jwt.sign(claims, privPem, { algorithm: 'RS256', expiresIn: '1h' })
+    const kidNum = jwt.sign(claims, privPem, { algorithm: 'RS256', expiresIn: '1h', header: { alg: 'RS256', kid: 5 } as any })
+    const kidEmpty = jwt.sign(claims, privPem, { algorithm: 'RS256', expiresIn: '1h', header: { alg: 'RS256', kid: '' } as any })
+    for (const tok of [noKid, kidNum, kidEmpty]) {
+      const r = await call(`Bearer ${tok}`)
+      expect([r.seen[0].authClass, r.res.json.mock.calls[0][0].error]).toEqual(['malformed', 'Token sem kid (a chave que o assinou)'])
+    }
+    const noExp = await call(`Bearer ${jwt.sign(claims, privPem, { algorithm: 'RS256', keyid: 'k1' })}`)
+    expect([noExp.seen[0].authClass, noExp.res.json.mock.calls[0][0].error]).toEqual(['invalid', 'Token sem validade (exp)'])
+    expect((await call(`Bearer ${sign(claims)}`)).next).toHaveBeenCalled()                      // com kid e exp: passa
   })
 })

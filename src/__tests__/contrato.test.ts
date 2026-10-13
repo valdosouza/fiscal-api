@@ -118,8 +118,11 @@ describe('JWT do produto (D-F13) — RS256 só com a chave PÚBLICA', () => {
     expect(() => verifier.verify(jwt.sign({ ...claims, exp: Math.floor(Date.now() / 1000) - 10 }, privPem, { algorithm: 'RS256', keyid: 'k1' }))).toThrow(/expirado/)
     expect(() => verifier.verify(jwt.sign(claims, privPem, { algorithm: 'RS256', keyid: 'kX' }))).toThrow(/chave desconhecida/)
     expect(() => verifier.verify(jwt.sign(claims, other, { algorithm: 'RS256', keyid: 'k1' }))).toThrow(/inválido/)
-    expect(() => verifier.verify(jwt.sign({ userId: 7, institutions: [1, 2] }, privPem, { algorithm: 'RS256', keyid: 'k1' }))).toThrow(/identidade/)
-    expect(() => verifier.verify(jwt.sign({ ...claims, schemaName: 'fiscal_api' }, privPem, { algorithm: 'RS256', keyid: 'k1' }))).toThrow(/identidade/)
+    expect(() => verifier.verify(jwt.sign({ userId: 7, institutions: [1, 2] }, privPem, { algorithm: 'RS256', keyid: 'k1', expiresIn: '1h' }))).toThrow(/identidade/)
+    expect(() => verifier.verify(jwt.sign({ ...claims, schemaName: 'fiscal_api' }, privPem, { algorithm: 'RS256', keyid: 'k1', expiresIn: '1h' }))).toThrow(/identidade/)
+    // D-F165 (= Q-F173 (a)): sem exp e sem kid também são 401 (como no setes-api)
+    expect(() => verifier.verify(jwt.sign(claims, privPem, { algorithm: 'RS256', keyid: 'k1' }))).toThrow(/sem validade/)
+    expect(() => verifier.verify(jwt.sign(claims, privPem, { algorithm: 'RS256', expiresIn: '1h' }))).toThrow(/sem kid/)
   })
 })
 
