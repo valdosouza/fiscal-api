@@ -206,7 +206,8 @@ describe('D-F101 — a candidata passa pelo laço (o próprio `lastKind` dela co
   })
   it('contexto: a função não reconfere que a candidata é "F por consulta" — uma candidata final A/R/C/N com E2404 posterior prova; quem garante "F por consulta em P" é o SELETOR (`reconfirmationCandidate`), que a F2a tem de usar (e que devolve null com chave na vida)', () => {
     for (const k of ['A', 'R', 'C', 'N']) {
-      const c = cand({ lastKind: k })
+      // D-F136: A/N sem registro não passa mais pelo MAPA — a candidata é montada à mão (o contexto é o laço, não o mapa)
+      const c = { ...cand(), lastKind: k } as TransmissionView
       expect(reconfirmationProven(c, [c])).toBe(true)
       expect(reconfirmationCandidate([c])).toBeNull()
     }

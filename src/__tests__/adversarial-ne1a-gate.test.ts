@@ -97,7 +97,8 @@ describe('NE1A-01 — D-NE56 pelo caminho natural da F2a: `familyViewQuery` → 
       expect([String(v), outcome(() => mapCommonView(RAW({ authorityRecorded: v })).authorityRecorded)]).toEqual([String(v), 'lança'])
       expect([String(v), outcome(() => mapTransmissionView(RAW({ authorityRecorded: v })).authorityRecorded)]).toEqual([String(v), 'lança'])
     }
-    expect([mapCommonView(RAW({ authorityRecorded: 'S' })).authorityRecorded, mapCommonView(RAW({ authorityRecorded: 'N' })).authorityRecorded]).toEqual([true, false])
+    // D-F136: 'N' com a voz A (o padrão do RAW) é a autorizada sem registro — recusada; com uma voz não autorizada passa
+    expect([mapCommonView(RAW({ authorityRecorded: 'S' })).authorityRecorded, mapCommonView(RAW({ authorityRecorded: 'N', lastKind: 'F' })).authorityRecorded]).toEqual([true, false])
   })
 })
 
@@ -107,9 +108,11 @@ describe('NE1A-01 — D-NE56 pelo caminho natural da F2a: `familyViewQuery` → 
 
 describe('NE1A-02 — duas definições do registro no núcleo (fato × chave)', () => {
   /** Vida com a candidata F/Q/P (tentativa 1) e uma tentativa com chave que a view NÃO dá como registrada (linha incoerente). */
-  const incoherent = () => [
+  // D-F136 (gates da A3 da F2a): a tentativa 2 era A — a AUTORIZADA sem registro agora é recusada pelo MAPA (falha alta, como a D-NE61); a
+  // incoerência "chave sem registro" segue testada com uma voz NÃO autorizada (C), que o mapa ainda deixa passar
+  const incoherent = (kind = 'C') => [
     RAW({ attempt: 1, lastKind: 'F', lastSource: 'Q', accessKey: null, authorityRecorded: 'N' }),
-    RAW({ attempt: 2, lastKind: 'A', accessKey: KEY, authorityRecorded: 'N' }),
+    RAW({ attempt: 2, lastKind: kind, accessKey: KEY, authorityRecorded: 'N' }),
   ]
   it('resistiu: com linhas COERENTES com a definição da view 004 (`authority_recorded` ⇔ chave), as duas regras coincidem em todas as combinações de 1–3 tentativas — por isso LOW', () => {
     const shapes = [null, KEY]
@@ -131,6 +134,9 @@ describe('NE1A-02 — duas definições do registro no núcleo (fato × chave)',
     const current = currentOf(life)
     expect(isFiscalRecord(current)).toBe(false)                                            // pelo fato: ninguém registrou
     expect(reconfirmationCandidate(life)?.attempt).toBe(1)                                 // … então a F/Q/P em P precisa da prova
+  })
+  it('[D-F136] a linha incoerente com voz AUTORIZADA (A/N) sem registro nem passa pelo mapa — falha ALTO, nunca chega a currentOf/veredito', () => {
+    for (const k of ['A', 'N']) expect(() => incoherent(k).map(mapTransmissionView)).toThrow(/D-F136/)
   })
   it('[CORRIGIDO na sessão — D-NE68 (b)] na linha incoerente o núcleo agora diz UMA coisa só: `currentOf` escolhe a ÚLTIMA (sem registro), não é registro fiscal e a F/Q/P em P precisa da prova (`reconfirmationCandidate` lê o mesmo FATO)', () => {
     const life = incoherent().map(mapTransmissionView)

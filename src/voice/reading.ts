@@ -151,6 +151,13 @@ export function mapCommonView(r: any): TransmissionView {
   if (r.lastKind === 'D' && r.authorityRecorded !== 'S') {
     throw new Error('Linha da view com voz D (denegada) SEM registro — a família publica a denegada sempre registrada (D-NE61)')
   }
+  // D-F136 (= Q-F144 (a), Valdo 2026-10-13 — gate adversarial da A3 da F2a, F2A3-ADV-01): o MESMO invariante para a AUTORIZADA — toda
+  // voz A/N é publicada REGISTRADA (o fisco autorizou = registrou). Uma linha A/N sem registro é família inconsistente: a barreira do
+  // cancelamento local (autorizada barra só com registro fiscal) a deixaria passar — soft-delete e número liberado de uma NFS-e autorizada
+  // em produção. Falha ALTO aqui (o plano cai em erro fechado). 0 linhas assim no dado de 2026-10-13 (fiscal_api e origem).
+  if (AUTHORIZED_KINDS.has(r.lastKind ?? '') && r.authorityRecorded !== 'S') {
+    throw new Error(`Linha da view com voz ${r.lastKind} (autorizada) SEM registro — a família publica a autorizada sempre registrada (D-F136)`)
+  }
   return {
     institutionId: Number(r.institutionId), invoiceId: Number(r.invoiceId), terminal,
     attempt: Number(r.attempt), lifeEvent: Number(r.lifeEvent), environment: r.environment,
