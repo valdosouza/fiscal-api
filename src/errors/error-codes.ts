@@ -45,6 +45,7 @@ export const ErrorCodes = {
   FISCAL_NOT_TRANSMITTED:            'FISCAL_NOT_TRANSMITTED',
   FISCAL_NOT_AUTHORIZED:             'FISCAL_NOT_AUTHORIZED',
   FISCAL_EMITTER_INCOMPLETE:         'FISCAL_EMITTER_INCOMPLETE',
+  FISCAL_EMITTER_UNSUPPORTED:        'FISCAL_EMITTER_UNSUPPORTED',
   FISCAL_RECIPIENT_INCOMPLETE:       'FISCAL_RECIPIENT_INCOMPLETE',
   FISCAL_EFFECT_PENDING:             'FISCAL_EFFECT_PENDING',
   FISCAL_NFSE_SUBSTITUTED:           'FISCAL_NFSE_SUBSTITUTED',
@@ -92,6 +93,9 @@ export const ErrorCatalog: Record<ErrorCode, string> = {
   FISCAL_NOT_TRANSMITTED:            'Nota nunca transmitida ao fisco',
   FISCAL_NOT_AUTHORIZED:             'Não há NFS-e autorizada para cancelar no fisco — cancele a nota direto no ERP (D-F28)',
   FISCAL_EMITTER_INCOMPLETE:         'Cadastro do estabelecimento incompleto para o DPS — complete no Meu Estabelecimento',
+  // D-CJ23 (frente do CNPJ alfanumérico, gates da rodada 4 — 2026-10-16): documento JÁ autorizado cuja chave não traz o CNPJ do emitente — o
+  // cadastro NÃO resolve (≠ FISCAL_EMITTER_INCOMPLETE); só pessoa jurídica é suportada
+  FISCAL_EMITTER_UNSUPPORTED:        'Emitente deste documento fora do suporte da API fiscal (só pessoa jurídica) — corrigir o cadastro não resolve; consulte o suporte',
   FISCAL_RECIPIENT_INCOMPLETE:       'Cadastro do tomador incompleto para o DPS — complete o cadastro da entidade',
   FISCAL_EFFECT_PENDING:             'Fisco já cancelou a NFS-e e o cancelamento LOCAL ainda não foi aplicado no ERP — aplique antes de nova ação (D-F28)',
   FISCAL_NFSE_SUBSTITUTED:           'A NFS-e desta nota foi SUBSTITUÍDA no fisco (e105102) — não há nova transmissão do mesmo DPS; decida no ERP: cancelar a nota ou mantê-la (D-F64/D-F67)',
