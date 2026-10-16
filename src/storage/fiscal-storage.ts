@@ -1,6 +1,7 @@
 import fs from 'fs'
 import path from 'path'
 import { DEFAULT_TIME_ZONE, monthIn } from '../time/zone'
+import { CNPJ_FORM } from '../federal-id/federal-id'
 
 /**
  * ARQUIVO FISCAL (XML dito ao fisco e devolvido por ele) atrás de uma interface com backend
@@ -24,15 +25,15 @@ export interface FiscalStorage {
 }
 
 const NAME_RE = /^[A-Za-z0-9._-]+$/
-const digitsOf = (v: string | null | undefined) => String(v ?? '').replace(/\D/g, '')
 
 export class FsFiscalStorage implements FiscalStorage {
   constructor(private readonly root: string) {}
 
   private cnpjRoot(cnpj: string, environment: FiscalFileEnvironment): string {
-    const d = digitsOf(cnpj)
-    if (d.length !== 14) throw new Error(`CNPJ inválido para o arquivo fiscal: ${cnpj}`)
-    const base = path.join(this.root, d)
+    // D-CJ2: a pasta é a FORMA CANÔNICA (letras maiúsculas — o Windows ignora a caixa, o Linux não: uma forma só, nunca duas pastas);
+    // nunca tirar caracteres (o CNPJ alfanumérico viraria a pasta de OUTRO número)
+    if (typeof cnpj !== 'string' || !CNPJ_FORM.test(cnpj)) throw new Error(`CNPJ inválido para o arquivo fiscal: ${cnpj}`)
+    const base = path.join(this.root, cnpj)
     return environment === 'H' ? path.join(base, 'H') : base
   }
 

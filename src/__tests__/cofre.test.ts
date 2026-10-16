@@ -11,7 +11,8 @@ import { clearCertificate } from '../emitter/emitter'   // apagar o A1 é ato do
 import { acquireRefreshLease, releaseRefreshLease, nextDpsNumber, lockIssuerRows, ISSUER_MODELS, assertIssuerModelDomainEnforced } from '../establishment/establishment.repository'
 import { makePfx } from './helpers'
 
-const CNPJ = '12345678000199'
+// D-CJ2: CNPJ com DV VÁLIDO — a conferência do A1 lê o CNPJ do ERP pela peça da inscrição federal (forma + DV), não pelo comprimento
+const CNPJ = '12345678000195'
 const PASSWORD = 'senha-do-pfx'
 
 describe('MasterKeyRing — AES-256-GCM com AAD e versão', () => {
@@ -65,7 +66,7 @@ describe('certificado A1 — PKCS#12 → par PEM validado', () => {
     expect(pair.certPem.replace(/\r/g, '')).toBe(certPem.replace(/\r/g, ''))
     const info = validateIssuerPair(pair.certPem, pair.keyPem, CNPJ)
     expect(info.cnpj).toBe(CNPJ)
-    expect(() => validateIssuerPair(pair.certPem, pair.keyPem, '98765432000188')).toThrow(expect.objectContaining({ statusCode: 409, code: 'FISCAL_CERT_INVALID' }))
+    expect(() => validateIssuerPair(pair.certPem, pair.keyPem, '98765432000198')).toThrow(expect.objectContaining({ statusCode: 409, code: 'FISCAL_CERT_INVALID' }))
     const cpf = pkcs12ToPem(makePfx({ cn: 'FULANO:12345678901', password: PASSWORD }).pfx, PASSWORD)
     expect(() => validateIssuerPair(cpf.certPem, cpf.keyPem, CNPJ)).toThrow(/e-CPF/)
     const plain = pkcs12ToPem(makePfx({ cn: 'SEM PADRAO', password: PASSWORD }).pfx, PASSWORD)
@@ -86,6 +87,20 @@ describe('certificado A1 — PKCS#12 → par PEM validado', () => {
     for (const bad of [null, '', '123', '1234567800019']) {
       expect(() => validateIssuerPair(pair.certPem, pair.keyPem, bad)).toThrow(expect.objectContaining({ statusCode: 422, code: 'FISCAL_EMITTER_INCOMPLETE' }))
     }
+  })
+  it('D-CJ2: CNPJ do ERP em TRÊS estados — ausente ≠ inválido (máscara, minúscula, DV errado, letra mutilável) ≠ válido; nunca mutilado', () => {
+    const pair = pkcs12ToPem(makePfx({ cn: `SETES:${CNPJ}`, password: PASSWORD }).pfx, PASSWORD)
+    for (const absent of [null, '', '0', { state: 'absent' } as const]) {
+      expect(() => validateIssuerPair(pair.certPem, pair.keyPem, absent)).toThrow(/sem CNPJ no cadastro/)
+    }
+    // antes: '12.345.678/0001-95' passava (tirava a máscara); 'X12345678000195' virava o CNPJ do certificado ao perder a letra
+    for (const invalid of ['12.345.678/0001-95', '12345678000199', 'pc3d315k000193', 'X2345678000195', { state: 'invalid', raw: 'X' } as const]) {
+      expect(() => validateIssuerPair(pair.certPem, pair.keyPem, invalid)).toThrow(expect.objectContaining({
+        statusCode: 422, code: 'FISCAL_EMITTER_INCOMPLETE', message: expect.stringMatching(/CNPJ do estabelecimento inválido/) }))
+    }
+    expect(validateIssuerPair(pair.certPem, pair.keyPem, { state: 'valid', id: { kind: 'cnpj', value: CNPJ } }).cnpj).toBe(CNPJ)
+    // CNPJ alfanumérico VÁLIDO no ERP: conferido como está (o CN do A1 de teste é numérico → outro CNPJ, 409 — nunca "sem CNPJ")
+    expect(() => validateIssuerPair(pair.certPem, pair.keyPem, 'PC3D315K000193')).toThrow(expect.objectContaining({ statusCode: 409, code: 'FISCAL_CERT_INVALID' }))
   })
 })
 
@@ -153,7 +168,7 @@ describe('peça do estabelecimento — A1 cifrado no fiscal_api + habilitação 
     await storeCertificate({ pool: db.pool, keyring: ring }, 1, pfx, PASSWORD, { expectedCnpj: CNPJ, userId: 7, schemaName: 'setes_setes' })
     const before = { ...db.certs.get(1) }
     await expect(storeCertificate({ pool: db.pool, keyring: ring }, 1, pfx, 'errada', { expectedCnpj: CNPJ, userId: 7, schemaName: 'setes_setes' })).rejects.toMatchObject({ statusCode: 400 })
-    const other = makePfx({ cn: 'OUTRA:98765432000188', password: PASSWORD }).pfx
+    const other = makePfx({ cn: 'OUTRA:98765432000198', password: PASSWORD }).pfx
     await expect(storeCertificate({ pool: db.pool, keyring: ring }, 1, other, PASSWORD, { expectedCnpj: CNPJ, userId: 7, schemaName: 'setes_setes' })).rejects.toMatchObject({ statusCode: 409 })
     expect(db.certs.get(1)).toEqual(before)
   })

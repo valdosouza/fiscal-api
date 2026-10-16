@@ -1,0 +1,67 @@
+{
+  "sobre": "Vetor OFICIAL de casos da inscrição federal (D-CJ2): lido pela suíte TS do núcleo (fiscal-api) e pela suíte Dart do app (setes_validators) — o espelho TS × Dart é garantido por este arquivo. Fontes em Infra-IA/setes-api/integracoes/cnpj-alfanumerico/. Não usar o Ex1 da FAQ 23 da RFB como caso válido (DV errado no documento).",
+  "cnpjValidos": [
+    { "valor": "12ABC34501DE35", "origem": "Manual do DV (Serpro/RFB) — exemplo resolvido 12.ABC.345/01DE-35" },
+    { "valor": "PC3D315K000193", "origem": "CNPJ de teste da SVRS (NF-e/NFC-e em homologação, aviso de 29/05/2026)" },
+    { "valor": "99999A03000106", "origem": "Bacen — CNPJ de homologação do STR/SPI (ISPB 99999A03)" },
+    { "valor": "99999A04000150", "origem": "Bacen — CNPJ de homologação do STR/SPI (ISPB 99999A04)" },
+    { "valor": "00000000E08G12", "origem": "1º CNPJ alfanumérico atribuído pela RFB (31/07/2026)" },
+    { "valor": "11222333000181", "origem": "CNPJ numérico clássico — o cálculo ASCII − 48 dá o mesmo de sempre" },
+    { "valor": "AA345678000386", "origem": "Ex1 da FAQ 23 da RFB com o DV CORRETO (o documento traz -29)" }
+  ],
+  "cnpjInvalidos": [
+    { "valor": "AA345678000329", "motivo": "Ex1 da FAQ 23 da RFB como está no documento — DV errado (o certo é 86)" },
+    { "valor": "12ABC34501DE36", "motivo": "2º DV errado" },
+    { "valor": "11222333000182", "motivo": "DV errado (numérico)" },
+    { "valor": "12abc34501de35", "motivo": "minúscula não é a forma canônica (a RFB só emite maiúscula; o DV distingue)" },
+    { "valor": "12.ABC.345/01DE-35", "motivo": "com máscara — a escrita exige a forma canônica" },
+    { "valor": "12ABC34501DE3A", "motivo": "letra no DV" },
+    { "valor": "12ÁBC34501DE35", "motivo": "acento" },
+    { "valor": "12ABC34501DE3", "motivo": "13 posições" },
+    { "valor": "12ABC34501DE355", "motivo": "15 posições" },
+    { "valor": "00000000000000", "motivo": "14 dígitos iguais (fecha o DV, vetado)" },
+    { "valor": "", "motivo": "vazio" }
+  ],
+  "normalizarCnpj": [
+    { "entrada": "12.ABC.345/01DE-35", "saida": "12ABC34501DE35" },
+    { "entrada": "12.abc.345/01de-35", "saida": "12ABC34501DE35" },
+    { "entrada": "  pc3d315k000193 ", "saida": "PC3D315K000193" },
+    { "entrada": "11.222.333/0001-81", "saida": "11222333000181" },
+    { "entrada": "12ABC 34501DE35", "saida": "12ABC34501DE35" },
+    { "entrada": "12ABC34501DE3A", "saida": null },
+    { "entrada": "12ÁBC34501DE35", "saida": null },
+    { "entrada": "12ıBC34501DE35", "saida": null },
+    { "entrada": "12_ABC34501DE35", "saida": null },
+    { "entrada": "１1222333000181", "saida": null },
+    { "entrada": "1122233300018", "saida": null },
+    { "entrada": "", "saida": null }
+  ],
+  "canonicalizarTexto": [
+    { "entrada": "12.ab", "saida": "12AB" },
+    { "entrada": "99999a", "saida": "99999A" },
+    { "entrada": " 123.456-", "saida": "123456" },
+    { "entrada": "", "saida": "" },
+    { "entrada": " 11222333000181", "saida": "11222333000181" },
+    { "entrada": "11222333000181\u0085", "saida": null },
+    { "entrada": "12%", "saida": null },
+    { "entrada": "12ß", "saida": null }
+  ],
+  "formatarCnpj": [
+    { "valor": "12ABC34501DE35", "saida": "12.ABC.345/01DE-35" },
+    { "valor": "11222333000181", "saida": "11.222.333/0001-81" },
+    { "valor": "12ABC34501DE36", "saida": "12ABC34501DE36" }
+  ],
+  "dvCnpj": [
+    { "base": "12ABC34501DE", "dv": "35" },
+    { "base": "PC3D315K0001", "dv": "93" },
+    { "base": "00000000E08G", "dv": "12" },
+    { "base": "AA3456780003", "dv": "86" },
+    { "base": "112223330001", "dv": "81" }
+  ],
+  "cpfValidos": ["52998224725", "12345678909"],
+  "cpfInvalidos": ["52998224724", "11111111111", "5299822472", "529.982.247-25", "5299822472A"],
+  "formatarCpf": [
+    { "valor": "52998224725", "saida": "529.982.247-25" },
+    { "valor": "52998224724", "saida": "52998224724" }
+  ]
+}

@@ -5,6 +5,7 @@ import { Queryable } from '../db/tx'
 import { assertSchema } from '../db/schema'
 import { DEFAULT_TIME_ZONE, isValidTimeZone } from '../time/zone'
 import { InvoiceRef } from '../ref/invoice-ref'
+import { FederalIdFact, readFederalIdFact } from '../federal-id/federal-id'
 
 /**
  * FONTE DE FATOS GESTÃO 2027 — base comum (D-F10). ÚNICO lugar do núcleo que lê o ERP
@@ -268,11 +269,20 @@ export async function cityIbge(q: Queryable, cityId: number | null | undefined):
   return ibge.length === 7 ? ibge : null
 }
 
-/** CNPJ do estabelecimento (14 dígitos) — conferência do A1 (D-N29b) e pasta do arquivo fiscal. */
-export async function establishmentCnpj(q: Queryable, institutionId: number): Promise<string | null> {
+/**
+ * CNPJ do estabelecimento como FATO em três estados (D-CJ2 — ausente ≠ inválido ≠ válido): conferência do A1 (D-N29b) e o diagnóstico
+ * do emitente. O valor gravado vale como está, na forma canônica (letras maiúsculas, sem máscara) — nunca mutilado (antes daqui saía só
+ * o que era dígito: um CNPJ alfanumérico virava "sem CNPJ" ou, pior, outro número).
+ */
+export async function establishmentCnpjFact(q: Queryable, institutionId: number): Promise<FederalIdFact> {
   const [rows] = await q.query(`SELECT cnpj FROM setes_central.tb_company WHERE id = ? AND deleted = 'N'`, [institutionId])
-  const cnpj = digitsOf(rows[0]?.cnpj)
-  return cnpj.length === 14 ? cnpj : null
+  return readFederalIdFact('cnpj', rows[0]?.cnpj)
+}
+
+/** CNPJ do estabelecimento VÁLIDO na forma canônica (pasta do arquivo fiscal, leituras); null quando ausente OU inválido. */
+export async function establishmentCnpj(q: Queryable, institutionId: number): Promise<string | null> {
+  const fact = await establishmentCnpjFact(q, institutionId)
+  return fact.state === 'valid' ? fact.id.value : null
 }
 
 /**

@@ -3,7 +3,7 @@ import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
 import { Queryable, withTransaction } from '../db/tx'
 import { MasterKeyRing } from '../secret/cipher'
-import { CertificateInfo, certificateInfo, pkcs12ToPem, validateIssuerPair, validatePrivateKeyPem } from '../secret/certificate'
+import { CertificateInfo, ExpectedCnpj, certificateInfo, pkcs12ToPem, validateIssuerPair, validatePrivateKeyPem } from '../secret/certificate'
 import {
   IssuerModel, IssuerEnvironment, IssuerRow, CertificateRow,
   getIssuer, getCertificate, saveCertificate, issuerRowsState, assertCertificateWritable,
@@ -136,7 +136,7 @@ export async function openIssuer(
  */
 export async function storeCertificate(
   deps: EstablishmentDeps, institutionId: number, pfx: Buffer, password: string,
-  opts: { expectedCnpj: string | null; userId: number | null; schemaName: string },
+  opts: { expectedCnpj: ExpectedCnpj; userId: number | null; schemaName: string },
 ): Promise<IssuerCertificateStatus> {
   const { certPem, keyPem } = pkcs12ToPem(pfx, password)
   const info = validateIssuerPair(certPem, keyPem, opts.expectedCnpj)

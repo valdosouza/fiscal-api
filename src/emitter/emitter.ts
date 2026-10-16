@@ -12,6 +12,7 @@ import {
   IssuerEnvironment, assertCertificateWritable, assertIssuerWritable, eraseCertificate, getIssuer, listIssuers, softDeleteIssuer, upsertIssuer,
 } from '../establishment/establishment.repository'
 import { IssuerCertificateStatus, certificateStatus, isIssuerEnabled, storeCertificate } from '../establishment/establishment'
+import type { ExpectedCnpj } from '../secret/certificate'
 
 /**
  * EMITTER do núcleo (D-NE9 = Q-NE9 (c), Valdo 2026-10-10 — "módulo emitter no NÚCLEO, montado pelas duas"; parte 2 da NE-1a,
@@ -178,11 +179,12 @@ const BASE64_RE = /^[A-Za-z0-9+/=\s]+$/
 
 /**
  * Upload do A1 (D-N5) em base64. [expectedCnpj] = o CNPJ do estabelecimento que a BORDA da família leu no ERP (fonte de fatos —
- * `erp.establishmentCnpj`; D-N29): o par do e-CNPJ tem de ser dele — ausente ou divergente, o `storeCertificate` recusa (422), nunca grava.
+ * `erp.establishmentCnpjFact` — três estados, D-CJ2; D-N29): o par do e-CNPJ tem de ser dele — ausente, inválido ou divergente, o
+ * `storeCertificate` recusa (422/409), nunca grava.
  * Devolve a situação (nunca o conteúdo).
  */
 export async function uploadCertificate(
-  deps: EmitterDeps, actor: EmitterActor, input: { pfxBase64: string; password: string }, opts: { expectedCnpj: string | null },
+  deps: EmitterDeps, actor: EmitterActor, input: { pfxBase64: string; password: string }, opts: { expectedCnpj: ExpectedCnpj },
 ): Promise<IssuerCertificateStatus> {
   if (!BASE64_RE.test(input.pfxBase64)) {
     throw new HttpError(400, 'Arquivo .pfx precisa vir em base64', [{ field: 'pfxBase64', message: 'base64 inválido' }], ErrorCodes.FISCAL_CERT_INVALID)

@@ -14,12 +14,19 @@
       "types": "./dist/reading.d.ts",
       "default": "./dist/reading.js"
     },
+    "./federal-id": {
+      "types": "./dist/federal-id.d.ts",
+      "default": "./dist/federal-id.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
     "*": {
       "reading": [
         "dist/reading.d.ts"
+      ],
+      "federal-id": [
+        "dist/federal-id.d.ts"
       ]
     }
   },

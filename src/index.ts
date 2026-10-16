@@ -12,6 +12,9 @@ export { logger } from './log/logger'
 export type { Logger } from './log/logger'
 export * from './time/zone'
 
+// inscrição federal (CPF/CNPJ alfanumérico — D-CJ2): peça pura, também no subpath `fiscal-api/federal-id`
+export * from './federal-id/federal-id'
+
 // banco
 export * from './db/pool'
 export * from './db/tx'

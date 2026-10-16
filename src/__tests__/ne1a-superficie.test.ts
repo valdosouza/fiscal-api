@@ -65,11 +65,14 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
   })
   it('o package.json publica o subpath (`exports` + `typesVersions` para a resolução antiga do TypeScript) e o barrel; nada de caminho interno', () => {
     const pkg = JSON.parse(read(path.resolve(SRC, '..', 'package.json')))
-    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './package.json', './reading'])
+    // D-CJ2 (frente do CNPJ alfanumérico, 2026-10-15): o 2º subpath é a inscrição federal — peça PURA (sem banco), mesma forma de publicar
+    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './federal-id', './package.json', './reading'])
     expect(pkg.exports['./reading']).toEqual({ types: './dist/reading.d.ts', default: './dist/reading.js' })
     expect(pkg.typesVersions['*'].reading).toEqual(['dist/reading.d.ts'])
+    expect(pkg.exports['./federal-id']).toEqual({ types: './dist/federal-id.d.ts', default: './dist/federal-id.js' })
+    expect(pkg.typesVersions['*']['federal-id']).toEqual(['dist/federal-id.d.ts'])
   })
-  it('CERCA da F2a: o setes-api só importa `fiscal-api/reading` (hoje não importa nada do núcleo — a cerca vale a partir da F2a)', () => {
+  it('CERCA da F2a: o setes-api só importa `fiscal-api/reading` e `fiscal-api/federal-id` (D-CJ2 — peça pura, nada do lado de escrita)', () => {
     const root = setesApiPath('src')                                        // D-F117: a worktree da F2a (ou a árvore viva) — tem de existir
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
       d.isDirectory() ? (d.name === 'node_modules' ? [] : walk(path.join(dir, d.name))) : /\.(?:ts|js)$/.test(d.name) ? [path.join(dir, d.name)] : [])
@@ -87,6 +90,6 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       }
       visit(sf)
     }
-    expect(specs.filter(s => !s.endsWith(': fiscal-api/reading'))).toEqual([])
+    expect(specs.filter(s => !s.endsWith(': fiscal-api/reading') && !s.endsWith(': fiscal-api/federal-id'))).toEqual([])
   })
 })

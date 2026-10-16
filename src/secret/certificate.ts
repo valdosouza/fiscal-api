@@ -2,6 +2,7 @@ import forge from 'node-forge'
 import { X509Certificate, createPrivateKey } from 'crypto'
 import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
+import { FederalIdFact, isFederalIdFact, readFederalIdFact } from '../federal-id/federal-id'
 
 /**
  * O CERTIFICADO A1 como fato (D-N5/D-N29/D-N31 — cópia fiel de `@shared/fiscal-issuer` +
@@ -120,7 +121,13 @@ export function pkcs12ToPem(pfx: Buffer, password: string): { certPem: string; k
  * válido"): certificado legível, chave abre, chave casa, vigente, e — sem procuração (D-N12) — o
  * e-CNPJ do PRÓPRIO emitente (D-N29/D-N29b, R3-4, Q-N29 fail-closed). Devolve os metadados.
  */
-export function validateIssuerPair(certPem: string, keyPem: string, expectedCnpj: string | null): CertificateInfo {
+/**
+ * O CNPJ do estabelecimento contra o qual o A1 é conferido: o FATO lido no ERP em três estados (D-CJ2 — ausente ≠ inválido ≠ válido),
+ * ou o valor cru (lido aqui pela mesma peça; nunca mutilado — o antigo "tira o que não é dígito" fazia `PC3D315K000193` virar `3315000193`).
+ */
+export type ExpectedCnpj = FederalIdFact | string | null
+
+export function validateIssuerPair(certPem: string, keyPem: string, expectedCnpj: ExpectedCnpj): CertificateInfo {
   let info: CertificateInfo
   try { info = certificateInfo(certPem) } catch { throw invalidPfx('Certificado do PKCS#12 ilegível') }
   const why = validatePrivateKeyPem(keyPem)
@@ -134,12 +141,20 @@ export function validateIssuerPair(certPem: string, keyPem: string, expectedCnpj
     throw new HttpError(409, `Certificado digital A1 só vale a partir de ${info.notBefore.slice(0, 10)} — envie quando estiver vigente`,
       [{ field: 'pfx', message: 'Ainda não vigente' }], ErrorCodes.FISCAL_CERT_INVALID)
   }
-  const expected = String(expectedCnpj ?? '').replace(/\D/g, '')
+  // gate adversarial da onda 0 (LOW): o fato é reconhecido pela FORMA (`isFederalIdFact`) — um objeto/array qualquer é lido pela peça
+  // (inválido → 422), nunca acessado como fato (TypeError → 500)
+  const fact = isFederalIdFact(expectedCnpj) ? expectedCnpj : readFederalIdFact('cnpj', expectedCnpj)
   // fail-closed (gate adversarial L-cofre): sem o CNPJ do estabelecimento no ERP não há com o que conferir o A1
-  if (expected.length !== 14) {
+  if (fact.state === 'absent') {
     throw new HttpError(422, 'Estabelecimento sem CNPJ no cadastro — complete o Meu Estabelecimento antes de enviar o A1 (o certificado é conferido contra ele)',
       [{ field: 'emitter.cnpj', message: 'Estabelecimento sem CNPJ' }], ErrorCodes.FISCAL_EMITTER_INCOMPLETE)
   }
+  // D-CJ2: CNPJ que EXISTE mas não fecha (forma/DV) não é "sem CNPJ" — o diagnóstico diz o que corrigir
+  if (fact.state === 'invalid') {
+    throw new HttpError(422, 'CNPJ do estabelecimento inválido no cadastro — corrija no Meu Estabelecimento antes de enviar o A1 (o certificado é conferido contra ele)',
+      [{ field: 'emitter.cnpj', message: 'CNPJ inválido no cadastro' }], ErrorCodes.FISCAL_EMITTER_INCOMPLETE)
+  }
+  const expected = fact.id.value
   if (info.cnpj && info.cnpj !== expected) {
     throw new HttpError(409, `Certificado do CNPJ ${info.cnpj} — o estabelecimento é ${expected}; o A1 tem que ser do emitente`,
       [{ field: 'pfx', message: 'CNPJ do certificado ≠ CNPJ do estabelecimento' }], ErrorCodes.FISCAL_CERT_INVALID)

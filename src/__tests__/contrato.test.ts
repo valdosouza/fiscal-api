@@ -133,7 +133,7 @@ describe('arquivo fiscal (FsFiscalStorage) — layout herdado', () => {
 
   it('produção em <cnpj>/<ano>/<mês>; homologação em <cnpj>/H/… (Q-N38a); mês na ZONA (Q-TZ7)', () => {
     const when = new Date('2026-10-01T02:30:00Z')                 // 30/09 23:30 em São Paulo
-    const p = st.save('12.345.678/0001-99', 'X-nfse.xml', '<a/>', when, 'P', 'America/Sao_Paulo')
+    const p = st.save('12345678000199', 'X-nfse.xml', '<a/>', when, 'P', 'America/Sao_Paulo')
     expect(p).toBe(path.join(root, '12345678000199', '2026', '09', 'X-nfse.xml'))
     const h = st.save('12345678000199', 'Y-nfse.xml', '<b/>', when, 'H', 'UTC')
     expect(h).toBe(path.join(root, '12345678000199', 'H', '2026', '10', 'Y-nfse.xml'))
@@ -144,6 +144,15 @@ describe('arquivo fiscal (FsFiscalStorage) — layout herdado', () => {
     expect(() => st.save('12345678000199', '../x', '<c/>', when, 'P', 'UTC')).toThrow()
     expect(st.read(p)).toBe('<a/>')
     expect(st.probe()).toBe(true)
+  })
+  it('D-CJ2: a pasta é a FORMA CANÔNICA do CNPJ — alfanumérico como está; máscara/minúscula/curto recusados (nunca mutilados)', () => {
+    const when = new Date('2026-10-01T12:00:00Z')
+    expect(st.save('PC3D315K000193', 'A-nfse.xml', '<a/>', when, 'P', 'UTC')).toBe(path.join(root, 'PC3D315K000193', '2026', '10', 'A-nfse.xml'))
+    expect(st.find('PC3D315K000193', 'A-nfse.xml', [], 'P', 'UTC')).toBe(path.join(root, 'PC3D315K000193', '2026', '10', 'A-nfse.xml'))
+    // antes: '12.345.678/0001-99' gravava em 12345678000199; 'PC3D315K000193' em '3315000193' → lançava; agora nenhum caractere some
+    for (const bad of ['12.345.678/0001-99', 'pc3d315k000193', '3315000193', 'PC3D315K00019Z', '']) {
+      expect(() => st.save(bad, 'B-nfse.xml', '<b/>', when, 'P', 'UTC')).toThrow(/CNPJ inválido para o arquivo fiscal/)
+    }
   })
 })
 
