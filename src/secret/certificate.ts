@@ -163,6 +163,14 @@ export function validateIssuerPair(certPem: string, keyPem: string, expectedCnpj
     throw new HttpError(409, 'Certificado é um e-CPF — sem procuração (D-N12) o A1 tem que ser o e-CNPJ do emitente',
       [{ field: 'pfx', message: 'e-CPF não serve para o emitente' }], ErrorCodes.FISCAL_CERT_INVALID)
   }
+  // gate socrático da onda 1 (frente do CNPJ alfanumérico): o leitor do titular ainda é o do CN legado com 14 DÍGITOS — o leitor por
+  // consenso (OID 2.16.76.1.3.3 × serialNumber × CN — D-CJ6) só entra com amostra REAL. Estabelecimento com CNPJ alfanumérico cai aqui
+  // por limite NOSSO, não por defeito do certificado — a mensagem diz isso (antes: "não é um e-CNPJ", que mandaria o cliente trocar o A1)
+  if (!info.cnpj && /[A-Z]/.test(expected)) {
+    throw new HttpError(409, `O estabelecimento tem CNPJ alfanumérico (${expected}) e a leitura do titular do certificado ainda não reconhece CNPJ `
+      + 'com letras — o A1 não precisa ser trocado; a conferência entra com a leitura por consenso (D-CJ6). Fale com o suporte',
+      [{ field: 'pfx', message: 'Leitura do CNPJ alfanumérico no certificado ainda não suportada' }], ErrorCodes.FISCAL_CERT_INVALID)
+  }
   if (!info.cnpj) {
     throw new HttpError(409, 'Certificado sem CNPJ no CN (padrão ICP-Brasil "RAZÃO SOCIAL:CNPJ") — o A1 tem que ser o e-CNPJ do emitente',
       [{ field: 'pfx', message: 'Não é um e-CNPJ' }], ErrorCodes.FISCAL_CERT_INVALID)

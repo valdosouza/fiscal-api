@@ -102,6 +102,19 @@ describe('certificado A1 — PKCS#12 → par PEM validado', () => {
     // CNPJ alfanumérico VÁLIDO no ERP: conferido como está (o CN do A1 de teste é numérico → outro CNPJ, 409 — nunca "sem CNPJ")
     expect(() => validateIssuerPair(pair.certPem, pair.keyPem, 'PC3D315K000193')).toThrow(expect.objectContaining({ statusCode: 409, code: 'FISCAL_CERT_INVALID' }))
   })
+  it('gate socrático da onda 1: estabelecimento ALFANUMÉRICO e titular que o leitor do CN não lê → 409 que diz o limite NOSSO (D-CJ6), nunca "não é um e-CNPJ"', () => {
+    for (const cn of ['SETES:PC3D315K000193', 'SEM PADRAO']) {
+      const pair = pkcs12ToPem(makePfx({ cn, password: PASSWORD }).pfx, PASSWORD)
+      let err: any
+      try { validateIssuerPair(pair.certPem, pair.keyPem, 'PC3D315K000193') } catch (e) { err = e }
+      expect(err).toMatchObject({ statusCode: 409, code: 'FISCAL_CERT_INVALID' })
+      expect(err.message).toMatch(/CNPJ alfanumérico.*não precisa ser trocado.*D-CJ6/)
+      expect(err.message).not.toMatch(/sem CNPJ no CN/)
+    }
+    // estabelecimento NUMÉRICO com o mesmo certificado sem CNPJ legível segue com a mensagem de sempre
+    const plain = pkcs12ToPem(makePfx({ cn: 'SEM PADRAO', password: PASSWORD }).pfx, PASSWORD)
+    expect(() => validateIssuerPair(plain.certPem, plain.keyPem, CNPJ)).toThrow(/sem CNPJ no CN/)
+  })
 })
 
 // ---------------------------------------------------------------------------
