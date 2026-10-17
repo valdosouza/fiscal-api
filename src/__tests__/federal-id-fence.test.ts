@@ -17,6 +17,12 @@ const ALLOWED: Record<string, string> = {
     'kid do JWT saneado para o LOG (troca por "?", não apaga; não é inscrição)',
   "src/erp/facts.ts: String(v ?? '').replace(/\\D/g, '')":
     'digitsOf do código IBGE da cidade (7 dígitos) — o CNPJ do estabelecimento é lido pela peça (establishmentCnpjFact)',
+  // NE-1b (D-NE118, 2026-10-17): o Code-128 da chave ESCOLHE o conjunto pelo caractere (pares de dígitos em C, letra em A) — nada é tirado: a
+  // chave alfanumérica inteira vira símbolo e volta inteira no leitor (`pdf-code128.test.ts`, 3000 chaves)
+  "src/pdf/barcode/code128.ts: c >= '0'":
+    'Code-128 da chave: o teste de dígito só escolhe o conjunto C × A da NT Conjunta 2025.001 §6 — nenhum caractere é removido',
+  "src/pdf/barcode/code128.ts: c <= '9'":
+    'Code-128 da chave: o teste de dígito só escolhe o conjunto C × A da NT Conjunta 2025.001 §6 — nenhum caractere é removido',
 }
 
 describe('D-CJ12 — cerca: nunca "tirar o que não é dígito" de inscrição federal ou chave de acesso', () => {
