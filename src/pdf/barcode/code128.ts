@@ -9,6 +9,8 @@
  *
  * CONHECIMENTO NEGATIVO — o TEXTO da NT erra duas vezes; vale o EXEMPLO dela: "código 100 para alternar os subtipos A e C" (100 é CODE B; de C
  * para A é 101, de A para C é 99) e "o valor 103 corresponde ao caractere de início (start) para o padrão Code C" (103 é Start A; Start C = 105).
+ * E o 2º exemplo narrado ("123A" começando em C) diverge da regra 1 desta peça (menos de 4 dígitos no início → Start A): mesmo número de
+ * símbolos, o leitor devolve o mesmo texto, e a chave de acesso sempre começa com 4+ dígitos (cUF + AAMM) — gate socrático L8.
  */
 import { code128Widths } from './lib'
 
@@ -29,15 +31,20 @@ export interface Code128Bars {
 }
 
 const ALPHABET = /^[0-9A-Z]+$/
+/** Teto da peça: a chave de acesso tem 44; o MOC 3.10.4 admite outros códigos "de interesse do emissor", sempre curtos. */
+export const CODE128_MAX_LENGTH = 128
 const isDigit = (c: string): boolean => c >= '0' && c <= '9'
 /** Conjunto A: ASCII 32–95 → 0–63 ('0' = 16, 'A' = 33). */
 const valueInA = (c: string): number => c.charCodeAt(0) - 32
 
 export function code128Symbols(text: string): Code128Symbols {
-  if (typeof text !== 'string' || !ALPHABET.test(text)) {
-    throw new RangeError('Code-128 da base: o texto tem de ter só dígitos e letras maiúsculas [0-9A-Z], ao menos 1')
+  if (typeof text !== 'string' || !ALPHABET.test(text) || text.length > CODE128_MAX_LENGTH) {
+    throw new RangeError(`Code-128 da base: o texto tem de ter só dígitos e letras maiúsculas [0-9A-Z], de 1 a ${CODE128_MAX_LENGTH}`)
   }
-  const runAt = (i: number): number => { let j = i; while (j < text.length && isDigit(text[j])) j++; return j - i }
+  // dígitos seguidos a partir de cada posição — calculado UMA vez (o laço abaixo era quadrático em sequência longa — gate socrático L5)
+  const runs = new Array<number>(text.length + 1).fill(0)
+  for (let k = text.length - 1; k >= 0; k--) runs[k] = isDigit(text[k]) ? runs[k + 1] + 1 : 0
+  const runAt = (i: number): number => runs[i]
   const lead = runAt(0)
   let set: 'A' | 'C' = lead >= 4 || (lead === 2 && text.length === 2) ? 'C' : 'A'   // regra 1 (e o texto de exatamente 2 dígitos)
   const start = set === 'C' ? CODE128.START_C : CODE128.START_A
@@ -61,8 +68,33 @@ export function code128Symbols(text: string): Code128Symbols {
   return Object.freeze({ start, data: Object.freeze(data), check })
 }
 
+/**
+ * Só símbolos que ESTA peça produziria (gates A10/L9): Start A ou C, dados no conjunto corrente (A: '0'–'9' e 'A'–'Z' + CODE C; C: pares 00–99
+ * + CODE A), ao menos um dado e o DV declarado = o calculado. Símbolo forjado (Start B, CODE B, Stop/Start no meio, DV errado) é recusado
+ * antes da lib — que calcularia o DV dela e esconderia o erro.
+ */
+function assertNtSymbols(s: Code128Symbols): void {
+  const ok = !!s && (s.start === CODE128.START_A || s.start === CODE128.START_C) && Array.isArray(s.data) && s.data.length > 0
+    && s.data.length <= CODE128_MAX_LENGTH * 2
+  if (!ok) throw new RangeError('Code-128 da base: símbolos inválidos')
+  let set: 'A' | 'C' = s.start === CODE128.START_C ? 'C' : 'A'
+  for (const v of s.data) {
+    if (!Number.isInteger(v)) throw new RangeError('Code-128 da base: símbolos inválidos')
+    if (set === 'C') {
+      if (v === CODE128.CODE_A_FROM_C) { set = 'A'; continue }
+      if (v < 0 || v > 99) throw new RangeError('Code-128 da base: símbolos inválidos')
+    } else {
+      if (v === CODE128.CODE_C_FROM_A) { set = 'C'; continue }
+      if (!((v >= 16 && v <= 25) || (v >= 33 && v <= 58))) throw new RangeError('Code-128 da base: símbolos inválidos')
+    }
+  }
+  const check = s.data.reduce((sum, v, k) => sum + v * (k + 1), s.start) % 103
+  if (s.check !== check) throw new RangeError('Code-128 da base: dígito de verificação não confere com os símbolos')
+}
+
 /** Os símbolos viram larguras pela lib (modo `raw`); quem desenha é `drawBars`. */
 export function code128Bars(symbols: Code128Symbols): Code128Bars {
+  assertNtSymbols(symbols)
   const widths = code128Widths([symbols.start, ...symbols.data])
   // Start + dados + DV + Stop: 11 módulos por símbolo, 13 no Stop — a lib não pode ter acrescentado nem tirado símbolo
   const expected = 11 * (symbols.data.length + 2) + 13

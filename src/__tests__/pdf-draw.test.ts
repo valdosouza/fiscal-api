@@ -29,7 +29,7 @@ describe('NE-1b — desenho vetorial', () => {
     const drawn = drawBars(doc, bars, box)
     expect(drawn.moduleCm).toBeGreaterThanOrEqual(0.02)
     expect(drawn.modulePt).toBeCloseTo(box.width / (bars.modules + 20), 9)
-    expect(calls).toEqual(['save', 'fillColor:"black"', 'fill', 'restore'])
+    expect(calls).toEqual(['save', 'fillColor:"#000000"', 'fill', 'restore'])       // cor normalizada (gate A3) e desenho isolado (gate A1)
     const m = drawn.modulePt
     const sorted = [...rects].sort((a, b) => a[0] - b[0])
     expect(sorted[0][0]).toBeCloseTo(box.x + 10 * m, 6)

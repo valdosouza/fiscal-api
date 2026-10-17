@@ -106,5 +106,66 @@ export function pdfTextByStream(pdf: Buffer): string[][] {
   return pages
 }
 
+/** Os operadores crus de cada stream de conteúdo que desenha algo (uma por folha no pdfkit), na ordem. */
+export function pdfContentOps(pdf: Buffer): string[] {
+  const s = pdf.toString('latin1')
+  const out: string[] = []
+  let i = 0
+  while ((i = s.indexOf('stream', i)) !== -1) {
+    if (s.slice(i - 3, i) === 'end') { i += 6; continue }
+    let start = i + 6
+    if (s[start] === '\r') start++
+    if (s[start] === '\n') start++
+    const end = s.indexOf('endstream', start)
+    if (end < 0) break
+    const raw = pdf.subarray(start, end)
+    let txt: string
+    try { txt = zlib.inflateSync(raw).toString('latin1') } catch { txt = raw.toString('latin1') }
+    if (/\bBT\b|\bre\b/.test(txt)) out.push(txt)
+    i = end + 9
+  }
+  return out
+}
+
+/** Retângulos `x y w h re` (no espaço do pdfkit: origem no canto de cima, como as caixas da base). */
+export const pdfRects = (ops: string): [number, number, number, number][] =>
+  [...ops.matchAll(/(-?[\d.]+) (-?[\d.]+) (-?[\d.]+) (-?[\d.]+) re/g)].map(m => [Number(m[1]), Number(m[2]), Number(m[3]), Number(m[4])])
+
+export interface TextRun {
+  readonly text: string
+  /** Recurso da fonte (ex.: "F3") e corpo em pontos. */
+  readonly font: string
+  readonly size: number
+  /** Posição do texto no espaço do PDF (`Tm`; y de baixo para cima). */
+  readonly x: number
+  readonly yPdf: number
+  /** Operandos da cor de preenchimento vigente ('' = a cor inicial do PDF, preto). */
+  readonly color: string
+  /** Há opacidade (`gs`) vigente no estado gráfico. */
+  readonly translucent: boolean
+}
+
+/** Mini-intérprete: cada trecho de texto com fonte, corpo, posição, cor e opacidade VIGENTES (q/Q empilham o estado gráfico). */
+export function pdfTextRuns(ops: string): TextRun[] {
+  const runs: TextRun[] = []
+  let gs = { color: '', translucent: false }
+  const stack: (typeof gs)[] = []
+  let font = '', size = 0, x = 0, y = 0
+  for (const raw of ops.split('\n')) {
+    const line = raw.trim()
+    if (line === 'q') stack.push({ ...gs })
+    else if (line === 'Q') gs = stack.pop() ?? { color: '', translucent: false }
+    else if (/ (scn|sc|rg|k)$/.test(line)) gs = { ...gs, color: line.replace(/ (scn|sc|rg|k)$/, '') }
+    else if (/ gs$/.test(line)) gs = { ...gs, translucent: true }
+    else if (/ Tf$/.test(line)) { const m = /^\/(\S+) ([\d.]+) Tf$/.exec(line); if (m) { font = m[1]; size = Number(m[2]) } }
+    else if (/ Tm$/.test(line)) { const p = line.split(/\s+/); x = Number(p[4]); y = Number(p[5]) }
+    else if (/T[Jj]$/.test(line)) {
+      const parts = /TJ$/.test(line) ? [...line.matchAll(/<([0-9a-fA-F]+)>/g)].map(h => h[1]) : [(/<([0-9a-fA-F]+)>/.exec(line) ?? [])[1] ?? '']
+      runs.push({ text: parts.map(h => cp1252(Buffer.from(h, 'hex'))).join(''), font, size, x, yPdf: y, color: gs.color, translucent: gs.translucent })
+    }
+  }
+  return runs
+}
+
 /** Quantas folhas o PDF declara (`/Type /Page`, sem `/Pages`). */
 export const pdfPageCount = (pdf: Buffer): number => (pdf.toString('latin1').match(/\/Type \/Page(?!s)\b/g) ?? []).length

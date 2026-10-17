@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 // NE-1b (D-NE120): fontes-padrão WinAnsi — a regra de substituição VISÍVEL e a ida e volta de TODO caractere representável por um PDF real.
-import { toWinAnsi, registerFontRoles, STANDARD_FONTS, WINANSI_REPLACEMENT, createPdf } from '../pdf'
+import { toWinAnsi, registerFontRoles, STANDARD_FONTS, WINANSI_REPLACEMENT, createPdf, writeText } from '../pdf'
 import { pdfTextByStream } from './pdf-oracle'
 
 const CP1252_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'
@@ -40,6 +40,27 @@ describe('NE-1b — fontes-padrão e WinAnsi', () => {
     expect(() => registerFontRoles(doc, { title: 'Arial' } as any)).toThrow(RangeError)
     registerFontRoles(doc, { title: 'Times-Bold', content: 'Times-Roman', fixed: 'Courier' })
     expect(() => doc.font('title')).not.toThrow()
+  })
+
+  it('D-NE126 — `writeText` é a porta de texto: papel REGISTRADO, sempre pelo `toWinAnsi` (troca visível e contada), posição e corpo validados', async () => {
+    const w = createPdf({ marginCm: 1, title: 'porta de texto', creationDate: new Date('2026-10-17T03:00:00Z'), fontRoles: { content: 'Times-Roman' } })
+    expect(writeText(w.doc, 'content', 'Ação 10μm → ok', { sizePt: 9 })).toEqual({ replaced: 2 })
+    expect(writeText(w.doc, 'content', 'nº 5 — € 3', { x: 40, y: 200 })).toEqual({ replaced: 0 })
+    expect(() => writeText(w.doc, 'title', 'sem papel')).toThrow(RangeError)                        // não registrado: recusa legível (o pdfkit tentaria abrir um ARQUIVO)
+    expect(() => writeText(w.doc, 'toString', 'x')).toThrow(RangeError)
+    expect(() => writeText(w.doc, 'content', 'x', { x: NaN })).toThrow(RangeError)
+    expect(() => writeText(w.doc, 'content', 'x', { y: 1e21 })).toThrow(RangeError)
+    expect(() => writeText(w.doc, 'content', 'x', { sizePt: 0 })).toThrow(RangeError)
+    const lines = pdfTextByStream(await w.end()).flat()
+    expect(lines).toEqual(expect.arrayContaining(['Ação 10?m ? ok', 'nº 5 — € 3']))
+  })
+
+  it('papel com nome de propriedade do JS ("toString", "constructor", "__proto__") é recusado no registro (gate adversarial A9)', () => {
+    const { doc } = createPdf({ marginCm: 1, title: 'papéis do JS' })
+    for (const role of ['toString', 'constructor', 'hasOwnProperty', 'valueOf']) {
+      expect(() => registerFontRoles(doc, { [role]: 'Times-Roman' } as any)).toThrow(RangeError)
+    }
+    expect(() => createPdf({ marginCm: 1, title: 'x', fontRoles: { constructor: 'Courier' } as any })).toThrow(RangeError)
   })
 
   it('em CADA fonte-padrão, todo caractere representável atravessa um PDF real e volta igual', async () => {

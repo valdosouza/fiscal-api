@@ -74,9 +74,12 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     expect(pkg.typesVersions['*']['federal-id']).toEqual(['dist/federal-id.d.ts'])
     expect(pkg.exports['./pdf']).toEqual({ types: './dist/pdf.d.ts', default: './dist/pdf.js' })
     expect(pkg.typesVersions['*'].pdf).toEqual(['dist/pdf.d.ts'])
-    // o pdfkit é peer OPCIONAL (o setes-api não instala) e a lib de símbolos tem versão EXATA (D-NE119)
-    expect(pkg.peerDependencies.pdfkit).toBeDefined()
-    expect(pkg.peerDependenciesMeta?.pdfkit?.optional).toBe(true)
+    // D-NE124 (= Q-NE124 (b), revê a D-NE121): UM motor de desenho em todo ambiente — pdfkit é dependência comum com versão EXATA (a base
+    // depende de internos dele — `pdf/state.ts`), como a lib de símbolos (D-NE119); nada de peer
+    expect(pkg.dependencies.pdfkit).toBe('0.20.2')
+    expect(pkg.peerDependencies?.pdfkit).toBeUndefined()
+    expect(pkg.peerDependenciesMeta?.pdfkit).toBeUndefined()
+    expect(pkg.devDependencies?.pdfkit).toBeUndefined()
     expect(pkg.dependencies['bwip-js']).toBe('4.11.4')
   })
   it('CERCA da F2a: o setes-api só importa `fiscal-api/reading` e `fiscal-api/federal-id` (D-CJ2 — peça pura, nada do lado de escrita)', () => {
