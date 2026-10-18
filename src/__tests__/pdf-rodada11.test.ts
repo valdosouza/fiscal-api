@@ -112,7 +112,7 @@ describe('D-NE152 — o vazio que fecha a cadeia aberta deixa x/y onde o fechame
         const withText = after('X', chain, close)
         expect(withEmpty.open).toBeNull()
         expect(withEmpty.x).toBe(withText.x)
-        expect(withEmpty.y).toBeCloseTo(withText.y, 9)
+        expect(withEmpty.y).toBe(withText.y)                                             // exata (gate R12-L1)
       })
     }
   }
@@ -131,4 +131,30 @@ describe('D-NE152 — o vazio que fecha a cadeia aberta deixa x/y onde o fechame
     expect(runs.map(r => r.text)).toEqual(['INF. COMPL.: ', 'RESERVADO AO FISCO', 'Obs: '])
     expect(runs[1].yPdf).toBeLessThan(runs[0].yPdf - 1)
   })
+})
+
+describe('D-NE152 — paridade EXATA nos casos que a 1ª bateria não exercitava (gate socrático L1: 3 mutações do ramo passavam)', () => {
+  type Setup = (d: PDFKit.PDFDocument) => void
+  const cases: Record<string, { setup?: Setup; chain: string; close: Record<string, number> }> = {
+    'y explícito no fechamento': { chain: 'INF. COMPL.: ', close: { y: 300 } },
+    'lineGap do DOCUMENTO': { setup: d => { d.lineGap(3) }, chain: 'INF. COMPL.: ', close: {} },
+    'cadeia que já quebrou várias linhas': { chain: 'palavra '.repeat(30), close: {} },
+    'x mexido entre os trechos': { chain: 'INF. COMPL.: ', close: {} },
+  }
+  const after = (closeText: string, c: { setup?: Setup; chain: string; close: Record<string, number> }, name: string) => {
+    const d = createPdf({ marginCm: 1, title: 'D-NE152 exata', fontRoles: ROLES }).doc as PDFKit.PDFDocument & { _wrapper: unknown }
+    c.setup?.(d)
+    writeText(d, 'content', c.chain, { x: 60, y: 100, width: 300, continued: true, sizePt: 9 })
+    if (name === 'x mexido entre os trechos') d.x = 333
+    writeText(d, 'content', closeText, c.close)
+    return { x: d.x, y: d.y, open: d._wrapper }
+  }
+  for (const [name, c] of Object.entries(cases)) {
+    it(`${name}: vazio = texto (x e y iguais, cadeia fechada)`, () => {
+      const withEmpty = after('', c, name)
+      const withText = after('X', c, name)
+      expect(withEmpty.open).toBeNull()
+      expect({ x: withEmpty.x, y: withEmpty.y }).toEqual({ x: withText.x, y: withText.y })
+    })
+  }
 })

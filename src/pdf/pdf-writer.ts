@@ -132,7 +132,8 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
         refuseThenable(start(doc, opened), 'base de PDF: o sheetStart tem de ser síncrono (o desenho cairia depois da folha)')
       }, { keep: ['y'], neutral: true, who: 'o sheetStart' })
       // re-gate D5: finito, na folha e com lugar para 1 linha — o `y` lido UMA vez, DENTRO do trecho que invalida (gate R11-L4); "lugar para 1
-      // linha" com a MESMA folga relativa da D-NE140 (gate R11-L2: o cabeçalho medido para terminar em "pé − 1 linha" passava por 1e-13 pt)
+      // linha" com folga relativa de 2^-40 como a D-NE140, na escala do `room` (menor que o pé — conservadora: o que passa aqui a D-NE140 compensa;
+      // gate R11-L2: o cabeçalho medido para terminar em "pé − 1 linha" passava por 1e-13 pt)
       const y: unknown = doc.y
       const room = doc.page.height - doc.page.margins.bottom - doc.currentLineHeight(true)
       if (typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y - room > Math.abs(room) * 2 ** -40) {

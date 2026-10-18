@@ -208,6 +208,9 @@ export function liveContentOps(doc: PDFKit.PDFDocument): string[] {
     // como o PDF final grava (6 casas — gate R11-L5: 0,9999999 era "translúcido" aqui e "opaco" no PDF)
     opacity[name] = dictionary.data.ca === undefined ? '-' : String(Math.round(dictionary.data.ca * 1e6) / 1e6)
   }
+  // falha FECHADO também sem folhas ou com folhas já despejadas (gate R12-L3: depois do `end()`/`flushPages` devolvia [] e o `.every` passava vazio)
+  const start = (doc as unknown as { _pageBufferStart: number })._pageBufferStart
+  if (d._pageBuffer.length === 0 || start !== 0) throw new Error('oráculo: o documento não tem todas as folhas vivas (fechado ou com flushPages)')
   return d._pageBuffer.map((p, i) => {
     const ops = Buffer.concat(p.content.buffer).toString('latin1')
     // falha FECHADO (gate socrático L3): toda folha do pdfkit começa pela matriz-base; conteúdo vazio = documento já fechado ou outro pdfkit

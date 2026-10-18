@@ -273,7 +273,8 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     for (const [k, v] of Object.entries(textOptions)) if (v !== undefined) chain[k] = v      // como o `_initOptions`: o fechamento vale sobre a cadeia
     if (y !== undefined) doc.y = y
     const lineGap = (chain.lineGap as number) || (doc as unknown as { _lineGap?: number })._lineGap || 0
-    doc.y += doc.currentLineHeight(true) + lineGap + ((chain.paragraphGap as number) || 0)
+    doc.y += doc.currentLineHeight(true) + lineGap                                       // na ORDEM do pdfkit (`_line`, depois o `lastLine`):
+    doc.y += (chain.paragraphGap as number) || 0                                            // somar de uma vez erra 1 ulp (gate R12-L1)
     doc.x = (d._wrapper as { startX: number }).startX
     d._wrapper = null
     d._textOptions = null
