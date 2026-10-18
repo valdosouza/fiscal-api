@@ -13,11 +13,18 @@ const BASE_DOCUMENT = Symbol('fiscal-api/pdf:documento-da-base')
 export interface BaseDocumentState {
   /** Papel → fonte-padrão, só o que passou por `registerFontRoles` (objeto sem protótipo). */
   readonly roles: Record<string, string>
+  /**
+   * O protótipo da fonte-PADRÃO do pdfkit (gate R9-L2): a fonte EMBUTIDA tem o nome PostScript do arquivo — um TrueType chamado "Times-Roman"
+   * (o `Times.ttc` do macOS) passaria pela conferência só do nome. Tirado da Helvetica com que o pdfkit abre todo documento (`initFonts`).
+   */
+  readonly standardFontPrototype: object
 }
 
 export function markBaseDocument(doc: PDFKit.PDFDocument): void {
+  const initial = (doc as unknown as { _font?: { name?: unknown } | null })._font
+  if (!initial || initial.name !== 'Helvetica') throw new RangeError('base de PDF: o pdfkit não abriu o documento na fonte-padrão Helvetica (D-NE124)')
   Object.defineProperty(doc, BASE_DOCUMENT, {
-    value: Object.freeze({ roles: Object.create(null) as Record<string, string> }),
+    value: Object.freeze({ roles: Object.create(null) as Record<string, string>, standardFontPrototype: Object.getPrototypeOf(initial) as object }),
     enumerable: false, configurable: false, writable: false,
   })
 }

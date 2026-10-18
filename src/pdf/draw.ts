@@ -11,7 +11,7 @@ import type { Code128Bars } from './barcode/code128'
 import type { QrMatrix } from './barcode/qr'
 import { baseDocument } from './base-document'
 import { toWinAnsi, STANDARD_FONTS, type StandardFont } from './fonts'
-import { assertStandardFontIntact, isolated } from './state'
+import { assertStandardFontIntact, isolated, useStandardFont } from './state'
 import { MAX_COORDINATE_PT, ptToCm } from './units'
 
 export interface PdfBox { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
@@ -32,10 +32,11 @@ export function normalizeColor(c: PdfColor): string | number[] {
   if (typeof c === 'string') {
     const hex = Object.prototype.hasOwnProperty.call(NAMED, c) ? NAMED[c] : c
     if (HEX.test(hex)) return hex
-  } else if (Array.isArray(c) && c.length === 4
-    // por ÍNDICE (re-gate D10: o `every` pula buraco — `[0, , 0, 35]` passava e gravava 3 operandos)
-    && CMYK_INDEXES.every(i => typeof c[i] === 'number' && Number.isFinite(c[i]) && c[i] >= 0 && c[i] <= 100)) {
-    return CMYK_INDEXES.map(i => Math.round(c[i] * 100) / 100 + 0)
+  } else if (Array.isArray(c) && c.length === 4) {
+    // cada elemento lido UMA vez (gate R9-L7 — a classe do R7-L5: um getter validava 35 e entregava 1e6) e por ÍNDICE (re-gate D10: o `every`
+    // pula buraco — `[0, , 0, 35]` passava e gravava 3 operandos)
+    const v = CMYK_INDEXES.map(i => c[i] as unknown)
+    if (v.every(n => typeof n === 'number' && Number.isFinite(n) && n >= 0 && n <= 100)) return (v as number[]).map(n => Math.round(n * 100) / 100 + 0)
   }
   throw new RangeError('base de PDF: cor inválida (hex, black/white/gray ou CMYK 0–100)')
 }
@@ -142,7 +143,9 @@ export function drawWatermark(doc: PDFKit.PDFDocument, text: string, styleIn: Wa
   const color = normalizeColor(style.color)
   const { width, height } = doc.page
   isolated(doc, () => {
-    doc.rotate(angle, { origin: [width / 2, height / 2] }).font(style.font).fontSize(style.sizePt).fillColor(color as any, opacity)
+    doc.rotate(angle, { origin: [width / 2, height / 2] })
+    useStandardFont(doc, style.font)                               // conferida AQUI, depois de ler o estilo e a cor (gate R9-L1)
+    doc.fontSize(style.sizePt).fillColor(color as any, opacity)
     const w = doc.widthOfString(line)
     doc.text(line, width / 2 - w / 2, height / 2 - doc.currentLineHeight() / 2, { lineBreak: false })
   }, { who: 'drawWatermark' })

@@ -101,10 +101,9 @@ describe('NE-1b gate final — [ACHADO MEDIUM] F-M1: a LINHA ÚNICA (D-NE132) co
     const vw = measureText(w.doc, 'content', VALUE, { sizePt: 8 }).width
     const refused = errorOf(() => writeText(w.doc, 'content', VALUE, { ...cell, y: 300 }))
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }                  // recusa legível = correção aceita
-    const runs = pdfTextRuns(pdfContentOps(pdf)[0]).filter(r => r.text !== 'Obs: ')
-    expect(runs.map(r => r.text)).toEqual([VALUE])
-    expect(runs[0].x).toBeCloseTo(400 + 120 - vw, 3)
+    expect(vw).toBeGreaterThan(0)
+    expect(refused?.message).toMatch(/texto encadeado aberto.*D-NE135/)                  // fechado pela D-NE135 (gate socrático do delta, achado 2)
+    expect(pdfTextRuns(pdfContentOps(pdf)[0]).filter(r => r.text !== 'Obs: ').map(r => r.text)).toEqual([])
   })
 
   it('[CORRIGIDO — ACHADO MEDIUM] F-M1b — perto do pé: a linha única NUNCA abre folha (hoje: 2 folhas, o resto do valor na folha nova)', async () => {
@@ -113,7 +112,7 @@ describe('NE-1b gate final — [ACHADO MEDIUM] F-M1: a LINHA ÚNICA (D-NE132) co
     const refused = errorOf(() => writeText(w.doc, 'content', VALUE, { ...cell, y: 800 }))
     const sheets = sheetsOf(w.doc)
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
+    expect(refused?.message).toMatch(/texto encadeado aberto.*D-NE135/)
     expect({ sheets, pages: pdfPageCount(pdf) }).toEqual({ sheets: 1, pages: 1 })
   })
 })
@@ -132,10 +131,8 @@ describe('NE-1b gate final — achados LOW', () => {
       writeText(w.doc, 'content', '12.345.678/0001-90')
     })
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
-    const runs = pdfTextRuns(pdfContentOps(pdf)[0])
-    const label = measureText(createPdf({ marginCm: 1, title: 'm', fontRoles: ROLES }).doc, 'title', 'CNPJ: ').width
-    expect(runs[1].x).toBeGreaterThanOrEqual(runs[0].x + label - 1e-6)                  // hoje: os dois em x = 40
+    expect(refused?.message).toMatch(/"continued" não combina com lineBreak: false.*D-NE136/)
+    expect(pdfContentOps(pdf).flatMap(ops => pdfTextRuns(ops))).toEqual([])            // a recusa vem antes de qualquer texto (nem folha abriu)
   })
 
   it('[CORRIGIDO — ACHADO LOW] F-L2 — `doc.registerFont("Times-Roman", "Symbol")` (o NOME da fonte-padrão, não o do papel) ainda põe a Symbol na porta do WinAnsi: o `doc.font(fonte)` do pdfkit consulta o `_registeredFonts` pelo nome antes da fonte-padrão', async () => {
@@ -144,12 +141,11 @@ describe('NE-1b gate final — achados LOW', () => {
     // sugerida: abrir a fonte-padrão por um caminho que não passe pelo registro do pdfkit (ou recusar quando `_registeredFonts[fonte]` existe).
     const w = createPdf({ marginCm: 1, title: 'FL2', creationDate: FIXED, fontRoles: ROLES })
     w.doc.registerFont('Times-Roman', 'Symbol')
-    const m = errorOf(() => expect(measureText(w.doc, 'content', 'abc').width).toBeGreaterThan(0))
+    const m = errorOf(() => measureText(w.doc, 'content', 'abc'))
     const refused = errorOf(() => writeText(w.doc, 'content', 'abc', { x: 40, y: 40 }))
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
-    expect(m).toBeNull()
-    expect(fontsOf(pdf)).toEqual(['Times-Roman'])
+    for (const e of [m, refused]) expect(e?.message).toMatch(/fonte-padrão "Times-Roman" foi sobreposto/)
+    expect(fontsOf(pdf)).not.toContain('Symbol')
   })
 
   it('[CORRIGIDO — ACHADO LOW] F-L3 — o erro da D-NE134 deixa uma folha ÓRFÃ (sem o sheetStart dela) e o documento AINDA FECHA: folha 2 sem cabeçalho, q/Q desbalanceado e o "FOLHA 1/2" dentro do recorte (o R7-L4 de volta para quem engole o erro)', async () => {
@@ -189,9 +185,9 @@ describe('NE-1b gate final — achados LOW', () => {
     const error = errorOf(() => w.doc.addPage())
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100, sizePt: 9 })
     const pages = pdfContentOps(await w.end()).map(viewer)
-    if (error) { expect(error.message).toMatch(/^base de PDF: o sheetStart/); return }
+    expect(error?.message).toMatch(/^base de PDF: o sheetStart deu restore\(\) noutra folha/)
     const body = pages[pages.length - 1].runs.find(r => r.text.startsWith('corpo'))!
-    expect({ ca: body.ca, rotated: body.rotated }).toEqual({ ca: 1, rotated: false })   // hoje: ca 0,3 e girado
+    expect({ ca: body.ca, rotated: body.rotated }).toEqual({ ca: 1, rotated: false })   // (o equilíbrio q/Q por folha: teste do R9 "restore() noutra")
   })
 
   it('[CORRIGIDO — ACHADO LOW] F-L5 — `measureText` com `x` além da margem direita (sem `width`): a medida diz N linhas, o `writeText` não avança o `y` e EMPILHA as linhas no mesmo lugar', async () => {
@@ -207,8 +203,8 @@ describe('NE-1b gate final — achados LOW', () => {
     const refusedWrite = errorOf(() => writeText(d, 'content', 'abc\ndef', { x, y: 40, sizePt: 9 }))
     const advance = d.y - 40
     await w.end()
-    if (refusedMeasure || refusedWrite) { expect(refusedMeasure ?? refusedWrite).toBeInstanceOf(RangeError); return }
-    expect(advance).toBeCloseTo(m!.height, 6)                                            // hoje: medida 20,09 × avanço 0
+    for (const e of [refusedMeasure, refusedWrite]) expect(e?.message).toMatch(/não há largura útil a partir de x/)
+    expect({ m, advanced: advance > 0 }).toEqual({ m: null, advanced: false })            // nada medido, nada escrito
   })
 
   it.failing('[LIMITE CONHECIDO — ACHADO LOW] F-L6 (documentado no measureText; arredondamento float32 do pdfkit) — texto de UMA linha (com quebra de linha permitida) posto EXATAMENTE no pé pela medida (`y = maxY − altura`): o pdfkit abre folha ANTES de escrever — com o recorte da família aberto, a D-NE134 recusa um bloco que a medida disse que cabe', async () => {

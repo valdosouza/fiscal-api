@@ -11,7 +11,7 @@
  * papel vale pelo registro DA BASE (re-gate D14), nunca pelo do pdfkit.
  */
 import { baseDocument } from './base-document'
-import { assertStandardFontIntact, isolated } from './state'
+import { assertStandardFontIntact, isolated, useStandardFont } from './state'
 import { MAX_COORDINATE_PT } from './units'
 
 export const STANDARD_FONTS = Object.freeze([
@@ -81,6 +81,16 @@ export function toWinAnsi(text: string): { readonly text: string; readonly repla
     else { out += WINANSI_REPLACEMENT; replaced++ }
   }
   return Object.freeze({ text: out, replaced })
+}
+
+/**
+ * Os espaços do FIM fora (D-NE137) num laço do fim para o começo — linear (gate R9-L4: a regex `/ +$/` recomeça em CADA espaço de uma corrida
+ * longa no meio do texto e falha no caractere seguinte, O(n²)).
+ */
+function trimTrailingSpaces(text: string): string {
+  let end = text.length
+  while (end > 0 && text.charCodeAt(end - 1) === 0x20) end--
+  return end === text.length ? text : text.slice(0, end)
 }
 
 /**
@@ -180,7 +190,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     }
   }
   const singleLine = textOptions.lineBreak === false && textOptions.width !== undefined
-  const lineText = singleLine ? t.text.replace(/ +$/, '') : t.text               // D-NE137: espaços do FIM não contam na linha única
+  const lineText = singleLine ? trimTrailingSpaces(t.text) : t.text                // D-NE137: espaços do FIM não contam na linha única
   let lineWidth = 0
   if (singleLine) {
     for (const k of ['height', 'ellipsis', 'indent', 'paragraphGap', 'lineGap']) {
@@ -188,7 +198,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     }
     if (lineText.includes('\n')) throw new RangeError('fontes da base: linha única (lineBreak: false com width) não leva quebra de linha (D-NE132)')
     // mede ANTES de escrever, sem mexer no estado da família — a recusa não deixa rastro
-    lineWidth = isolated(doc, () => { doc.font(font); if (sizePt !== undefined) doc.fontSize(sizePt); return doc.widthOfString(lineText) },
+    lineWidth = isolated(doc, () => { useStandardFont(doc, font); if (sizePt !== undefined) doc.fontSize(sizePt); return doc.widthOfString(lineText) },
       { graphics: false, who: 'writeText' })
     if (lineWidth > (textOptions.width as number) + 1e-6) {
       throw new RangeError('fontes da base: o texto não cabe na largura da linha única — meça antes (measureText) e abrevie ou reduza o corpo (D-NE132)')
@@ -200,7 +210,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     // gate final F-L5: sem largura útil a partir de x (além da margem direita) o pdfkit escreveria com largura 0, linhas empilhadas no mesmo y
     throw new RangeError('fontes da base: não há largura útil a partir de x (além da margem direita) — informe width')
   }
-  doc.font(font)                                          // a fonte do registro DA BASE (re-gate S1/R7-L1), com o nome conferido (F-L2)
+  useStandardFont(doc, font)                              // a fonte do registro DA BASE (re-gate S1/R7-L1), conferida AQUI (F-L2/R9-L1)
   if (sizePt !== undefined) doc.fontSize(sizePt)
   if (singleLine) {
     const width = textOptions.width as number
@@ -229,6 +239,8 @@ export interface MeasureTextOptions extends Omit<TextLayoutOptions, 'continued' 
  * não mexe no estado da família.
  * LIMITE CONHECIDO (gate final F-L6): o pdfkit confere o pé da folha com o `maxY` arredondado para baixo em float32 — um bloco posto EXATAMENTE em
  * `pé − altura medida` pode abrir folha antes de escrever; deixe folga (≥ 0,01 pt) ao encostar no pé.
+ * Sem `width`, a recusa por falta de largura útil olha o `x` (o informado ou o CORRENTE — gate socrático do delta, achado 3): para medir só a
+ * LARGURA de um trecho (juntar trechos na mesma linha — D-NE136), passe o `x` onde ele vai ser escrito, nunca dependa do `x` que ficou no documento.
  */
 export function measureText(doc: PDFKit.PDFDocument, role: string, text: string, opts: MeasureTextOptions = {}):
   { readonly width: number; readonly height: number; readonly replaced: number } {
@@ -244,7 +256,7 @@ export function measureText(doc: PDFKit.PDFDocument, role: string, text: string,
   const layout = layoutOptions(all, ['sizePt', 'x'])
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
   return isolated(doc, () => {
-    doc.font(font)
+    useStandardFont(doc, font)
     if (sizePt !== undefined) doc.fontSize(sizePt)
     if (x !== undefined) doc.x = x
     if (layout.width === undefined && doc.page.width - doc.x - doc.page.margins.right <= 0) {

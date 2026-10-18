@@ -10,6 +10,8 @@
  *
  * Interno da base (não sai pela superfície `fiscal-api/pdf`).
  */
+import { baseDocument } from './base-document'
+
 const TEXT_STATE = ['_font', '_fontSize', '_fontSource', '_fontFamily', '_lineGap', '_fillColor', '_wrapper', '_textOptions', 'x', 'y'] as const
 export type KeptState = 'y'
 
@@ -20,8 +22,10 @@ export interface IsolateOptions {
   readonly graphics?: boolean
   /**
    * Estado de entrada NEUTRO = o de uma folha nova (re-gate S3): preto opaco, traço de 1 pt contínuo, Helvetica 12, espaçamento 0 — o
-   * `sheetStart` e a passada não herdam o fim do conteúdo. (Não zera lineCap/lineJoin/miterLimit nem recorte: recorte só vive dentro de
-   * `save()`, e `save()` aberto na abertura de folha ou no fim do conteúdo é erro de uso — D-NE134 / gate L3.)
+   * `sheetStart` e a passada não herdam o fim do conteúdo. Não zera lineCap/lineJoin/miterLimit nem RECORTE — LIMITE CONHECIDO (gate socrático
+   * do delta, achado 5): o operador de recorte do PDF não se desfaz; dentro de `save()` ele morre no `restore()` (e `save()` aberto na abertura de
+   * folha ou no fim do conteúdo é erro de uso — D-NE134 / gate L3), mas um `clip()` da família FORA de `save()` vale até o fim da folha e recorta
+   * também o que a passada escreve nela ("Folha n/N"). A base não tem como desfazê-lo — a família recorta só dentro de `save()`/`restore()`.
    */
   readonly neutral?: boolean
   /** Quem roda (para a mensagem de erro de uso). */
@@ -37,12 +41,27 @@ export function assertStandardFontIntact(doc: PDFKit.PDFDocument, font: string):
   const d = doc as unknown as { _registeredFonts?: Record<string, unknown>; _fontFamilies?: Record<string, { name?: string } | undefined> }
   const registered = !!d._registeredFonts && Object.prototype.hasOwnProperty.call(d._registeredFonts, font)
   const cached = d._fontFamilies && Object.prototype.hasOwnProperty.call(d._fontFamilies, font) ? d._fontFamilies[font] : undefined
-  if (registered || (cached && cached.name !== font)) {
+  // gate R9-L2: o nome de uma fonte EMBUTIDA é o PostScript do arquivo — confere também que o cache é uma fonte-PADRÃO do pdfkit
+  const impostor = !!cached && (cached.name !== font || Object.getPrototypeOf(cached) !== baseDocument(doc).standardFontPrototype)
+  if (registered || impostor) {
     throw new RangeError(`fontes da base: o nome da fonte-padrão "${font}" foi sobreposto no pdfkit (registerFont/font por fora) — a porta não desenha (D-NE126)`)
   }
 }
 
-/** Marca das guardas instaladas pelo `isolated` (aponta para a função que cada uma envolve) — a limpeza chama a ORIGINAL, sem passar por elas. */
+/**
+ * A fonte-padrão posta no documento PELA conferência (gate R9-L1): conferir longe do `doc.font` deixava código de quem chama que roda no meio
+ * (getter de opção, `toString` do texto, getter de elemento da cor) sobrepor o nome depois da conferência. Toda porta da base troca de fonte por aqui.
+ */
+export function useStandardFont(doc: PDFKit.PDFDocument, font: string): void {
+  assertStandardFontIntact(doc, font)
+  doc.font(font)
+}
+
+/**
+ * Marca das guardas instaladas pelo `isolated` (aponta para a função que cada uma envolve). As guardas, a entrada, a saída e a limpeza chamam a
+ * ORIGINAL (`rawOf`) — cada isolado conta SÓ os `save()` da família feitos enquanto a guarda DELE está instalada (gate R9-L5 / socrático do delta,
+ * achado 1: o `save()` de entrada de um isolado aninhado passava pela guarda do de fora e ficava para sempre na lista de folhas dele).
+ */
 const GUARD = Symbol('fiscal-api/pdf:guarda-do-isolated')
 type Guarded = ((this: unknown) => unknown) & { [GUARD]?: () => unknown }
 const rawOf = (fn: Guarded): (() => unknown) => {
@@ -72,12 +91,14 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   const hadOwnSave = Object.prototype.hasOwnProperty.call(d, 'save')
   const previousRestore = d.restore as Guarded
   const previousSave = d.save as Guarded
+  const rawSave = rawOf(previousSave)
+  const rawRestore = rawOf(previousRestore)
   /** A folha de cada `save()` feito DENTRO do isolado (gate final F-L4: um `save()` noutra folha não se fecha nesta). */
   const savedOn: unknown[] = []
   if (graphics) {
-    doc.save(); depth = d._ctmStack.length; ours = d._ctmStack[depth - 1]                // a ENTRADA do nosso save (um array novo por save)
+    rawSave.call(doc); depth = d._ctmStack.length; ours = d._ctmStack[depth - 1]         // a ENTRADA do nosso save (um array novo por save)
     const guardedSave: Guarded = function guardedSave() {
-      const r = previousSave.call(doc)
+      const r = rawSave.call(doc)
       savedOn.push(doc.page)
       return r
     }
@@ -87,7 +108,7 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
       if (savedOn.length > 0 && savedOn[savedOn.length - 1] !== doc.page) {
         throw new Error(`base de PDF: ${who} deu restore() noutra folha (o save() correspondente foi feito em outra folha)`)
       }
-      const r = previousRestore.call(doc)
+      const r = rawRestore.call(doc)
       savedOn.pop()
       return r
     }
@@ -108,8 +129,6 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
     if (hadOwnRestore) d.restore = previousRestore; else delete d.restore
     if (hadOwnSave) d.save = previousSave; else delete d.save
   }
-  const rawSave = rawOf(d.save as Guarded)
-  const rawRestore = rawOf(d.restore as Guarded)
   const switchTo = (p: unknown): void => {
     const index = (d._pageBuffer as unknown[]).indexOf(p)
     if (index >= 0 && doc.page !== p) doc.switchToPage(d._pageBufferStart + index)
