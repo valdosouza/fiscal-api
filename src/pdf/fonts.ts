@@ -290,7 +290,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     d._textOptions = null
   } else if (t.text === '' && textOptions.continued !== true && !d._wrapper && !d._textOptions) {
     // D-NE147 (Valdo 2026-10-18 — gate R10-L1): o vazio mede 0 e não escreve nada — o pdfkit abriria folha VAZIA no pé (a conferência de entrada
-    // exige uma linha); a posição fica como o pdfkit a deixaria (x/y informados, sem avançar). Cadeia aberta: o vazio FECHA a cadeia (vai ao pdfkit)
+    // exige uma linha); a posição fica como o pdfkit a deixaria (x/y informados, sem avançar). Cadeia aberta: o vazio a FECHA pela base (D-NE152, ramo acima)
     doc.x = x0
     if (y !== undefined) doc.y = y
   } else {

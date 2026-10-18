@@ -80,6 +80,15 @@ export function decodeCode128(widths: readonly number[]): { text: string; values
 const CP1252_HIGH = '€\u0081‚ƒ„…†‡ˆ‰Š‹Œ\u008DŽ\u008F\u0090‘’“”•–—˜™š›œ\u009DžŸ'
 const cp1252 = (bytes: Buffer): string => [...bytes].map(b => (b >= 0x80 && b <= 0x9F ? CP1252_HIGH[b - 0x80] : String.fromCharCode(b))).join('')
 
+/**
+ * O fluxo em `i` é de IMAGEM/XObject (gate R13-L1: os bytes de um PNG podem trazer " re " ou "BT" e o fluxo da imagem passava por FOLHA — o
+ * logotipo do DANFE na NE-5); o dicionário do objeto vem logo antes da palavra `stream`.
+ */
+function isImageStream(s: string, i: number): boolean {
+  const dict = s.slice(Math.max(s.lastIndexOf(' obj', i), 0), i)
+  return /\/Subtype\s*\/Image\b|\/Type\s*\/XObject\b/.test(dict)
+}
+
 /** Texto de cada stream de conteúdo (uma por folha no pdfkit), linha a linha na ordem de escrita. */
 export function pdfTextByStream(pdf: Buffer): string[][] {
   const s = pdf.toString('latin1')
@@ -87,6 +96,7 @@ export function pdfTextByStream(pdf: Buffer): string[][] {
   let i = 0
   while ((i = s.indexOf('stream', i)) !== -1) {
     if (s.slice(i - 3, i) === 'end') { i += 6; continue }
+    if (isImageStream(s, i)) { i += 6; continue }
     let start = i + 6
     if (s[start] === '\r') start++
     if (s[start] === '\n') start++
@@ -130,6 +140,7 @@ export function pdfContentOps(pdf: Buffer): string[] {
   let i = 0
   while ((i = s.indexOf('stream', i)) !== -1) {
     if (s.slice(i - 3, i) === 'end') { i += 6; continue }
+    if (isImageStream(s, i)) { i += 6; continue }
     let start = i + 6
     if (s[start] === '\r') start++
     if (s[start] === '\n') start++

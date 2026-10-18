@@ -99,7 +99,7 @@ describe('NE-1b gate R12 — [ACHADO LOW] R12-L1: com `paragraphGap` (da cadeia 
   })
 })
 
-describe('NE-1b gate R12 — [ACHADO LOW] R12-L2: o vazio COM `continued: true` (o que ABRE a cadeia, ou um trecho do MEIO) ainda vai ao pdfkit e, no pé, abre folha — fechado pelo vazio (D-NE152), a folha fica VAZIA', () => {
+describe('NE-1b gate R12 — [ACHADO LOW] R12-L2: o vazio COM `continued: true` (o que ABRE a cadeia, ou um trecho do MEIO) ia ao pdfkit e, no pé, abria folha (CORRIGIDO pela D-NE153) — fechado pelo vazio (D-NE152), a folha fica VAZIA', () => {
   /**
    * A D-NE147 tirou do pdfkit o vazio SEM `continued` e a D-NE152 o vazio que FECHA a cadeia; o vazio com `continued: true` segue no pdfkit (o
    * `pdf-rodada11` fixa: "`continued: true` vazio abre cadeia"). A conferência de ENTRADA do quebrador (`y + altura da linha > pé`) roda mesmo com
@@ -111,7 +111,7 @@ describe('NE-1b gate R12 — [ACHADO LOW] R12-L2: o vazio COM `continued: true` 
    */
   const header = (d: PDFKit.PDFDocument, n: number) => { writeText(d, 'title', `CAB ${n}`, { x: 40, y: 20, lineBreak: false }); d.y = 60 }
 
-  it('[CORRIGIDO — D-NE153] R12-L2a — rótulo opcional VAZIO que abre a cadeia no pé exato (`y = pé − 0`) + campo VAZIO que fecha: nenhuma folha nova (hoje: a folha 2 só com o cabeçalho)', async () => {
+  it('[CORRIGIDO — D-NE153] R12-L2a — rótulo opcional VAZIO que abre a cadeia no pé exato (`y = pé − 0`) + campo VAZIO que fecha: nenhuma folha nova', async () => {
     const w = createPdf({ marginCm: 1, title: 'R12L2a', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
     const d = w.doc
     writeText(d, 'content', 'corpo', { x: 40, y: 100 })
@@ -124,7 +124,7 @@ describe('NE-1b gate R12 — [ACHADO LOW] R12-L2: o vazio COM `continued: true` 
     expect(pdfPageCount(pdf)).toBe(1)
   })
 
-  it('[CORRIGIDO — D-NE153] R12-L2b — cadeia de 7 pt no pé exato, trecho do MEIO vazio de outro papel (12 pt, `continued: true`) e o fechamento vazio: nenhuma folha nova (hoje: a folha 2 só com o cabeçalho)', async () => {
+  it('[CORRIGIDO — D-NE153] R12-L2b — cadeia de 7 pt no pé exato, trecho do MEIO vazio de outro papel (12 pt, `continued: true`) e o fechamento vazio: nenhuma folha nova', async () => {
     const w = createPdf({ marginCm: 1, title: 'R12L2b', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
     const d = w.doc
     const m = measureText(d, 'content', 'Obs: ', { sizePt: 7, width: 300 })
