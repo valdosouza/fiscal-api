@@ -160,6 +160,9 @@ function fitFloat32(doc: PDFKit.PDFDocument, y0: number): number | null {
  * Trecho VAZIO com `continued: true` (D-NE153, Valdo 2026-10-18 — gates do delta da Rodada 12: socrático M1 e R12-L2): também não vai ao pdfkit —
  * com a cadeia ABERTA, a cadeia segue IGUAL (o vazio não soma nada; no pdfkit, o `_initOptions` copiava o `textWidth` velho e o trecho seguinte
  * saía deslocado pela largura do anterior, e num corpo maior no pé abria folha); SEM cadeia, é RECUSADO — abra a cadeia com o 1º trecho que tem texto.
+ * CONHECIMENTO NEGATIVO (D-NE157, Valdo 2026-10-18 — ratificada): o vazio do MEIO descarta as PRÓPRIAS opções e o corpo (`x`/`y`, `sizePt`,
+ * `lineGap`, `align`…) — com texto no lugar, o pdfkit as passaria ao RESTO da cadeia. REGRA da família (NE-2/NE-3): cada trecho com texto diz o
+ * seu corpo e as suas opções de leiaute; nunca os herda de um trecho do meio que pode vir vazio.
  */
 export interface TextLayoutOptions {
   readonly width?: number
