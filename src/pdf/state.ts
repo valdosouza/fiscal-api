@@ -109,18 +109,19 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   let depth = 0
   let ours: unknown = null
   const own = (k: string): boolean => Object.prototype.hasOwnProperty.call(d, k)
-  const had = { restore: own('restore'), save: own('save'), switchToPage: own('switchToPage') }
-  const previous = { restore: d.restore as Guarded, save: d.save as Guarded, switchToPage: d.switchToPage as Guarded }
-  const rawSave = rawOf(previous.save)
+  const had = { restore: own('restore'), switchToPage: own('switchToPage') }
+  const previous = { restore: d.restore as Guarded, switchToPage: d.switchToPage as Guarded }
+  const rawSave = rawOf(d.save as Guarded)
   const rawRestore = rawOf(previous.restore)
-  const rawSwitch = rawOf(previous.switchToPage)
+  // a volta à folha do isolado (só no erro de uso — folha aberta lá dentro) é a do PRÓPRIO pdfkit (gates R10-L2/socrático L4: um embrulho sem a
+  // marca — espião do jest — escondia a original do `rawOf` e a volta tropeçava na guarda da D-NE138, com o `q` do isolado ainda aberto)
+  const rawSwitch = (Object.getPrototypeOf(doc) as { switchToPage: Raw }).switchToPage
   const install = (k: keyof typeof previous, fn: Guarded): void => { fn[GUARD] = previous[k]; d[k] = fn }
   install('switchToPage', function guardedSwitchToPage() {
     throw new Error(`base de PDF: ${who} trocou de folha (switchToPage) — aqui a folha é a dele (D-NE138)`)
   })
   if (graphics) {
     rawSave.call(doc); depth = d._ctmStack.length; ours = d._ctmStack[depth - 1]         // a ENTRADA do nosso save (um array novo por save)
-    install('save', function guardedSave() { return rawSave.call(doc) })
     // gate R7-M1: `restore()` a MAIS barrado NA HORA, antes de emitir o `Q` — acusar depois não desfaz o que vazou para o resto da folha
     install('restore', function guardedRestore() {
       if (d._ctmStack.length <= depth) throw new Error(`base de PDF: ${who} deu restore() a mais (fecharia o estado que não abriu)`)
@@ -135,8 +136,8 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   } catch (error) {
     failure = { error }                                  // o erro de quem rodou sobe DEPOIS da limpeza — nunca trocado pelo de uso
   }
-  for (const k of ['switchToPage', 'save', 'restore'] as const) {
-    if (!graphics && k !== 'switchToPage') continue
+  for (const k of ['switchToPage', 'restore'] as const) {
+    if (!graphics && k === 'restore') continue
     if (had[k]) d[k] = previous[k]; else delete d[k]
   }
   let misuse: string | null = null

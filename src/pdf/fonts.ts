@@ -109,7 +109,9 @@ function float32Down(n: number): number {
  * folha arredondado PARA BAIXO em float32 e confere a 1ª linha em float64 (`y + altura da linha`): um bloco posto EXATAMENTE onde a medida diz que
  * cabe passava do pé por ~1e-4 pt e abria folha antes de escrever (gate final F-L6) — com um recorte da família aberto, a D-NE134 deixava o
  * documento sem conserto (gate socrático do delta, achado 6). Só quando a 1ª linha cabe no pé EXATO e não no arredondado: o `y` sobe o que falta
- * (< 1e-4 pt, invisível). O que não cabe de verdade fica com o pdfkit. Fora do encadeado aberto (o quebrador dele já guardou o limite) e sem
+ * (até 1 ulp de float32 do pé — ~6e-5 pt no A4, ~1e-3 pt no papel de 14.400 pt; invisível). "Cabe no pé exato" com folga RELATIVA de 2^-40 × pé
+ * (~7e-10 pt no A4 — gates R10-M1/socrático M1: a altura que a medida devolve é `(y + lh) − y` em float64 e erra 1 a 3 ulps; sem a folga, ~5 % dos
+ * corpos do DANFE ainda abriam folha). O que não cabe de verdade (1e-6 pt além do pé, p.ex.) fica com o pdfkit. Fora do encadeado aberto (o quebrador dele já guardou o limite) e sem
  * `height` — CONHECIMENTO NEGATIVO (provado por sonda na execução): com `height` a mesma conferência só avança a coluna e a linha é escrita; não há o
  * que compensar.
  */
@@ -118,7 +120,7 @@ function fitFloat32(doc: PDFKit.PDFDocument, y0: number): number | null {
   const nextY = y0 + lh
   const foot = doc.page.maxY()
   const foot32 = float32Down(foot)
-  if (nextY > foot || nextY <= foot32) return null
+  if (nextY - foot > Math.abs(foot) * 2 ** -40 || nextY <= foot32) return null
   let y = y0
   for (let i = 0; i < 8 && y + lh > foot32; i++) y -= (y + lh - foot32) + Math.abs(foot32) * 2 ** -52
   return y + lh <= foot32 ? y : null

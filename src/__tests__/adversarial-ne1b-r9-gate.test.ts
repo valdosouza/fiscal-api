@@ -68,8 +68,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L1: o `assertStandardFontIntact` con
     const opts = { x: 40, get y() { d.registerFont('Times-Roman', 'Symbol'); return 40 } }
     const refused = errorOf(() => writeText(d, 'content', 'abc', opts as never))
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }                // recusa legível = correção aceita
-    expect(fontsOf(pdf)).toEqual(['Times-Roman'])                                       // hoje: ['Symbol']
+    expect(refused?.message).toMatch(/fonte-padrão "Times-Roman" foi sobreposto/)                                       // pego NA TROCA (useStandardFont)
+    expect(fontsOf(pdf)).not.toContain('Symbol')
   })
 
   it('[CORRIGIDO — ACHADO LOW] R9-L1b — measureText: o `toString` do texto registra Symbol depois da conferência — a largura medida é a da Symbol (0 pt)', () => {
@@ -78,8 +78,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L1: o `assertStandardFontIntact` con
     const text = { toString() { d.registerFont('Times-Roman', 'Symbol'); return 'abc' } }
     let width: number | null = null
     const refused = errorOf(() => { width = measureText(d, 'content', text as never, { sizePt: 10 }).width })
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
-    expect(width).toBeCloseTo(control, 6)                                               // hoje: 0 (a Symbol não tem "abc" no WinAnsi)
+    expect(refused?.message).toMatch(/fonte-padrão "Times-Roman" foi sobreposto/)
+    expect({ width, control: control > 0 }).toEqual({ width: null, control: true })
   })
 
   it('[CORRIGIDO — ACHADO LOW] R9-L1c — drawWatermark: getter de um elemento do CMYK registra Symbol depois da conferência — a marca sai em Symbol', async () => {
@@ -90,8 +90,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L1: o `assertStandardFontIntact` con
     Object.defineProperty(color, 3, { get() { if (armed) { armed = false; d.registerFont('Times-Roman', 'Symbol') } return 35 } })
     const refused = errorOf(() => drawWatermark(d, 'SEM VALOR', { font: 'Times-Roman', sizePt: 40, color: color as never }))
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
-    expect(fontsOf(pdf)).toEqual(['Times-Roman'])                                       // hoje: ['Symbol']
+    expect(refused?.message).toMatch(/fonte-padrão "Times-Roman" foi sobreposto/)
+    expect(fontsOf(pdf)).not.toContain('Symbol')
   })
 })
 
@@ -113,8 +113,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L2: fonte EMBUTIDA cujo nome PostScr
     w.doc.font(impostor, 'Times-Roman')
     const refused = errorOf(() => writeText(w.doc, 'content', 'abc', { x: 40, y: 40 }))
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
-    expect({ fonts: fontsOf(pdf), embedded: /FontFile2/.test(pdf.toString('latin1')) }).toEqual({ fonts: ['Times-Roman'], embedded: false })
+    expect(refused?.message).toMatch(/fonte-padrão "Times-Roman" foi sobreposto/)                                       // pelo protótipo da fonte-padrão
+    expect(/FontFile2/.test(pdf.toString('latin1'))).toBe(false)
   })
 })
 
@@ -170,7 +170,7 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L5: a guarda por folha (`savedOn`) d
     const after = clean(w.doc)
     const balance = balanceOf(await w.end())
     expect(after).toEqual(CLEAN)
-    if (error) expect(error.message).toMatch(/^base de PDF: o sheetStart/)
+    expect(error?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)
     expect(balance).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])               // hoje: folha 1 com `Q` órfão, folha 2 com `q` aberto
   })
 
@@ -207,7 +207,7 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L6: fora do isolado, `save()` numa f
     let refused: Error | null = null
     try { pdf = await w.end((dd, i) => { writeText(dd, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) }) }
     catch (e) { refused = e as Error }
-    if (refused) { expect(refused.message).toMatch(/^base de PDF/); return }
+    expect(refused).toBeNull()                                                            // fechado o save() na folha dele, o documento fecha
     const seen = pdfContentOps(pdf!).map(viewer)
     expect(seen.map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])   // hoje: [+1, 0] e [-1, -1]
     expect(seen[0].runs.find(r => r.text === 'FOLHA 1/2')!.clipped).toBe(false)                                    // hoje: recortado
@@ -224,7 +224,7 @@ describe('NE-1b gate R9 — [ACHADO LOW, fora do delta] R9-L7: o CMYK é lido el
     Object.defineProperty(color, 3, { get() { reads++; return reads <= 4 ? 35 : 1e6 } })
     const refused = errorOf(() => drawBars(w.doc, BARS, BOX, { color: color as never }))
     const pdf = await w.end()
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); return }
+    expect({ refused, reads }).toEqual({ refused: null, reads: 1 })                      // lido UMA vez: 35, válido
     const operands = pdfContentOps(pdf)[0].split('\n').filter(l => / scn$/.test(l)).flatMap(l => l.split(' ').slice(0, -1).map(Number))
     expect(operands.every(v => v >= 0 && v <= 1)).toBe(true)                            // hoje: 10000
   })

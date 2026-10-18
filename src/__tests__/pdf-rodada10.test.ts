@@ -39,7 +39,7 @@ describe('D-NE138 — trocar de folha com save() aberto é erro de uso; dentro d
     expect(pdfTextRuns(pages[0]).map(r => r.text)).toEqual(expect.arrayContaining(['TOTAL 1.234,56', 'FOLHA 1/2']))
   })
 
-  it('dentro do sheetStart e da passada: switchToPage é barrado NA HORA, com a mensagem de quem rodou; o documento segue e fecha balanceado', async () => {
+  it('dentro do sheetStart: switchToPage é barrado NA HORA, com a mensagem dele; o documento segue e FECHA balanceado', async () => {
     const w = createPdf({
       marginCm: 1, title: 'D-NE138 isolado', creationDate: FIXED, fontRoles: ROLES,
       sheetStart: (d, n) => { writeText(d, 'title', `CAB ${n}`, { x: 40, y: 20, lineBreak: false }); if (n === 2) d.switchToPage(0); d.y = 60 },
@@ -47,6 +47,14 @@ describe('D-NE138 — trocar de folha com save() aberto é erro de uso; dentro d
     const e = errorOf(() => w.doc.addPage())
     expect(e?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100 })
+    const pdf = await w.end((dd, i) => { writeText(dd, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) })
+    expect(pdfPageCount(pdf)).toBe(2)
+    expect(pdfContentOps(pdf).map(qBalance)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+  })
+
+  it('dentro da passada: switchToPage é barrado NA HORA, com a mensagem dela', async () => {
+    const w = createPdf({ marginCm: 1, title: 'D-NE138 passada', creationDate: FIXED, fontRoles: ROLES })
+    writeText(w.doc, 'content', lines(120, 'item'), { x: 40, sizePt: 9 })
     let passError: Error | null = null
     try { await w.end(dd => { dd.switchToPage(0) }) } catch (err) { passError = err as Error }
     expect(passError?.message).toMatch(/^base de PDF: a passada por folha trocou de folha \(switchToPage\).*D-NE138/)
@@ -54,22 +62,30 @@ describe('D-NE138 — trocar de folha com save() aberto é erro de uso; dentro d
 })
 
 describe('D-NE140 — o bloco posto EXATAMENTE onde a medida diz que cabe não abre folha', () => {
-  for (const sizePt of [7, 8, 9, 10.5]) {
-    it(`corpo ${sizePt}: 1 linha no pé exato (y = pé − altura medida) fica na folha — e com o recorte da família aberto o documento FECHA`, async () => {
-      const w = createPdf({ marginCm: 1, title: 'D-NE140', creationDate: FIXED, fontRoles: ROLES })
-      const d = w.doc
-      const m = measureText(d, 'content', 'ultima linha do quadro', { sizePt, width: 300 })
-      const y = d.page.maxY() - m.height
-      d.save(); d.rect(40, y - 50, 300, 50 + m.height).clip()
-      writeText(d, 'content', 'ultima linha do quadro', { x: 40, y, width: 300, sizePt })
-      d.restore()
-      expect(d.bufferedPageRange().count).toBe(1)
-      expect(d.y).toBeCloseTo(y + m.height, 3)
-      const pdf = await w.end()
-      expect(pdfPageCount(pdf)).toBe(1)
-      expect(pdfTextRuns(pdfContentOps(pdf)[0]).map(r => r.text)).toEqual(['ultima linha do quadro'])
-    })
-  }
+  it('VARREDURA (gates R10-M1/socrático M1): 3 fontes × corpos 5–12 × cursor da medida no topo/meio/baixo × 2 margens — 1 linha no pé exato (y = pé − altura medida), com o recorte da família aberto: sempre na folha e o documento FECHA', async () => {
+    const roles = { title: 'Times-Bold', content: 'Times-Roman', fixed: 'Courier' } as const
+    const failures: string[] = []
+    for (const marginCm of [0.7, 1]) {
+      for (const role of ['title', 'content', 'fixed'] as const) {
+        for (let sizePt = 5; sizePt <= 12; sizePt += 0.5) {
+          for (const cursor of [0, 333.7, 504.2]) {
+            const w = createPdf({ marginCm, title: 'D-NE140', creationDate: FIXED, fontRoles: roles })
+            const d = w.doc
+            if (cursor) d.y = cursor                                                  // a medida feita onde o conteúdo parou (o y entra na conta)
+            const m = measureText(d, role, 'ultima linha do quadro', { sizePt, width: 300 })
+            const y = d.page.maxY() - m.height
+            d.save(); d.rect(40, y - 50, 300, 50 + m.height).clip()
+            writeText(d, role, 'ultima linha do quadro', { x: 40, y, width: 300, sizePt })
+            d.restore()
+            const sheets = d.bufferedPageRange().count
+            const closed = await w.end().then(pdf => pdfPageCount(pdf), (e: Error) => e.message)
+            if (sheets !== 1 || closed !== 1) failures.push(`${marginCm}/${role}/${sizePt}/${cursor}: ${sheets} folhas, ${closed}`)
+          }
+        }
+      }
+    }
+    expect(failures).toEqual([])
+  })
 
   it('com `height` = a altura medida da 1ª linha, a linha é escrita (conhecimento negativo: com `height` o pdfkit não perde a linha — a D-NE140 não age)', async () => {
     const w = createPdf({ marginCm: 1, title: 'D-NE140 height', creationDate: FIXED, fontRoles: ROLES })
