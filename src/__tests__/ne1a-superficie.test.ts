@@ -84,7 +84,8 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // re-gate N7: a superfície fala no namespace `PDFKit` — os tipos vão JUNTO (dependência exata) e o `.d.ts` publicado os referencia
     expect(pkg.dependencies['@types/pdfkit']).toBe('0.17.6')
     expect(pkg.devDependencies?.['@types/pdfkit']).toBeUndefined()
-    expect(read(path.join(SRC, 'pdf.ts')).split('\n')[0]).toBe('/// <reference types="pdfkit" preserve="true" />')
+    // por linha com OU sem \r — num checkout do Windows (core.autocrlf) o fonte vem em CRLF (achado na janela D-NE123)
+    expect(read(path.join(SRC, 'pdf.ts')).split(/\r?\n/)[0]).toBe('/// <reference types="pdfkit" preserve="true" />')
   })
   it('CERCA da F2a: o setes-api só importa `fiscal-api/reading` e `fiscal-api/federal-id` (D-CJ2 — peça pura, nada do lado de escrita)', () => {
     const root = setesApiPath('src')                                        // D-F117: a worktree da F2a (ou a árvore viva) — tem de existir
