@@ -111,18 +111,20 @@ describe('NE-1b gate R12 — [ACHADO LOW] R12-L2: o vazio COM `continued: true` 
    */
   const header = (d: PDFKit.PDFDocument, n: number) => { writeText(d, 'title', `CAB ${n}`, { x: 40, y: 20, lineBreak: false }); d.y = 60 }
 
-  it.failing('[ACHADO LOW] R12-L2a — rótulo opcional VAZIO que abre a cadeia no pé exato (`y = pé − 0`) + campo VAZIO que fecha: nenhuma folha nova (hoje: a folha 2 só com o cabeçalho)', async () => {
+  it('[CORRIGIDO — D-NE153] R12-L2a — rótulo opcional VAZIO que abre a cadeia no pé exato (`y = pé − 0`) + campo VAZIO que fecha: nenhuma folha nova (hoje: a folha 2 só com o cabeçalho)', async () => {
     const w = createPdf({ marginCm: 1, title: 'R12L2a', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
     const d = w.doc
     writeText(d, 'content', 'corpo', { x: 40, y: 100 })
     const label = ''                                                                                // rótulo opcional ausente
-    writeText(d, 'content', label, { x: 40, y: d.page.maxY() - measureText(d, 'content', label, { width: 300 }).height, width: 300, continued: true })
-    writeText(d, 'content', '')                                                                     // campo opcional ausente
+    // D-NE153: o vazio que ABRIRIA a cadeia é recusado (abra com o 1º trecho que tem texto) — nenhuma folha abre
+    expect(() => writeText(d, 'content', label, { x: 40, y: d.page.maxY() - measureText(d, 'content', label, { width: 300 }).height, width: 300, continued: true }))
+      .toThrow(/trecho vazio com continued sem cadeia aberta.*D-NE153/)
+    writeText(d, 'content', '')                                                                     // campo opcional ausente (D-NE147: nada)
     const pdf = await w.end()
     expect(pdfPageCount(pdf)).toBe(1)
   })
 
-  it.failing('[ACHADO LOW] R12-L2b — cadeia de 7 pt no pé exato, trecho do MEIO vazio de outro papel (12 pt, `continued: true`) e o fechamento vazio: nenhuma folha nova (hoje: a folha 2 só com o cabeçalho)', async () => {
+  it('[CORRIGIDO — D-NE153] R12-L2b — cadeia de 7 pt no pé exato, trecho do MEIO vazio de outro papel (12 pt, `continued: true`) e o fechamento vazio: nenhuma folha nova (hoje: a folha 2 só com o cabeçalho)', async () => {
     const w = createPdf({ marginCm: 1, title: 'R12L2b', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
     const d = w.doc
     const m = measureText(d, 'content', 'Obs: ', { sizePt: 7, width: 300 })
@@ -133,16 +135,14 @@ describe('NE-1b gate R12 — [ACHADO LOW] R12-L2: o vazio COM `continued: true` 
     expect(pdfPageCount(pdf)).toBe(1)
   })
 
-  it('a prova do sintoma: a folha 2 que o vazio abriu tem SÓ o cabeçalho (nada do conteúdo) — e, com texto no lugar do vazio, o texto vai para ela (a folha não fica vazia)', async () => {
-    const run = async (value: string) => {
-      const w = createPdf({ marginCm: 1, title: 'R12L2p', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
-      const d = w.doc
-      writeText(d, 'content', '', { x: 40, y: d.page.maxY(), width: 300, continued: true })
-      writeText(d, 'content', value)
-      return pdfContentOps(await w.end()).map(o => pdfTextRuns(o).map(r => r.text))
-    }
-    expect(await run('')).toEqual([['CAB 1'], ['CAB 2']])
-    expect(await run('valor')).toEqual([['CAB 1'], ['CAB 2', 'valor']])
+  it('D-NE153: o vazio que abriria a cadeia no pé é RECUSADO (nenhuma folha abre); com TEXTO no lugar, o texto vai para a folha 2 (a folha nunca fica vazia)', async () => {
+    const empty = createPdf({ marginCm: 1, title: 'R12L2p', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
+    expect(() => writeText(empty.doc, 'content', '', { x: 40, y: empty.doc.page.maxY(), width: 300, continued: true })).toThrow(/D-NE153/)
+    expect(pdfContentOps(await empty.end()).map(o => pdfTextRuns(o).map(r => r.text))).toEqual([['CAB 1']])
+    const text = createPdf({ marginCm: 1, title: 'R12L2p', creationDate: FIXED, fontRoles: ROLES, sheetStart: header })
+    writeText(text.doc, 'content', 'valor', { x: 40, y: text.doc.page.maxY(), width: 300, continued: true })
+    writeText(text.doc, 'content', '')
+    expect(pdfContentOps(await text.end()).map(o => pdfTextRuns(o).map(r => r.text))).toEqual([['CAB 1'], ['CAB 2', 'valor']])
   })
 })
 
@@ -219,7 +219,7 @@ describe('NE-1b gate R12 — D-NE152: o vazio deixa `x`/`y` EXATAMENTE (===) ond
       const m = measureText(d, 'content', 'Obs: ', { width: 300 })
       writeText(d, 'content', 'Obs: ', { x: 40, y: d.page.maxY() - m.height, width: 300, continued: true })
     }, {}],
-    ['cadeia aberta por um VAZIO com `continued: true` (longe do pé)', chain(''), {}],
+    ['cadeia com um trecho VAZIO `continued: true` no MEIO (D-NE153: não soma nada)', d => { chain('Obs: ')(d); writeText(d, 'content', '', { continued: true }) }, {}],
   ]
   for (const [name, open, close] of CASES) {
     it(`${name}: x e y iguais (===), mesma folha, cadeia fechada; o vazio não acrescenta NADA ao conteúdo`, () => {

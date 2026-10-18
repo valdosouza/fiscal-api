@@ -157,6 +157,9 @@ function fitFloat32(doc: PDFKit.PDFDocument, y0: number): number | null {
  * encadeada — altura da linha na fonte/corpo do fechamento + `lineGap` + `paragraphGap`, as opções da cadeia valendo onde o fechamento não diz,
  * como no pdfkit). O pdfkit, com `''`, não emite linha: o `y` ficava no topo da linha encadeada (o próximo bloco só com `x` saía por cima do
  * rótulo) e, num corpo maior no pé, abria folha VAZIA.
+ * Trecho VAZIO com `continued: true` (D-NE153, Valdo 2026-10-18 — gates do delta da Rodada 12: socrático M1 e R12-L2): também não vai ao pdfkit —
+ * com a cadeia ABERTA, a cadeia segue IGUAL (o vazio não soma nada; no pdfkit, o `_initOptions` copiava o `textWidth` velho e o trecho seguinte
+ * saía deslocado pela largura do anterior, e num corpo maior no pé abria folha); SEM cadeia, é RECUSADO — abra a cadeia com o 1º trecho que tem texto.
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -235,6 +238,13 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     if (d._wrapper || d._textOptions) {
       throw new RangeError('fontes da base: há texto encadeado aberto — feche-o antes (último trecho sem continued) para escrever uma linha única (D-NE135)')
     }
+  }
+  if (t.text === '' && textOptions.continued === true) {
+    // D-NE153: o vazio que CONTINUA não soma nada — com a cadeia aberta ela segue igual (nada muda no documento); sem cadeia, erro de uso
+    if (!d._wrapper) {
+      throw new RangeError('fontes da base: trecho vazio com continued sem cadeia aberta — abra a cadeia com o 1º trecho que tem texto (D-NE153)')
+    }
+    return Object.freeze({ replaced: 0 })
   }
   const singleLine = textOptions.lineBreak === false && textOptions.width !== undefined
   const lineText = singleLine ? trimTrailingSpaces(t.text) : t.text                // D-NE137: espaços do FIM não contam na linha única

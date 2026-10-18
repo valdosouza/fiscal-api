@@ -80,16 +80,16 @@ describe('D-NE147 — texto VAZIO sem `continued` não chama o pdfkit (a medida 
     expect(pdfTextRuns(pdfContentOps(await w.end())[0]).map(r => r.text)).toEqual(['antes'])
   })
 
-  it('com a cadeia ABERTA o vazio FECHA a cadeia (D-NE152 — pela base); `continued: true` vazio abre cadeia', async () => {
+  it('com a cadeia ABERTA o vazio FECHA a cadeia (D-NE152 — pela base); `continued: true` vazio SEM cadeia é recusado (D-NE153)', async () => {
     const w = createPdf({ marginCm: 1, title: 'D-NE147 cadeia', creationDate: FIXED, fontRoles: ROLES })
     const d = w.doc as unknown as PDFKit.PDFDocument & { _wrapper: unknown }
     writeText(d, 'content', 'Obs: ', { x: 40, y: 100, width: 300, continued: true })
     expect(d._wrapper).toBeTruthy()
     writeText(d, 'content', '')
     expect(d._wrapper).toBeNull()
-    writeText(d, 'content', '', { x: 40, y: 200, width: 300, continued: true })
-    expect(d._wrapper).toBeTruthy()
-    writeText(d, 'content', 'fim')
+    expect(() => writeText(d, 'content', '', { x: 40, y: 200, width: 300, continued: true })).toThrow(/sem cadeia aberta.*D-NE153/)
+    expect(d._wrapper).toBeNull()
+    writeText(d, 'content', 'fim', { x: 40, y: 200 })
     expect(pdfTextRuns(pdfContentOps(await w.end())[0]).map(r => r.text)).toEqual(expect.arrayContaining(['Obs: ', 'fim']))
   })
 })
@@ -157,4 +157,41 @@ describe('D-NE152 — paridade EXATA nos casos que a 1ª bateria não exercitava
       expect({ x: withEmpty.x, y: withEmpty.y }).toEqual({ x: withText.x, y: withText.y })
     })
   }
+})
+
+describe('D-NE153 — o trecho VAZIO com `continued: true` e a cadeia aberta não soma nada (o pdfkit repetia o avanço do trecho anterior)', () => {
+  const runs = async (pieces: [string, string, Record<string, unknown>][]) => {
+    const w = createPdf({ marginCm: 1, title: 'D-NE153', creationDate: FIXED, fontRoles: ROLES })
+    for (const [role, text, opts] of pieces) writeText(w.doc, role, text, opts as never)
+    const d = w.doc as PDFKit.PDFDocument & { _wrapper: unknown }
+    const state = { x: d.x, y: d.y, open: d._wrapper !== null && d._wrapper !== undefined, sheets: d.bufferedPageRange().count }
+    return { state, runs: pdfTextRuns(pdfContentOps(await w.end())[0]).map(r => ({ text: r.text, x: r.x, y: r.yPdf })) }
+  }
+  const OPEN = { x: 40, y: 100, width: 400, continued: true }
+  it('"Endereço: " + complemento VAZIO + "Rua…": igual ao documento sem o vazio (um e dois vazios; outro papel e corpo)', async () => {
+    const control = await runs([['title', 'Endereço: ', OPEN], ['content', 'Rua das Flores, 100', {}]])
+    for (const middle of [
+      [['content', '', { continued: true }]],
+      [['content', '', { continued: true }], ['title', '', { continued: true, sizePt: 14 }]],
+    ] as [string, string, Record<string, unknown>][][]) {
+      const withEmpty = await runs([['title', 'Endereço: ', OPEN], ...middle, ['content', 'Rua das Flores, 100', {}]])
+      expect(withEmpty).toEqual(control)
+    }
+  })
+
+  it('"Rua " + VAZIO + "das Flores" sai como "Rua " + "das Flores"', async () => {
+    const control = await runs([['content', 'Rua ', OPEN], ['content', 'das Flores', {}]])
+    expect(await runs([['content', 'Rua ', OPEN], ['content', '', { continued: true }], ['content', 'das Flores', {}]])).toEqual(control)
+  })
+
+  it('no pé, o vazio de corpo MAIOR no meio da cadeia não abre folha', async () => {
+    const w = createPdf({ marginCm: 1, title: 'D-NE153 pé', creationDate: FIXED, fontRoles: ROLES })
+    const d = w.doc
+    const m = measureText(d, 'content', 'Obs: ', { sizePt: 7, width: 300 })
+    writeText(d, 'content', 'Obs: ', { x: 40, y: d.page.maxY() - m.height, width: 300, sizePt: 7, continued: true })
+    writeText(d, 'title', '', { sizePt: 14, continued: true })
+    writeText(d, 'content', '', { sizePt: 7 })
+    expect(d.bufferedPageRange().count).toBe(1)
+    expect(pdfPageCount(await w.end())).toBe(1)
+  })
 })

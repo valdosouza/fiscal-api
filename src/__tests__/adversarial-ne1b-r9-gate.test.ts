@@ -243,7 +243,9 @@ describe('NE-1b gate R9 — D-NE135/D-NE136 resistiram: nenhuma cadeia aberta es
   const openers: Record<string, (d: PDFKit.PDFDocument) => void> = {
     'continued com width': d => { writeText(d, 'content', 'Inf. compl.: ', { x: 40, y: 200, width: 300, continued: true }) },
     'continued sem width (largura que sobra na folha)': d => { writeText(d, 'content', 'Inf. compl.: ', { x: 40, y: 200, continued: true }) },
-    'continued com texto VAZIO': d => { writeText(d, 'content', '', { x: 40, y: 200, width: 300, continued: true }) },
+    'continued com trecho VAZIO no meio (D-NE153: não soma nada)': d => {
+      writeText(d, 'content', 'Inf. compl.: ', { x: 40, y: 200, width: 300, continued: true }); writeText(d, 'content', '', { continued: true })
+    },
     'continued do fixed depois do content (cadeia de dois papéis)': d => {
       writeText(d, 'content', 'Inf.: ', { x: 40, y: 200, width: 300, continued: true }); writeText(d, 'fixed', 'ABC ', { continued: true })
     },
