@@ -44,7 +44,7 @@ describe('NE-1b gate R11 — [ACHADO LOW] R11-L1: o vazio que FECHA a cadeia abe
    * Correção sugerida (pede decisão — Q-NE152): o vazio que fecha a cadeia deixa o `y` onde o fechamento com texto deixaria (uma linha abaixo da
    * linha encadeada) sem chamar o pdfkit. ESTE corpo afirma a recomendação (a); se o Valdo escolher (b) recusar ou (c) limite, reescrever.
    */
-  it.failing('[ACHADO LOW] R11-L1a — "INF. COMPL.: " encadeado + campo opcional VAZIO + próximo bloco só com x: o próximo bloco cai na linha de baixo (hoje: por cima do rótulo)', async () => {
+  it('[CORRIGIDO — D-NE152] R11-L1a — "INF. COMPL.: " encadeado + campo opcional VAZIO + próximo bloco só com x: o próximo bloco cai na linha de baixo (hoje: por cima do rótulo)', async () => {
     const w = createPdf({ marginCm: 1, title: 'R11L1a', creationDate: FIXED, fontRoles: ROLES })
     const d = w.doc
     writeText(d, 'content', 'INF. COMPL.: ', { x: 40, y: 100, width: 300, continued: true })
@@ -67,7 +67,7 @@ describe('NE-1b gate R11 — [ACHADO LOW] R11-L1: o vazio que FECHA a cadeia abe
     expect(runs[2].yPdf).toBeLessThan(runs[0].yPdf - 1)
   })
 
-  it.failing('[ACHADO LOW] R11-L1b — cadeia de 7 pt no pé exato fechada com VAZIO de outro papel (12 pt): nenhuma folha nova (hoje: folha VAZIA — a R10-L1 pela porta da cadeia)', () => {
+  it('[CORRIGIDO — D-NE152] R11-L1b — cadeia de 7 pt no pé exato fechada com VAZIO de outro papel (12 pt): nenhuma folha nova (hoje: folha VAZIA — a R10-L1 pela porta da cadeia)', () => {
     const d = createPdf({ marginCm: 1, title: 'R11L1b', fontRoles: ROLES }).doc
     const m = measureText(d, 'content', 'Obs: ', { sizePt: 7, width: 300 })
     writeText(d, 'content', 'Obs: ', { x: 40, y: d.page.maxY() - m.height, width: 300, sizePt: 7, continued: true })

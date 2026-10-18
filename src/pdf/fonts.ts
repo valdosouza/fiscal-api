@@ -152,7 +152,11 @@ function fitFloat32(doc: PDFKit.PDFDocument, y0: number): number | null {
  * quebrador o pdfkit cola as linhas na mesma linha de base.
  *
  * TEXTO VAZIO (D-NE147, Valdo 2026-10-18): sem `continued` e sem cadeia aberta, a base não chama o pdfkit — nada é escrito e nenhuma folha abre
- * (a medida do vazio é 0); o `x`/`y` ficam como informados. Com a cadeia aberta o vazio a FECHA.
+ * (a medida do vazio é 0); o `x`/`y` ficam como informados. Com a cadeia ABERTA (D-NE152, Valdo 2026-10-18 — gate R11-L1) a base FECHA a cadeia
+ * ela mesma, sem chamar o pdfkit: `x`/`y` onde o fechamento com texto deixaria (o `x` do início da cadeia; o `y` uma linha abaixo da linha
+ * encadeada — altura da linha na fonte/corpo do fechamento + `lineGap` + `paragraphGap`, as opções da cadeia valendo onde o fechamento não diz,
+ * como no pdfkit). O pdfkit, com `''`, não emite linha: o `y` ficava no topo da linha encadeada (o próximo bloco só com `x` saía por cima do
+ * rótulo) e, num corpo maior no pé, abria folha VAZIA.
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -262,6 +266,17 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     if (textOptions.underline !== undefined) line.underline = textOptions.underline
     if (textOptions.strike !== undefined) line.strike = textOptions.strike
     doc.text(lineText, x0 + dx, y ?? doc.y, line)
+  } else if (t.text === '' && textOptions.continued !== true && d._wrapper) {
+    // D-NE152: o fechamento da cadeia pelo vazio, feito pela base — o que o `_line` do pdfkit faria com o último trecho (avança o `y` da linha
+    // encadeada) e o fim do quebrador (devolve o `x` do início), sem a conferência de entrada que abriria folha no pé
+    const chain: Record<string, unknown> = { ...((d._textOptions ?? {}) as Record<string, unknown>) }
+    for (const [k, v] of Object.entries(textOptions)) if (v !== undefined) chain[k] = v      // como o `_initOptions`: o fechamento vale sobre a cadeia
+    if (y !== undefined) doc.y = y
+    const lineGap = (chain.lineGap as number) || (doc as unknown as { _lineGap?: number })._lineGap || 0
+    doc.y += doc.currentLineHeight(true) + lineGap + ((chain.paragraphGap as number) || 0)
+    doc.x = (d._wrapper as { startX: number }).startX
+    d._wrapper = null
+    d._textOptions = null
   } else if (t.text === '' && textOptions.continued !== true && !d._wrapper && !d._textOptions) {
     // D-NE147 (Valdo 2026-10-18 — gate R10-L1): o vazio mede 0 e não escreve nada — o pdfkit abriria folha VAZIA no pé (a conferência de entrada
     // exige uma linha); a posição fica como o pdfkit a deixaria (x/y informados, sem avançar). Cadeia aberta: o vazio FECHA a cadeia (vai ao pdfkit)

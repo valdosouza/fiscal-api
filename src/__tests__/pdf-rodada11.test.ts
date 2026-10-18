@@ -80,7 +80,7 @@ describe('D-NE147 — texto VAZIO sem `continued` não chama o pdfkit (a medida 
     expect(pdfTextRuns(pdfContentOps(await w.end())[0]).map(r => r.text)).toEqual(['antes'])
   })
 
-  it('com a cadeia ABERTA o vazio FECHA a cadeia (vai ao pdfkit); `continued: true` vazio abre cadeia', async () => {
+  it('com a cadeia ABERTA o vazio FECHA a cadeia (D-NE152 — pela base); `continued: true` vazio abre cadeia', async () => {
     const w = createPdf({ marginCm: 1, title: 'D-NE147 cadeia', creationDate: FIXED, fontRoles: ROLES })
     const d = w.doc as unknown as PDFKit.PDFDocument & { _wrapper: unknown }
     writeText(d, 'content', 'Obs: ', { x: 40, y: 100, width: 300, continued: true })
@@ -91,5 +91,44 @@ describe('D-NE147 — texto VAZIO sem `continued` não chama o pdfkit (a medida 
     expect(d._wrapper).toBeTruthy()
     writeText(d, 'content', 'fim')
     expect(pdfTextRuns(pdfContentOps(await w.end())[0]).map(r => r.text)).toEqual(expect.arrayContaining(['Obs: ', 'fim']))
+  })
+})
+
+describe('D-NE152 — o vazio que fecha a cadeia aberta deixa x/y onde o fechamento com TEXTO deixaria (a base fecha, sem chamar o pdfkit)', () => {
+  type Close = { role: 'title' | 'content'; sizePt?: number; lineGap?: number; paragraphGap?: number }
+  const chainOpts: Record<string, number>[] = [{}, { lineGap: 2 }, { paragraphGap: 5 }, { lineGap: 1.5, paragraphGap: 3 }]
+  const closes: Close[] = [{ role: 'content' }, { role: 'title', sizePt: 12 }, { role: 'content', sizePt: 7, lineGap: 4 }, { role: 'title', paragraphGap: 2 }]
+  const after = (closeText: string, chain: Record<string, number>, close: Close): { x: number; y: number; open: unknown } => {
+    const d = createPdf({ marginCm: 1, title: 'D-NE152', fontRoles: ROLES }).doc as PDFKit.PDFDocument & { _wrapper: unknown }
+    writeText(d, 'content', 'INF. COMPL.: ', { x: 40, y: 100, width: 300, continued: true, sizePt: 9, ...chain })
+    const { role, ...opts } = close
+    writeText(d, role, closeText, opts)
+    return { x: d.x, y: d.y, open: d._wrapper }
+  }
+  for (const chain of chainOpts) {
+    for (const close of closes) {
+      it(`cadeia ${JSON.stringify(chain)} fechada por ${JSON.stringify(close)}: vazio = texto`, () => {
+        const withEmpty = after('', chain, close)
+        const withText = after('X', chain, close)
+        expect(withEmpty.open).toBeNull()
+        expect(withEmpty.x).toBe(withText.x)
+        expect(withEmpty.y).toBeCloseTo(withText.y, 9)
+      })
+    }
+  }
+
+  it('o próximo bloco só com x cai na linha de baixo, como depois do fechamento com texto; no pé, nenhuma folha nova', async () => {
+    const w = createPdf({ marginCm: 1, title: 'D-NE152 bloco', creationDate: FIXED, fontRoles: ROLES })
+    const d = w.doc
+    writeText(d, 'content', 'INF. COMPL.: ', { x: 40, y: 100, width: 300, continued: true })
+    writeText(d, 'content', '')
+    writeText(d, 'content', 'RESERVADO AO FISCO', { x: 40 })
+    const m = measureText(d, 'content', 'Obs: ', { sizePt: 7, width: 300 })
+    writeText(d, 'content', 'Obs: ', { x: 40, y: d.page.maxY() - m.height, width: 300, sizePt: 7, continued: true })
+    writeText(d, 'title', '', { sizePt: 12 })
+    expect(d.bufferedPageRange().count).toBe(1)
+    const runs = pdfTextRuns(pdfContentOps(await w.end())[0])
+    expect(runs.map(r => r.text)).toEqual(['INF. COMPL.: ', 'RESERVADO AO FISCO', 'Obs: '])
+    expect(runs[1].yPdf).toBeLessThan(runs[0].yPdf - 1)
   })
 })
