@@ -161,9 +161,10 @@ describe('NE-1b re-gate do delta — achados LOW', () => {
     }
     // observado sem voltar: { folhas: 2, q: [-1] } — só a folha 1 tem conteúdo (as duas metades sobrepostas) e um `Q` a mais; sem repor o y o
     // mesmo sheetStart dá 72 folhas
-    const control = await build(true)
-    expect(control).toEqual({ folhas: 2, q: [0, 0] })
-    expect(['recusa-legivel', control]).toContainEqual(await build(false))
+    // D-NE138 (Valdo 2026-10-17): dentro do sheetStart a folha é a dele — trocar de folha é recusado NA HORA, com ou sem voltar (a "continuação" na
+    // folha anterior é trabalho da passada por folha, que sabe o total)
+    expect(await build(true)).toBe('recusa-legivel')
+    expect(await build(false)).toBe('recusa-legivel')
   })
 
   it('[CORRIGIDO — ACHADO LOW] D5 — o `y` em que o sheetStart PARA não é conferido: NaN estoura como Error genérico do pdfkit; um rodapé escrito por último (y no pé) faz CADA linha abrir folha (150 linhas → 151 folhas)', async () => {

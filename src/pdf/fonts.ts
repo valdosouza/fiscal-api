@@ -85,12 +85,43 @@ export function toWinAnsi(text: string): { readonly text: string; readonly repla
 
 /**
  * Os espaços do FIM fora (D-NE137) num laço do fim para o começo — linear (gate R9-L4: a regex `/ +$/` recomeça em CADA espaço de uma corrida
- * longa no meio do texto e falha no caractere seguinte, O(n²)).
+ * longa no meio do texto e falha no caractere seguinte, O(n²)). "Espaço" = U+0020 e o NBSP U+00A0 (D-NE141, Valdo 2026-10-17 — Q-NE141 (a)): os
+ * brancos que sobram depois do `toWinAnsi` (tabulação já virou espaço; os demais brancos do Unicode viraram `?`) — o que o pdfkit apara (`\s`) no
+ * alinhamento, sem a quebra de linha (essa a linha única recusa).
  */
 function trimTrailingSpaces(text: string): string {
   let end = text.length
-  while (end > 0 && text.charCodeAt(end - 1) === 0x20) end--
+  while (end > 0 && (text.charCodeAt(end - 1) === 0x20 || text.charCodeAt(end - 1) === 0xA0)) end--
   return end === text.length ? text : text.slice(0, end)
+}
+
+/** O `PDFNumber` do pdfkit 0.20.2: o maior float32 que não passa de `n` (é assim que o quebrador de linha guarda o limite de baixo). */
+function float32Down(n: number): number {
+  const f = new Float32Array([n])
+  if (f[0] <= n) return f[0]
+  const u = new Uint32Array(f.buffer)
+  if (n <= 0) u[0] += 1; else u[0] -= 1
+  return f[0]
+}
+
+/**
+ * D-NE140 (Valdo 2026-10-17 — Q-NE140 (a)): a base compensa o arredondamento do pdfkit na ENTRADA do bloco. O quebrador de linha guarda o pé da
+ * folha arredondado PARA BAIXO em float32 e confere a 1ª linha em float64 (`y + altura da linha`): um bloco posto EXATAMENTE onde a medida diz que
+ * cabe passava do pé por ~1e-4 pt e abria folha antes de escrever (gate final F-L6) — com um recorte da família aberto, a D-NE134 deixava o
+ * documento sem conserto (gate socrático do delta, achado 6). Só quando a 1ª linha cabe no pé EXATO e não no arredondado: o `y` sobe o que falta
+ * (< 1e-4 pt, invisível). O que não cabe de verdade fica com o pdfkit. Fora do encadeado aberto (o quebrador dele já guardou o limite) e sem
+ * `height` — CONHECIMENTO NEGATIVO (provado por sonda na execução): com `height` a mesma conferência só avança a coluna e a linha é escrita; não há o
+ * que compensar.
+ */
+function fitFloat32(doc: PDFKit.PDFDocument, y0: number): number | null {
+  const lh = doc.currentLineHeight(true)
+  const nextY = y0 + lh
+  const foot = doc.page.maxY()
+  const foot32 = float32Down(foot)
+  if (nextY > foot || nextY <= foot32) return null
+  let y = y0
+  for (let i = 0; i < 8 && y + lh > foot32; i++) y -= (y + lh - foot32) + Math.abs(foot32) * 2 ** -52
+  return y + lh <= foot32 ? y : null
 }
 
 /**
@@ -111,9 +142,11 @@ function trimTrailingSpaces(text: string): string {
  * a base escreve UMA linha, alinhada por ela dentro da largura (`justify` numa linha só = esquerda; no pdfkit 0.20.2, havendo `width`, o texto
  * passa pelo quebrador de linha, quebra e ABRE FOLHA); os espaços do FIM não contam (D-NE137 — medidos, alinhados e desenhados sem eles, como o
  * pdfkit faz); texto que não cabe na largura é RECUSADO (a família mede antes com `measureText` e abrevia ou reduz o corpo). Toda escrita com
- * `lineBreak: false` (com ou sem `width`) recusa `continued` (D-NE136 — para juntar trechos na mesma linha: `x` explícito pelo `measureText`, ou
- * `continued` com `width`) e recusa texto encadeado ABERTO (D-NE135 — o pdfkit fundiria a largura da cadeia), e devolve o `x` de onde COMEÇOU
- * (D-NE133 — o pdfkit o deixava no fim do texto e a coluna de rótulos escrita só com `y` virava escada).
+ * `lineBreak: false` (com ou sem `width`) recusa `continued: true` (D-NE136 — para juntar trechos na mesma linha: `x` explícito pelo
+ * `measureText`, ou `continued` com `width`; `continued: false`, o padrão, passa — D-NE143) e recusa texto encadeado ABERTO (D-NE135 — o pdfkit
+ * fundiria a largura da cadeia), e devolve o `x` de onde COMEÇOU (D-NE133 — o pdfkit o deixava no fim do texto e a coluna de rótulos escrita só
+ * com `y` virava escada). D-NE139: linha que fica vazia depois de aparada não desenha nada — nem o sublinhado/riscado (a linha de preenchimento
+ * do formulário é desenho vetorial da família).
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -182,8 +215,8 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
   const d = doc as unknown as { _wrapper?: unknown; _textOptions?: unknown }
   if (textOptions.lineBreak === false) {
-    if (textOptions.continued !== undefined) {
-      throw new RangeError('fontes da base: "continued" não combina com lineBreak: false — junte trechos com x pelo measureText ou continued com width (D-NE136)')
+    if (textOptions.continued === true) {                                           // D-NE143: `false` (o padrão) passa
+      throw new RangeError('fontes da base: "continued" não combina com lineBreak: false — junte trechos com x pelo advance do measureText ou continued com width (D-NE136)')
     }
     if (d._wrapper || d._textOptions) {
       throw new RangeError('fontes da base: há texto encadeado aberto — feche-o antes (último trecho sem continued) para escrever uma linha única (D-NE135)')
@@ -220,8 +253,13 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     if (textOptions.underline !== undefined) line.underline = textOptions.underline
     if (textOptions.strike !== undefined) line.strike = textOptions.strike
     doc.text(lineText, x0 + dx, y ?? doc.y, line)
-  } else if (x !== undefined || y !== undefined) doc.text(t.text, x0, y ?? doc.y, textOptions)
-  else doc.text(t.text, textOptions)
+  } else {
+    // D-NE140: a 1ª linha posta onde a medida diz que cabe não abre folha pelo arredondamento do pdfkit (fora do encadeado aberto e sem quebra)
+    const fit = textOptions.lineBreak === false || textOptions.height !== undefined || d._wrapper ? null : fitFloat32(doc, y ?? doc.y)
+    if (fit !== null) doc.text(t.text, x0, fit, textOptions)
+    else if (x !== undefined || y !== undefined) doc.text(t.text, x0, y ?? doc.y, textOptions)
+    else doc.text(t.text, textOptions)
+  }
   if (textOptions.lineBreak === false) doc.x = x0                // D-NE133: a linha única devolve o x de onde começou
   return Object.freeze({ replaced: t.replaced })
 }
@@ -237,13 +275,15 @@ export interface MeasureTextOptions extends Omit<TextLayoutOptions, 'continued' 
  * base) e no corpo pedidos — `width` = a linha mais larga, sem quebra; `height` = a altura que o `writeText` ocuparia com essas opções (com
  * `width`, quebrando como ele; sem `width`, com a largura que sobra a partir de `x` — sem largura útil, recusa como a escrita). Não desenha e
  * não mexe no estado da família.
- * LIMITE CONHECIDO (gate final F-L6): o pdfkit confere o pé da folha com o `maxY` arredondado para baixo em float32 — um bloco posto EXATAMENTE em
- * `pé − altura medida` pode abrir folha antes de escrever; deixe folga (≥ 0,01 pt) ao encostar no pé.
+ * A largura de cada linha é medida SEM os espaços do fim (D-NE141 — a mesma regra da linha única da D-NE137: medida e escrita dizem o mesmo);
+ * `advance` = a mesma medida COM eles — o quanto o `x` anda para o PRÓXIMO trecho na mesma linha (o caminho da D-NE136: "CNPJ: " mede 21 pt de
+ * `width` e anda 24 pt de `advance`; sem ele o número colaria no rótulo — consequência da D-NE141 vista na execução, 2026-10-17). Um
+ * bloco posto EXATAMENTE em `pé − altura medida` cabe (D-NE140 — a escrita compensa o arredondamento float32 do pdfkit; gate final F-L6).
  * Sem `width`, a recusa por falta de largura útil olha o `x` (o informado ou o CORRENTE — gate socrático do delta, achado 3): para medir só a
  * LARGURA de um trecho (juntar trechos na mesma linha — D-NE136), passe o `x` onde ele vai ser escrito, nunca dependa do `x` que ficou no documento.
  */
 export function measureText(doc: PDFKit.PDFDocument, role: string, text: string, opts: MeasureTextOptions = {}):
-  { readonly width: number; readonly height: number; readonly replaced: number } {
+  { readonly width: number; readonly advance: number; readonly height: number; readonly replaced: number } {
   const font = fontOfRole(doc, role)
   const all = snapshotOptions(opts)
   for (const k of ['continued', 'lineBreak', 'ellipsis', 'underline', 'strike', 'height']) {
@@ -262,8 +302,10 @@ export function measureText(doc: PDFKit.PDFDocument, role: string, text: string,
     if (layout.width === undefined && doc.page.width - doc.x - doc.page.margins.right <= 0) {
       throw new RangeError('fontes da base: não há largura útil a partir de x (além da margem direita) — informe width')
     }
-    const width = Math.max(0, ...t.text.split('\n').map(line => doc.widthOfString(line, layout)))
+    const lines = t.text.split('\n')
+    const width = Math.max(0, ...lines.map(line => doc.widthOfString(trimTrailingSpaces(line), layout)))
+    const advance = Math.max(0, ...lines.map(line => doc.widthOfString(line, layout)))
     const height = doc.heightOfString(t.text, layout)
-    return Object.freeze({ width, height, replaced: t.replaced })
+    return Object.freeze({ width, advance, height, replaced: t.replaced })
   }, { graphics: false, who: 'measureText' })
 }

@@ -19,7 +19,7 @@ import PDFDocument from 'pdfkit'
 import { cmToPt } from './units'
 import { registerFontRoles, type StandardFont } from './fonts'
 import { markBaseDocument } from './base-document'
-import { isolated } from './state'
+import { guardSheetSwitch, isolated } from './state'
 
 export interface PdfSheetInfo {
   /** Ordem da folha, 1…total. */
@@ -87,6 +87,7 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
     info: { Title: opts.title, CreationDate: creationDate },
   })
   markBaseDocument(doc)
+  guardSheetSwitch(doc)                                      // D-NE138: trocar de folha com save() aberto = erro de uso
   const chunks: Buffer[] = []
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on('data', (c: Buffer) => chunks.push(c))

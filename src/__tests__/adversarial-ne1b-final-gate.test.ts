@@ -185,7 +185,7 @@ describe('NE-1b gate final — achados LOW', () => {
     const error = errorOf(() => w.doc.addPage())
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100, sizePt: 9 })
     const pages = pdfContentOps(await w.end()).map(viewer)
-    expect(error?.message).toMatch(/^base de PDF: o sheetStart deu restore\(\) noutra folha/)
+    expect(error?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)                                  // D-NE138
     const body = pages[pages.length - 1].runs.find(r => r.text.startsWith('corpo'))!
     expect({ ca: body.ca, rotated: body.rotated }).toEqual({ ca: 1, rotated: false })   // (o equilíbrio q/Q por folha: teste do R9 "restore() noutra")
   })
@@ -207,7 +207,7 @@ describe('NE-1b gate final — achados LOW', () => {
     expect({ m, advanced: advance > 0 }).toEqual({ m: null, advanced: false })            // nada medido, nada escrito
   })
 
-  it.failing('[LIMITE CONHECIDO — ACHADO LOW] F-L6 (documentado no measureText; arredondamento float32 do pdfkit) — texto de UMA linha (com quebra de linha permitida) posto EXATAMENTE no pé pela medida (`y = maxY − altura`): o pdfkit abre folha ANTES de escrever — com o recorte da família aberto, a D-NE134 recusa um bloco que a medida disse que cabe', async () => {
+  it('[CORRIGIDO — D-NE140] F-L6 (a escrita compensa o arredondamento float32 do pdfkit) — texto de UMA linha (com quebra de linha permitida) posto EXATAMENTE no pé pela medida (`y = maxY − altura`): o pdfkit abre folha ANTES de escrever — com o recorte da família aberto, a D-NE134 recusa um bloco que a medida disse que cabe', async () => {
     // Pré-existente no pdfkit 0.20.2, exposto pela D-NE134: o `LineWrapper` arredonda o `maxY` PARA BAIXO em float32 (`PDFNumber`) e a conferência
     // de ENTRADA (`nextY = y + altura da linha`) fica em float64 — `nextY > maxY` por ~2,5e-5 pt e o `nextSection` abre folha. As conferências entre
     // linhas arredondam os dois lados (o bloco de 6 linhas no mesmo limite cabe — teste verde abaixo). Sem o recorte: folha nova com a linha órfã e o

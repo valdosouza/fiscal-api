@@ -58,23 +58,44 @@ export function useStandardFont(doc: PDFKit.PDFDocument, font: string): void {
 }
 
 /**
- * Marca das guardas instaladas pelo `isolated` (aponta para a função que cada uma envolve). As guardas, a entrada, a saída e a limpeza chamam a
+ * Marca das guardas instaladas pela base (aponta para a função que cada uma envolve). As guardas, a entrada, a saída e a limpeza do isolado chamam a
  * ORIGINAL (`rawOf`) — cada isolado conta SÓ os `save()` da família feitos enquanto a guarda DELE está instalada (gate R9-L5 / socrático do delta,
- * achado 1: o `save()` de entrada de um isolado aninhado passava pela guarda do de fora e ficava para sempre na lista de folhas dele).
+ * achado 1: o `save()` de entrada de um isolado aninhado passava pela guarda do de fora).
  */
-const GUARD = Symbol('fiscal-api/pdf:guarda-do-isolated')
-type Guarded = ((this: unknown) => unknown) & { [GUARD]?: () => unknown }
-const rawOf = (fn: Guarded): (() => unknown) => {
+const GUARD = Symbol('fiscal-api/pdf:guarda-da-base')
+type Raw = (this: unknown, ...args: unknown[]) => unknown
+type Guarded = Raw & { [GUARD]?: Raw }
+const rawOf = (fn: Guarded): Raw => {
   let f: Guarded | undefined = fn
   while (f && f[GUARD]) f = f[GUARD] as Guarded
-  return f as () => unknown
+  return f as Raw
+}
+
+/**
+ * D-NE138 (Valdo 2026-10-17 — Q-NE138 (a)), no NÍVEL DE CIMA do documento da base: trocar de folha com `save()` da família aberto é erro de uso
+ * legível ANTES de trocar (a extensão da D-NE134 ao `switchToPage` — gate R9-L6: `save()` numa folha e `restore()` noutra zeravam a pilha, o
+ * `end()` aceitava e o "Folha n/N" saía recortado). Voltar a uma folha anterior SEM `save()` aberto (preencher os totais da folha 1 depois que
+ * os itens transbordaram — `bufferPages`) segue livre. Instalada pelo `createPdf`.
+ */
+export function guardSheetSwitch(doc: PDFKit.PDFDocument): void {
+  const d = doc as unknown as Record<string, any>
+  const original = d.switchToPage as Guarded
+  const guarded: Guarded = function guardedSwitchToPage(...args: unknown[]) {
+    if ((d._ctmStack as unknown[]).length > 0) {
+      throw new Error('base de PDF: há save() aberto — feche com restore() antes de trocar de folha (switchToPage — D-NE138)')
+    }
+    return original.apply(doc, args)
+  }
+  guarded[GUARD] = original
+  d.switchToPage = guarded
 }
 
 /**
  * Roda `run` com o estado da família guardado: o texto encadeado dela fica FORA, o estado gráfico do PDF volta pelo q/Q e o estado JS volta
- * campo a campo (menos o `keep`). Erro de USO dentro dele — `restore()` a mais ou na folha errada (barrados NA HORA pelas guardas — gates R7-M1 e
- * F-L4), `save()` sem `restore()` (gate D3), terminar noutra folha (gate D4) — é corrigido para o PDF continuar balanceado (cada `save()` extra
- * fecha na folha em que foi aberto) e LANÇA com mensagem da base; o erro de quem rodou sobe sem ser trocado.
+ * campo a campo (menos o `keep`). Dentro dele a folha é a DELE (D-NE138): `switchToPage` é barrado NA HORA — o `sheetStart` e a passada desenham
+ * na própria folha, e o controle de folha por `save()` (gates F-L4/R9-L5) deixou de existir junto com a troca. Erro de USO dentro dele —
+ * `restore()` a mais (barrado NA HORA — gate R7-M1), `save()` sem `restore()` (gate D3), abrir folha (gate D4) — é corrigido para o PDF continuar
+ * balanceado (os `save()` extras fecham na folha do isolado) e LANÇA com mensagem da base; o erro de quem rodou sobe sem ser trocado.
  */
 export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: IsolateOptions = {}): T {
   const d = doc as unknown as Record<string, any>
@@ -87,35 +108,24 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   d._textOptions = null
   let depth = 0
   let ours: unknown = null
-  const hadOwnRestore = Object.prototype.hasOwnProperty.call(d, 'restore')
-  const hadOwnSave = Object.prototype.hasOwnProperty.call(d, 'save')
-  const previousRestore = d.restore as Guarded
-  const previousSave = d.save as Guarded
-  const rawSave = rawOf(previousSave)
-  const rawRestore = rawOf(previousRestore)
-  /** A folha de cada `save()` feito DENTRO do isolado (gate final F-L4: um `save()` noutra folha não se fecha nesta). */
-  const savedOn: unknown[] = []
+  const own = (k: string): boolean => Object.prototype.hasOwnProperty.call(d, k)
+  const had = { restore: own('restore'), save: own('save'), switchToPage: own('switchToPage') }
+  const previous = { restore: d.restore as Guarded, save: d.save as Guarded, switchToPage: d.switchToPage as Guarded }
+  const rawSave = rawOf(previous.save)
+  const rawRestore = rawOf(previous.restore)
+  const rawSwitch = rawOf(previous.switchToPage)
+  const install = (k: keyof typeof previous, fn: Guarded): void => { fn[GUARD] = previous[k]; d[k] = fn }
+  install('switchToPage', function guardedSwitchToPage() {
+    throw new Error(`base de PDF: ${who} trocou de folha (switchToPage) — aqui a folha é a dele (D-NE138)`)
+  })
   if (graphics) {
     rawSave.call(doc); depth = d._ctmStack.length; ours = d._ctmStack[depth - 1]         // a ENTRADA do nosso save (um array novo por save)
-    const guardedSave: Guarded = function guardedSave() {
-      const r = rawSave.call(doc)
-      savedOn.push(doc.page)
-      return r
-    }
+    install('save', function guardedSave() { return rawSave.call(doc) })
     // gate R7-M1: `restore()` a MAIS barrado NA HORA, antes de emitir o `Q` — acusar depois não desfaz o que vazou para o resto da folha
-    const guardedRestore: Guarded = function guardedRestore() {
+    install('restore', function guardedRestore() {
       if (d._ctmStack.length <= depth) throw new Error(`base de PDF: ${who} deu restore() a mais (fecharia o estado que não abriu)`)
-      if (savedOn.length > 0 && savedOn[savedOn.length - 1] !== doc.page) {
-        throw new Error(`base de PDF: ${who} deu restore() noutra folha (o save() correspondente foi feito em outra folha)`)
-      }
-      const r = rawRestore.call(doc)
-      savedOn.pop()
-      return r
-    }
-    guardedSave[GUARD] = previousSave
-    guardedRestore[GUARD] = previousRestore
-    d.save = guardedSave
-    d.restore = guardedRestore
+      return rawRestore.call(doc)
+    })
   }
   let result: T | undefined
   let failure: { error: unknown } | null = null
@@ -125,30 +135,21 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   } catch (error) {
     failure = { error }                                  // o erro de quem rodou sobe DEPOIS da limpeza — nunca trocado pelo de uso
   }
-  if (graphics) {
-    if (hadOwnRestore) d.restore = previousRestore; else delete d.restore
-    if (hadOwnSave) d.save = previousSave; else delete d.save
-  }
-  const switchTo = (p: unknown): void => {
-    const index = (d._pageBuffer as unknown[]).indexOf(p)
-    if (index >= 0 && doc.page !== p) doc.switchToPage(d._pageBufferStart + index)
+  for (const k of ['switchToPage', 'save', 'restore'] as const) {
+    if (!graphics && k !== 'switchToPage') continue
+    if (had[k]) d[k] = previous[k]; else delete d[k]
   }
   let misuse: string | null = null
   if (doc.page !== page) {
     misuse = (d._pageBuffer as unknown[]).length !== sheets
-      ? 'abriu folha nova — o total que ela recebeu ficou errado' : 'terminou noutra folha (switchToPage sem voltar)'
+      ? 'abriu folha nova — o total que ela recebeu ficou errado' : 'terminou noutra folha'
+    const index = (d._pageBuffer as unknown[]).indexOf(page)
+    if (index >= 0) rawSwitch.call(doc, d._pageBufferStart + index)                 // de volta à folha do isolado (a troca nunca passa daqui)
   }
   if (graphics) {
     if (d._ctmStack.length > depth) misuse = misuse ?? 'deixou save() sem restore()'
     else if (d._ctmStack.length < depth || d._ctmStack[depth - 1] !== ours) misuse = misuse ?? 'deu restore() a mais (fechou o estado que não abriu)'
-    // cada save() extra fecha NA FOLHA em que foi aberto (gate R7-L3b / socrático L2 — nunca um `Q` na folha errada)
-    while (d._ctmStack.length > depth) {
-      switchTo(savedOn.length > 0 ? savedOn.pop() : doc.page)
-      rawRestore.call(doc)
-    }
-  }
-  switchTo(page)
-  if (graphics) {
+    while (d._ctmStack.length > depth) rawRestore.call(doc)   // os save() extras — todos nesta folha (D-NE138)
     while (d._ctmStack.length < depth) rawSave.call(doc)      // restore() a mais que escapou da guarda (desvio deliberado): rebalanceia
     rawRestore.call(doc)
   }

@@ -119,7 +119,7 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L2: fonte EMBUTIDA cujo nome PostScr
 })
 
 describe('NE-1b gate R9 — [ACHADO LOW] R9-L3/R9-L4: a poda da D-NE137 (`/ +$/`) não é a do pdfkit e é quadrática', () => {
-  it.failing('[ACHADO LOW] R9-L3 — NBSP (U+00A0, WinAnsi 0xA0 = espaço) no FIM fica e conta: o valor alinhado à direita sai 2,5 pt fora da borda (o pdfkit, que a D-NE137 cita, poda `\\s+$` — inclusive o NBSP)', async () => {
+  it('[CORRIGIDO — D-NE141] R9-L3 — NBSP (U+00A0, WinAnsi 0xA0 = espaço) no FIM fica e conta: o valor alinhado à direita sai 2,5 pt fora da borda (o pdfkit, que a D-NE137 cita, poda `\\s+$` — inclusive o NBSP)', async () => {
     // O NBSP é representável no WinAnsi (vira o glifo de espaço, mesma largura) — dado de cadastro colado de planilha/HTML traz NBSP no fim.
     // A base poda só U+0020: a célula de linha única fica desalinhada da mesma célula escrita pelo caminho de várias linhas (onde o `_fragment` do
     // pdfkit poda o NBSP) e um valor que caberia sem ele é RECUSADO por "não cabe". Correção sugerida: podar `[  ]+$` (os brancos do WinAnsi
@@ -183,7 +183,7 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L5: a guarda por folha (`savedOn`) d
         d.y = 60
       },
     })
-    expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart deixou save\(\) sem restore\(\)/)
+    expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)      // D-NE138: barrado na 1ª troca
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100 })
     expect(clean(w.doc)).toEqual(CLEAN)
     expect(balanceOf(await w.end())).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])   // hoje: [-1, -1] e [+1, 0]
@@ -191,7 +191,7 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L5: a guarda por folha (`savedOn`) d
 })
 
 describe('NE-1b gate R9 — [ACHADO LOW] R9-L6: fora do isolado, `save()` numa folha e `restore()` noutra (switchToPage) zeram a pilha — o `end()` aceita e o "Folha n/N" sai RECORTADO', () => {
-  it.failing('[ACHADO LOW] R9-L6 — o recorte aberto na folha 1 e fechado na folha 2 deixa q/Q desbalanceado nas duas e a passada da folha 1 dentro do recorte (invisível)', async () => {
+  it('[CORRIGIDO — D-NE138] R9-L6 — o recorte aberto na folha 1 e fechado na folha 2 deixa q/Q desbalanceado nas duas e a passada da folha 1 dentro do recorte (invisível)', async () => {
     // A D-NE134 pega o `save()` atravessando o `addPage`; o socrático L3 pega o `save()` aberto no `end()` — os dois contam a PILHA do JS. Voltar
     // a uma folha anterior (bufferPages — p.ex. preencher os totais da folha 1 depois que os itens transbordaram) e trocar de folha entre o `save()`
     // e o `restore()` deixa a pilha em zero e o PDF quebrado: o R7-L4 por outra porta. Erro de uso da família no nível de cima — LOW. Correção
@@ -201,7 +201,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L6: fora do isolado, `save()` numa f
     writeText(d, 'content', lines(120, 'item'), { x: 40, sizePt: 9 })
     expect(sheetsOf(d)).toBe(2)
     const misuse = errorOf(() => { d.switchToPage(0); d.save(); d.rect(28, 600, 300, 100).clip(); d.switchToPage(1); d.restore() })
-    if (misuse) { expect(misuse.message).toMatch(/^base de PDF/); return }
+    expect(misuse?.message).toMatch(/^base de PDF: há save\(\) aberto — feche com restore\(\) antes de trocar de folha.*D-NE138/)
+    d.restore()                                                                           // a família fecha na folha em que abriu (a 1ª)
     let pdf: Buffer | null = null
     let refused: Error | null = null
     try { pdf = await w.end((dd, i) => { writeText(dd, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) }) }
@@ -276,7 +277,9 @@ describe('NE-1b gate R9 — D-NE135/D-NE136 resistiram: nenhuma cadeia aberta es
       const control = await build(open, false)
       expect(attacked.errors).toHaveLength(8)
       expect(attacked.errors.slice(0, 5).every(m => /D-NE135/.test(m))).toBe(true)
-      expect(attacked.errors.slice(5).every(m => /D-NE136/.test(m))).toBe(true)
+      // D-NE143: `continued: false` (o padrão) passa pela D-NE136 — com a cadeia aberta quem recusa é a D-NE135
+      expect([attacked.errors[5], attacked.errors[7]].every(m => /D-NE136/.test(m))).toBe(true)
+      expect(attacked.errors[6]).toMatch(/D-NE135/)
       expect(attacked.pdf.equals(control.pdf)).toBe(true)
       expect(attacked.sheets).toBe(1)
       const runs = pdfTextRuns(pdfContentOps(attacked.pdf)[0])
@@ -292,7 +295,7 @@ describe('NE-1b gate R9 — D-NE135/D-NE136 resistiram: nenhuma cadeia aberta es
     writeText(w.doc, 'title', 'CNPJ: ', { x: 40, y: 100, width: 300, continued: true })
     writeText(w.doc, 'content', '12.345.678/0001-90')
     const runs = pdfTextRuns(pdfContentOps(await w.end())[0])
-    const label = measureText(createPdf({ marginCm: 1, title: 'm', fontRoles: ROLES }).doc, 'title', 'CNPJ: ').width
+    const label = measureText(createPdf({ marginCm: 1, title: 'm', fontRoles: ROLES }).doc, 'title', 'CNPJ: ').advance   // D-NE141: com o espaço
     expect(runs.map(r => r.text)).toEqual(['CNPJ: ', '12.345.678/0001-90'])
     expect(runs[1].yPdf).toBeCloseTo(runs[0].yPdf, 6)
     expect(runs[1].x).toBeCloseTo(runs[0].x + label, 3)
@@ -468,7 +471,7 @@ describe('NE-1b gate R9 — guarda por folha do `isolated` resistiu (fora do R9-
       },
     })
     w.doc.addPage()
-    expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart deixou save\(\) sem restore\(\)/)
+    expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)      // D-NE138: barrado na 1ª troca; o save() fecha na folha dele
     expect(clean(w.doc)).toEqual(CLEAN)
     expect(balanceOf(await w.end())).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }, { final: 0, min: 0 }])
   })
@@ -478,7 +481,7 @@ describe('NE-1b gate R9 — guarda por folha do `isolated` resistiu (fora do R9-
       marginCm: 1, title: 'I2', creationDate: FIXED, fontRoles: ROLES,
       sheetStart: (d, n) => { header(d, n); if (n === 2) { d.save(); d.fillColor('red', 0.3); d.switchToPage(0); d.restore() } d.y = 60 },
     })
-    expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart deu restore\(\) noutra folha/)
+    expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)      // D-NE138
     expect(clean(w.doc)).toEqual(CLEAN)
     expect(balanceOf(await w.end())).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
   })

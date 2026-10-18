@@ -253,7 +253,7 @@ describe('NE-1b gate R7 — achados LOW', () => {
       marginCm: 1, title: 'L3b', creationDate: FIXED, fontRoles: ROLES,
       sheetStart: (d, n) => { if (n === 2) { d.switchToPage(0); d.save(); d.rotate(45); throw new Error('meu erro') } },
     })
-    expect(() => w.doc.addPage()).toThrow('meu erro')
+    expect(() => w.doc.addPage()).toThrow(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)                        // D-NE138: a troca é barrada antes do save() noutra folha
     const pages = pdfContentOps(await w.end((d, i) => { writeText(d, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false }) }))
     expect(pages.map(viewer).map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
   })
