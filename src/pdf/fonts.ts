@@ -217,6 +217,10 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
   const d = doc as unknown as { _wrapper?: unknown; _textOptions?: unknown }
   if (textOptions.lineBreak === false) {
+    if (t.text.includes('\n')) {
+      // D-NE146 (Valdo 2026-10-18 — gate R10-L3): sem quebrador o pdfkit escreve as linhas uma DEPOIS da outra na MESMA linha de base
+      throw new RangeError('fontes da base: escrita com lineBreak: false não leva quebra de linha (D-NE146)')
+    }
     if (textOptions.continued === true) {                                           // D-NE143: `false` (o padrão) passa
       throw new RangeError('fontes da base: "continued" não combina com lineBreak: false — junte trechos com x pelo advance do measureText ou continued com width (D-NE136)')
     }
@@ -255,6 +259,11 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     if (textOptions.underline !== undefined) line.underline = textOptions.underline
     if (textOptions.strike !== undefined) line.strike = textOptions.strike
     doc.text(lineText, x0 + dx, y ?? doc.y, line)
+  } else if (t.text === '' && textOptions.continued !== true && !d._wrapper && !d._textOptions) {
+    // D-NE147 (Valdo 2026-10-18 — gate R10-L1): o vazio mede 0 e não escreve nada — o pdfkit abriria folha VAZIA no pé (a conferência de entrada
+    // exige uma linha); a posição fica como o pdfkit a deixaria (x/y informados, sem avançar). Cadeia aberta: o vazio FECHA a cadeia (vai ao pdfkit)
+    doc.x = x0
+    if (y !== undefined) doc.y = y
   } else {
     // D-NE140: a 1ª linha posta onde a medida diz que cabe não abre folha pelo arredondamento do pdfkit (fora do encadeado aberto e sem quebra)
     const fit = textOptions.lineBreak === false || textOptions.height !== undefined || d._wrapper ? null : fitFloat32(doc, y ?? doc.y)
@@ -278,8 +287,9 @@ export interface MeasureTextOptions extends Omit<TextLayoutOptions, 'continued' 
  * `width`, quebrando como ele; sem `width`, com a largura que sobra a partir de `x` — sem largura útil, recusa como a escrita). Não desenha e
  * não mexe no estado da família.
  * A largura de cada linha é medida SEM os espaços do fim (D-NE141 — a mesma regra da linha única da D-NE137: medida e escrita dizem o mesmo);
- * `advance` = a mesma medida COM eles — o quanto o `x` anda para o PRÓXIMO trecho na mesma linha (o caminho da D-NE136: "CNPJ: " mede 21 pt de
- * `width` e anda 24 pt de `advance`; sem ele o número colaria no rótulo — consequência da D-NE141 vista na execução, 2026-10-17). Um
+ * `advance` = a ÚLTIMA linha medida COM eles — o quanto o `x` anda para o PRÓXIMO trecho na mesma linha (o caminho da D-NE136: "CNPJ: " mede
+ * 21 pt de `width` e anda 24 pt de `advance`; sem ele o número colaria no rótulo — consequência da D-NE141, RATIFICADA na D-NE145, Valdo
+ * 2026-10-18). Sem quebra: com `width` que quebra o texto, o `advance` NÃO se aplica (a última linha da escrita é outra). Um
  * bloco posto EXATAMENTE em `pé − altura medida` cabe (D-NE140 — a escrita compensa o arredondamento float32 do pdfkit; gate final F-L6).
  * Sem `width`, a recusa por falta de largura útil olha o `x` (o informado ou o CORRENTE — gate socrático do delta, achado 3): para medir só a
  * LARGURA de um trecho (juntar trechos na mesma linha — D-NE136), passe o `x` onde ele vai ser escrito, nunca dependa do `x` que ficou no documento.
@@ -306,7 +316,7 @@ export function measureText(doc: PDFKit.PDFDocument, role: string, text: string,
     }
     const lines = t.text.split('\n')
     const width = Math.max(0, ...lines.map(line => doc.widthOfString(trimTrailingSpaces(line), layout)))
-    const advance = Math.max(0, ...lines.map(line => doc.widthOfString(line, layout)))
+    const advance = doc.widthOfString(lines[lines.length - 1], layout)            // D-NE145: a ÚLTIMA linha (onde o próximo trecho entra)
     const height = doc.heightOfString(t.text, layout)
     return Object.freeze({ width, advance, height, replaced: t.replaced })
   }, { graphics: false, who: 'measureText' })

@@ -12,7 +12,8 @@ import PDFDocument from 'pdfkit'
 import {
   createPdf, writeText, measureText, registerFontRoles, drawBars, drawMatrix, drawWatermark, code128Bars, code128Symbols, qrMatrix, cmToPt,
 } from '../pdf'
-import { pdfContentOps, pdfTextRuns, pdfPageCount, decodeCode128, readQr, pdfRects } from './pdf-oracle'
+import { pdfContentOps, pdfTextRuns, pdfPageCount, decodeCode128, readQr, pdfRects, liveContentOps } from './pdf-oracle'
+const D144 = /^base de PDF: o documento ficou inválido e não fecha — o sheetStart (falhou|deixou o y fora da área útil).*D-NE144/   // D-NE144
 
 const FIXED = new Date('2026-10-17T03:00:00Z')
 const ROLES = { title: 'Times-Bold', content: 'Times-Roman', fixed: 'Courier' } as const
@@ -184,7 +185,8 @@ describe('NE-1b gate final — achados LOW', () => {
     })
     const error = errorOf(() => w.doc.addPage())
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100, sizePt: 9 })
-    const pages = pdfContentOps(await w.end()).map(viewer)
+    const pages = liveContentOps(w.doc).map(viewer)
+    expect(() => w.end()).toThrow(D144)
     expect(error?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)                                  // D-NE138
     const body = pages[pages.length - 1].runs.find(r => r.text.startsWith('corpo'))!
     expect({ ca: body.ca, rotated: body.rotated }).toEqual({ ca: 1, rotated: false })   // (o equilíbrio q/Q por folha: teste do R9 "restore() noutra")
@@ -277,8 +279,9 @@ describe('NE-1b gate final — a guarda do `restore()` a mais (R7-M1) resistiu',
     const error = errorOf(() => body(w.doc))
     expect(error?.message).toMatch(/^base de PDF: o sheetStart deu restore\(\) a mais/)
     expect(ownRestore(w.doc)).toBe(false)
-    writeText(w.doc, 'content', 'depois do erro', { x: 40, y: 400, sizePt: 9 })            // o documento segue usável (o sheetStart não abriu folha)
-    const seen = pdfContentOps(await w.end()).map(viewer)
+    writeText(w.doc, 'content', 'depois do erro', { x: 40, y: 400, sizePt: 9 })            // o estado segue usável (o sheetStart não abriu folha)
+    const seen = liveContentOps(w.doc).map(viewer)
+    expect(() => w.end()).toThrow(D144)                                                  // mas o documento ficou inválido (D-NE144)
     for (const p of seen) {
       expect({ final: p.final, min: p.min }).toEqual({ final: 0, min: 0 })
       expect(p.runs.filter(r => r.text.startsWith('palavra') || r.text.startsWith('depois')).every(r => r.ca === 1 && !r.rotated)).toBe(true)
@@ -290,12 +293,12 @@ describe('NE-1b gate final — a guarda do `restore()` a mais (R7-M1) resistiu',
       'restore a mais no transbordo': async () => {
         const w = createPdf({ marginCm: 1, title: 'a', fontRoles: ROLES, sheetStart: (d, n) => { if (n === 2) d.restore() } })
         expect(errorOf(() => writeText(w.doc, 'content', words(3000), { sizePt: 9 }))?.message).toMatch(/o sheetStart deu restore\(\) a mais/)
-        await w.end(); return w.doc
+        expect(() => w.end()).toThrow(D144); return w.doc
       },
       'erro próprio do sheetStart no meio do desenho': async () => {
         const w = createPdf({ marginCm: 1, title: 'b', fontRoles: ROLES, sheetStart: (d, n) => { if (n === 2) { d.save(); d.rotate(9); throw new Error('meu') } } })
         expect(errorOf(() => writeText(w.doc, 'content', words(3000), { sizePt: 9 }))?.message).toBe('meu')
-        await w.end(); return w.doc
+        expect(() => w.end()).toThrow(D144); return w.doc
       },
       'D-NE134': async () => {
         const w = createPdf({ marginCm: 1, title: 'c', fontRoles: ROLES })
@@ -335,7 +338,8 @@ describe('NE-1b gate final — a guarda do `restore()` a mais (R7-M1) resistiu',
     expect(w.doc.restore).toBe(spy)
     spy.mockRestore()
     expect([ownRestore(w.doc), w.doc.restore === PROTO_RESTORE]).toEqual([false, true])
-    const seen = pdfContentOps(await w.end()).map(viewer)
+    const seen = liveContentOps(w.doc).map(viewer)
+    expect(() => w.end()).toThrow(D144)
     expect(seen.map(p => ({ final: p.final, min: p.min }))).toEqual(seen.map(() => ({ final: 0, min: 0 })))
   })
 })

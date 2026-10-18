@@ -193,3 +193,30 @@ export function pdfTextRuns(ops: string): TextRun[] {
 
 /** Quantas folhas o PDF declara (`/Type /Page`, sem `/Pages`). */
 export const pdfPageCount = (pdf: Buffer): number => (pdf.toString('latin1').match(/\/Type \/Page(?!s)\b/g) ?? []).length
+
+/**
+ * Os operadores de CADA folha ainda no documento (antes do `end()` — o pdfkit guarda o conteúdo da folha sem comprimir em `page.content.buffer`
+ * até fechar). Para conferir o equilíbrio q/Q de um documento que a base recusa fechar (D-NE144: a falha do `sheetStart` o deixa inválido).
+ */
+export function liveContentOps(doc: PDFKit.PDFDocument): string[] {
+  const d = doc as unknown as {
+    _pageBuffer: { content: { buffer: Buffer[] } }[]
+    _opacityRegistry: Record<string, [{ data: { ca?: number } }, string]>
+  }
+  const opacity: Record<string, string> = {}
+  for (const [dictionary, name] of Object.values(d._opacityRegistry)) opacity[name] = dictionary.data.ca === undefined ? '-' : String(dictionary.data.ca)
+  return d._pageBuffer.map(p => Buffer.concat(p.content.buffer).toString('latin1')
+    .replace(/^\/(Gs\d+) gs$/gm, (_l, name: string) => `/${name} gs %ca=${opacity[name] ?? '-'}`))   // a mesma anotação do pdfContentOps
+}
+
+/** Equilíbrio q/Q de uma folha (o fim e o mínimo da profundidade). */
+export function qDepth(ops: string): { final: number; min: number } {
+  let depth = 0
+  let min = 0
+  for (const raw of ops.split('\n')) {
+    const l = raw.trim()
+    if (l === 'q') depth++
+    else if (l === 'Q') { depth--; min = Math.min(min, depth) }
+  }
+  return { final: depth, min }
+}

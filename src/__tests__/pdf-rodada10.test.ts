@@ -2,7 +2,8 @@
 // NE-1b — Rodada 10 da nfe-api (Valdo 2026-10-17: "Q-NE138 a Q-NE143 segue recomendação"): o comportamento POSITIVO de cada decisão, provado no
 // PDF real (os ataques ficam nos arquivos `adversarial-ne1b-*`).
 import { createPdf, writeText, measureText } from '../pdf'
-import { pdfContentOps, pdfPageCount, pdfTextRuns } from './pdf-oracle'
+import { pdfContentOps, pdfPageCount, pdfTextRuns, liveContentOps } from './pdf-oracle'
+const D144 = /^base de PDF: o documento ficou inválido e não fecha — o sheetStart (falhou|deixou o y fora da área útil).*D-NE144/   // D-NE144
 
 const FIXED = new Date('2026-10-17T03:00:00Z')
 const ROLES = { title: 'Times-Bold', content: 'Times-Roman' } as const
@@ -39,7 +40,7 @@ describe('D-NE138 — trocar de folha com save() aberto é erro de uso; dentro d
     expect(pdfTextRuns(pages[0]).map(r => r.text)).toEqual(expect.arrayContaining(['TOTAL 1.234,56', 'FOLHA 1/2']))
   })
 
-  it('dentro do sheetStart: switchToPage é barrado NA HORA, com a mensagem dele; o documento segue e FECHA balanceado', async () => {
+  it('dentro do sheetStart: switchToPage é barrado NA HORA, com a mensagem dele; as folhas ficam balanceadas e o documento INVÁLIDO (D-NE144)', async () => {
     const w = createPdf({
       marginCm: 1, title: 'D-NE138 isolado', creationDate: FIXED, fontRoles: ROLES,
       sheetStart: (d, n) => { writeText(d, 'title', `CAB ${n}`, { x: 40, y: 20, lineBreak: false }); if (n === 2) d.switchToPage(0); d.y = 60 },
@@ -47,9 +48,8 @@ describe('D-NE138 — trocar de folha com save() aberto é erro de uso; dentro d
     const e = errorOf(() => w.doc.addPage())
     expect(e?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100 })
-    const pdf = await w.end((dd, i) => { writeText(dd, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) })
-    expect(pdfPageCount(pdf)).toBe(2)
-    expect(pdfContentOps(pdf).map(qBalance)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(liveContentOps(w.doc).map(qBalance)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('dentro da passada: switchToPage é barrado NA HORA, com a mensagem dela', async () => {

@@ -99,9 +99,11 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
   let passing = false
   let starting = false
   /**
-   * A causa do erro de uso que deixou o documento INVÁLIDO — a folha que ficou ÓRFÃ ou SEM o `sheetStart`: o `sheetStart` que abre folha (re-gate
-   * S6/R7-L3a: o `end()` culpava o flushPages e o documento nunca fechava) e o `save()` aberto atravessando a quebra (D-NE134 — a folha nova fica
-   * sem cabeçalho; gate final F-L3). Os demais erros de uso sobem na hora e o documento ainda fecha.
+   * A causa do erro de uso que deixou o documento INVÁLIDO — a folha que ficou ÓRFÃ ou SEM o `sheetStart` inteiro: o `sheetStart` que abre folha
+   * (re-gate S6/R7-L3a: o `end()` culpava o flushPages e o documento nunca fechava), o `save()` aberto atravessando a quebra (D-NE134 — gate final
+   * F-L3) e TODA falha do `sheetStart` (D-NE144, Valdo 2026-10-18 — gate socrático L3: falhando no meio de um transbordo, o erro escapava pelo
+   * `writeText` do conteúdo, podia ser engolido, e o documento fechava com a folha de meio cabeçalho). A causa é texto FIXO da base (nunca a
+   * mensagem de quem falhou — essa sobe na hora). Os demais erros de uso sobem na hora e o documento ainda fecha.
    */
   let broken: string | null = null
   doc.on('pageAdded', () => {
@@ -124,11 +126,15 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
       isolated(doc, () => {
         refuseThenable(start(doc, opened), 'base de PDF: o sheetStart tem de ser síncrono (o desenho cairia depois da folha)')
       }, { keep: ['y'], neutral: true, who: 'o sheetStart' })
+    } catch (error) {
+      broken = broken ?? 'o sheetStart falhou (a folha ficou sem o cabeçalho inteiro — D-NE144)'
+      throw error
     } finally {
       starting = false
     }
     const room = doc.page.height - doc.page.margins.bottom - doc.currentLineHeight(true)
     if (!Number.isFinite(doc.y) || doc.y < 0 || doc.y > room) {                         // re-gate D5: finito, na folha e com lugar para 1 linha
+      broken = broken ?? 'o sheetStart deixou o y fora da área útil (D-NE144)'
       throw new Error('base de PDF: o sheetStart deixou o y fora da área útil (sem lugar para o conteúdo da folha)')
     }
   })

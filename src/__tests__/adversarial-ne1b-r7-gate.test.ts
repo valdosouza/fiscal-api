@@ -15,7 +15,8 @@ import PDFDocument from 'pdfkit'
 import {
   createPdf, writeText, measureText, registerFontRoles, drawBars, drawMatrix, drawWatermark, code128Bars, code128Symbols, qrMatrix, cmToPt,
 } from '../pdf'
-import { pdfContentOps, pdfTextRuns, pdfPageCount, decodeCode128, readQr, pdfRects } from './pdf-oracle'
+import { pdfContentOps, pdfTextRuns, pdfPageCount, decodeCode128, readQr, pdfRects, liveContentOps } from './pdf-oracle'
+const D144 = /^base de PDF: o documento ficou inválido e não fecha — o sheetStart (falhou|deixou o y fora da área útil).*D-NE144/   // D-NE144
 
 const FIXED = new Date('2026-10-17T03:00:00Z')
 const ROLES = { title: 'Times-Bold', content: 'Times-Roman', fixed: 'Courier' } as const
@@ -76,8 +77,12 @@ describe('NE-1b gate R7 — [ACHADO MEDIUM] R7-M1: o `isolated` só confere a pi
       w.doc.addPage()
       writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100, sizePt: 9 })
     } catch (e) { error = e as Error }
-    const pdf = await w.end((d, i) => { writeText(d, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) })
-    return { error, pages: pdfContentOps(pdf).map(viewer) }
+    let pdf: Buffer | null = null
+    let closeError: Error | null = null
+    try { pdf = await w.end((d, i) => { writeText(d, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) }) }
+    catch (e) { closeError = e as Error }
+    // D-NE144: a falha do sheetStart deixa o documento inválido — o equilíbrio é conferido no conteúdo VIVO das folhas
+    return { error, closeError, pages: (pdf ? pdfContentOps(pdf) : liveContentOps(w.doc)).map(viewer) }
   }
   const header = (d: PDFKit.PDFDocument, n: number) => writeText(d, 'title', `CABEÇALHO ${n}`, { x: 40, y: 20, lineBreak: false, sizePt: 10 })
   const assertIntact = (r: Awaited<ReturnType<typeof family>>) => {
@@ -96,6 +101,7 @@ describe('NE-1b gate R7 — [ACHADO MEDIUM] R7-M1: o `isolated` só confere a pi
   /** Com a correção: o erro de uso sobe NA HORA (antes do `Q` extra) e nada vaza — toda folha balanceada, corpo/FOLHA opacos e sem giro. */
   const assertRefusedAndClean = (r: Awaited<ReturnType<typeof family>>) => {
     expect(r.error?.message).toMatch(/^base de PDF: o sheetStart deu restore\(\) a mais/)
+    expect(r.closeError?.message).toMatch(D144)
     for (const p of r.pages) {
       expect({ final: p.final, min: p.min }).toEqual({ final: 0, min: 0 })
       for (const run of p.runs.filter(x => x.text.startsWith('corpo') || x.text.startsWith('FOLHA'))) {
@@ -254,8 +260,9 @@ describe('NE-1b gate R7 — achados LOW', () => {
       sheetStart: (d, n) => { if (n === 2) { d.switchToPage(0); d.save(); d.rotate(45); throw new Error('meu erro') } },
     })
     expect(() => w.doc.addPage()).toThrow(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)                        // D-NE138: a troca é barrada antes do save() noutra folha
-    const pages = pdfContentOps(await w.end((d, i) => { writeText(d, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false }) }))
+    const pages = liveContentOps(w.doc)
     expect(pages.map(viewer).map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('[CORRIGIDO — ACHADO LOW] R7-L4 — a entrada NEUTRA não cobre recorte nem matriz: um `save()`+`clip()` da família que ATRAVESSA a quebra de folha deixa o "FOLHA 1/2" da passada RECORTADO (invisível) e q/Q desbalanceado nas duas folhas, sem erro', async () => {
@@ -407,7 +414,7 @@ describe('NE-1b gate R7 — erros de uso no MEIO de um encadeado que transborda 
     'promessa rejeitada': () => Promise.reject(new Error('assíncrono')),
   }
   for (const [name, bad] of Object.entries(cases)) {
-    it(`${name}: o erro sobe na hora, o documento FECHA, 2 folhas, q/Q balanceado como o leitor vê, e o conteúdo da folha 2 opaco e sem giro`, async () => {
+    it(`${name}: o erro sobe na hora, 2 folhas com q/Q balanceado, o conteúdo da folha 2 opaco e sem giro, e o documento INVÁLIDO (D-NE144)`, async () => {
       const w = createPdf({
         marginCm: 1, title: name, creationDate: FIXED, fontRoles: ROLES,
         sheetStart: (d, n) => {
@@ -421,11 +428,10 @@ describe('NE-1b gate R7 — erros de uso no MEIO de um encadeado que transborda 
         writeText(w.doc, 'content', ' FIM.')
       })
       expect(error?.message).toMatch(/^base de PDF: o sheetStart|^getter then$/)
-      const pdf = await w.end()
-      expect(pdfPageCount(pdf)).toBe(2)
-      const seen = pdfContentOps(pdf).map(viewer)
+      const seen = liveContentOps(w.doc).map(viewer)
       expect(seen.map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
       expect(seen[1].runs.filter(r => r.text.startsWith('palavra')).every(r => r.ca === 1 && !r.rotated)).toBe(true)
+      expect(() => w.end()).toThrow(D144)
     })
   }
 })

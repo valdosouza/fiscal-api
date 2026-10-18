@@ -12,7 +12,8 @@ import * as surface from '../pdf'
 import {
   createPdf, writeText, drawWatermark, drawBars, drawMatrix, code128Bars, code128Symbols, qrMatrix, normalizeColor, cmToPt, CODE128,
 } from '../pdf'
-import { pdfContentOps, pdfTextRuns, pdfPageCount, decodeCode128, readQr } from './pdf-oracle'
+import { pdfContentOps, pdfTextRuns, pdfPageCount, decodeCode128, readQr, liveContentOps } from './pdf-oracle'
+const D144 = /^base de PDF: o documento ficou inválido e não fecha — o sheetStart (falhou|deixou o y fora da área útil).*D-NE144/   // D-NE144
 
 const FIXED = new Date('2026-10-17T03:00:00Z')
 const KEY = '4126104ABC2DEF000135550010000000071000000075'
@@ -292,7 +293,7 @@ describe('NE-1b re-gate do delta — achados LOW', () => {
 // ─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
 
 describe('NE-1b re-gate do delta — o `isolated` do sheetStart resistiu', () => {
-  it('sheetStart que LANÇA no meio (depois de mudar fonte, corpo, cor, opacidade, traço, matriz e abrir encadeado): o erro sobe, o estado JS e a pilha voltam, o q/Q da folha fecha e o documento ainda fecha', async () => {
+  it('sheetStart que LANÇA no meio (depois de mudar fonte, corpo, cor, opacidade, traço, matriz e abrir encadeado): o erro sobe, o estado JS e a pilha voltam, o q/Q da folha fecha e o documento fica INVÁLIDO (D-NE144)', async () => {
     const w = createPdf({
       marginCm: 1, title: 'R1', creationDate: FIXED, fontRoles: ROLES,
       sheetStart: (d, n) => {
@@ -310,8 +311,9 @@ describe('NE-1b re-gate do delta — o `isolated` do sheetStart resistiu', () =>
     // y fica com quem o sheetStart deixou (D-NE125), page é a folha que o transbordo abriu — o resto volta
     expect(changedKeys(doc, before).filter(k => k !== 'y' && k !== 'page' && k !== '_ctm')).toEqual([])
     expect(internals(doc)._ctm).toEqual([1, 0, 0, -1, 0, doc.page.height])                    // a matriz-base da folha nova, sem a rotação
-    const pages = pdfContentOps(await w.end())
+    const pages = liveContentOps(doc)
     expect(pages.map(qBalance)).toEqual(pages.map(() => ({ final: 0, min: 0 })))
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('sheetStart com traço, opacidade e rotação SEM salvar (sem save desbalanceado): nada chega ao conteúdo das folhas de transbordo — texto opaco, na cor da família, matriz-base', async () => {

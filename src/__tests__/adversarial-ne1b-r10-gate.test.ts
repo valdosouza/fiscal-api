@@ -10,7 +10,8 @@
 import fs from 'fs'
 import path from 'path'
 import { createPdf, writeText, measureText, drawBars, drawWatermark, code128Bars, code128Symbols, cmToPt } from '../pdf'
-import { pdfContentOps, pdfTextRuns, pdfPageCount } from './pdf-oracle'
+import { pdfContentOps, pdfTextRuns, pdfPageCount, liveContentOps, qDepth } from './pdf-oracle'
+const D144 = /^base de PDF: o documento ficou inválido e não fecha — o sheetStart (falhou|deixou o y fora da área útil).*D-NE144/   // D-NE144
 
 const FIXED = new Date('2026-10-18T03:00:00Z')
 const ROLES = { title: 'Times-Bold', content: 'Times-Roman', fixed: 'Courier' } as const
@@ -146,7 +147,7 @@ describe('NE-1b gate R10 — [ACHADO MEDIUM] R10-M1: a D-NE140 recusa compensar 
 })
 
 describe('NE-1b gate R10 — [ACHADO LOW] R10-L1: texto VAZIO mede 0 e, posto no pé (`pé − 0`), abre folha', () => {
-  it.failing('[ACHADO LOW] R10-L1 — bloco opcional vazio empilhado de baixo para cima (`y = pé − altura medida`): folha nova sem nada escrito; com o recorte aberto, a D-NE134 recusa', () => {
+  it('[CORRIGIDO — D-NE147] R10-L1 — bloco opcional vazio empilhado de baixo para cima (`y = pé − altura medida`): folha nova sem nada escrito; com o recorte aberto, a D-NE134 recusa', () => {
     // `measureText('')` = { height: 0 } (o `heightOfString` não emite linha), mas o `writeText('')` passa pelo quebrador de linha, cuja conferência
     // de ENTRADA exige `y + altura da linha ≤ pé` — com `y = pé` abre folha (e com `y ∈ (pé − lh, pé]` também) para não escrever nada. A promessa
     // nova da doc do `measureText` ("posto em pé − altura medida cabe") não vale para o vazio. Campo opcional vazio da NF-e (infCpl/infAdFisco) num
@@ -219,7 +220,7 @@ describe('NE-1b gate R10 — [ACHADO LOW] R10-L2: wrapper sem a marca (espião d
 })
 
 describe('NE-1b gate R10 — [ACHADO LOW] R10-L3: `advance`/`width` de texto com quebra de linha não descrevem a escrita `lineBreak: false` sem `width` (o pdfkit cola as linhas na mesma linha de base)', () => {
-  it.failing('[ACHADO LOW] R10-L3 — "AAAAAAAA\\nB " escrito com lineBreak: false e o próximo trecho em x + advance: os trechos se SOBREPÕEM (ou a escrita recusa a quebra, como a linha única da D-NE132)', async () => {
+  it('[CORRIGIDO — D-NE146] R10-L3 — "AAAAAAAA\\nB " escrito com lineBreak: false e o próximo trecho em x + advance: os trechos se SOBREPÕEM (ou a escrita recusa a quebra, como a linha única da D-NE132)', async () => {
     // Sem `width`, o `lineBreak: false` aceita `\n` e o pdfkit escreve cada "linha" DEPOIS da anterior, na MESMA linha de base (`x += largura`); a
     // medida diz `advance` = a linha mais LARGA e `height` = duas linhas. O caminho que a mensagem da D-NE136 indica ("x pelo advance do
     // measureText") cola o trecho seguinte em cima do "B". Os campos da NF-e não levam quebra (TString), por isso LOW. Ver Q-NE150.
@@ -308,7 +309,7 @@ describe('NE-1b gate R10 — guardas por `rawOf` resistiram (achado 1 do gate an
     expect(fontsOf(pdf).sort()).toEqual(['Helvetica', 'Times-Bold', 'Times-Roman'])
   })
 
-  it('erro da FAMÍLIA no meio do `sheetStart` (com `save()` dela aberto e desenhos aninhados): sobe sem ser trocado, o `writeText` que transbordou para, guardas fora (a D-NE138 do nível de cima continua valendo) e o documento fecha balanceado', async () => {
+  it('erro da FAMÍLIA no meio do `sheetStart` (com `save()` dela aberto e desenhos aninhados): sobe sem ser trocado, o `writeText` que transbordou para, guardas fora (a D-NE138 do nível de cima continua valendo), as folhas balanceadas e o documento INVÁLIDO (D-NE144)', async () => {
     const w = createPdf({
       marginCm: 1, title: 'N2', creationDate: FIXED, fontRoles: ROLES,
       sheetStart: (d, n) => {
@@ -325,10 +326,10 @@ describe('NE-1b gate R10 — guardas por `rawOf` resistiram (achado 1 do gate an
     expect(errorOf(() => writeText(d, 'content', lines(120, 'item'), { x: 40, sizePt: 9 }))?.message).toBe('falha da família')
     expect(clean(d)).toEqual(CLEAN)
     writeText(d, 'content', 'depois do erro', { x: 40, y: 400 })
-    const pdf = await w.end()
-    expect(pdfPageCount(pdf)).toBe(2)
-    expect(balanced(pdf)).toBe(true)
-    expect(pdfTextRuns(pdfContentOps(pdf)[1]).map(r => r.text)).toEqual(expect.arrayContaining(['CAB 2', 'X', 'depois do erro']))
+    const live = liveContentOps(d)
+    expect(live.map(qDepth)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(pdfTextRuns(live[1]).map(r => r.text)).toEqual(expect.arrayContaining(['CAB 2', 'X', 'depois do erro']))
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('erro da BASE aninhado (linha única que não cabe, com o recorte da família aberto): a recusa da base sobe sem ser trocada, a limpeza fecha o `save()` na folha dele', async () => {
@@ -343,9 +344,10 @@ describe('NE-1b gate R10 — guardas por `rawOf` resistiram (achado 1 do gate an
     expect(errorOf(() => w.doc.addPage())?.message).toMatch(/não cabe na largura da linha única/)
     expect(clean(w.doc)).toEqual(CLEAN)
     writeText(w.doc, 'content', 'corpo 2', { x: 40, y: 300 })
-    const pdf = await w.end((dd, i) => { writeText(dd, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) })
-    expect(balanced(pdf)).toBe(true)
-    pdfContentOps(pdf).forEach((o, i) => expect(viewer(o).runs.find(r => r.text === `FOLHA ${i + 1}/2`)!.clipped).toBe(false))
+    const live = liveContentOps(w.doc)
+    expect(live.map(qDepth)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(viewer(live[1]).runs.find(r => r.text === 'corpo 2')!.clipped).toBe(false)  // o recorte da família fechou na folha dele
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('a passada com `save()`/`restore()` da família, desenhos e medida aninhados: aceita, balanceada; a guarda do isolado roubada e chamada depois no nível de cima recusa (nunca troca)', async () => {

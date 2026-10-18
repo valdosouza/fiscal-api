@@ -11,7 +11,9 @@ import fs from 'fs'
 import path from 'path'
 import PDFDocument from 'pdfkit'
 import { createPdf, writeText, measureText, drawBars, drawWatermark, code128Bars, code128Symbols, cmToPt } from '../pdf'
-import { pdfContentOps, pdfTextRuns, pdfPageCount } from './pdf-oracle'
+import { pdfContentOps, pdfTextRuns, pdfPageCount, liveContentOps, qDepth } from './pdf-oracle'
+const D144 = /^base de PDF: o documento ficou inválido e não fecha — o sheetStart (falhou|deixou o y fora da área útil).*D-NE144/   // D-NE144
+const liveBalance = (d: PDFKit.PDFDocument) => liveContentOps(d).map(qDepth)
 
 const FIXED = new Date('2026-10-17T03:00:00Z')
 const ROLES = { title: 'Times-Bold', content: 'Times-Roman', fixed: 'Courier' } as const
@@ -168,7 +170,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L5: a guarda por folha (`savedOn`) d
     const error = errorOf(() => w.doc.addPage())
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100 })
     const after = clean(w.doc)
-    const balance = balanceOf(await w.end())
+    const balance = liveBalance(w.doc)
+    expect(() => w.end()).toThrow(D144)
     expect(after).toEqual(CLEAN)
     expect(error?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)
     expect(balance).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])               // hoje: folha 1 com `Q` órfão, folha 2 com `q` aberto
@@ -186,7 +189,8 @@ describe('NE-1b gate R9 — [ACHADO LOW] R9-L5: a guarda por folha (`savedOn`) d
     expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)      // D-NE138: barrado na 1ª troca
     writeText(w.doc, 'content', 'corpo da folha 2', { x: 40, y: 100 })
     expect(clean(w.doc)).toEqual(CLEAN)
-    expect(balanceOf(await w.end())).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])   // hoje: [-1, -1] e [+1, 0]
+    expect(liveBalance(w.doc)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(() => w.end()).toThrow(D144)
   })
 })
 
@@ -473,7 +477,8 @@ describe('NE-1b gate R9 — guarda por folha do `isolated` resistiu (fora do R9-
     w.doc.addPage()
     expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)      // D-NE138: barrado na 1ª troca; o save() fecha na folha dele
     expect(clean(w.doc)).toEqual(CLEAN)
-    expect(balanceOf(await w.end())).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(liveBalance(w.doc)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('`save()` nesta folha e `restore()` noutra: barrado NA HORA (antes do `Q`), o `save()` fecha na folha certa; as duas balanceadas', async () => {
@@ -483,7 +488,8 @@ describe('NE-1b gate R9 — guarda por folha do `isolated` resistiu (fora do R9-
     })
     expect(errorOf(() => w.doc.addPage())?.message).toMatch(/^base de PDF: o sheetStart trocou de folha \(switchToPage\).*D-NE138/)      // D-NE138
     expect(clean(w.doc)).toEqual(CLEAN)
-    expect(balanceOf(await w.end())).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(liveBalance(w.doc)).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
+    expect(() => w.end()).toThrow(D144)
   })
 
   it('desenhos da base ANINHADOS entre o `save()` e o `restore()` da família NA MESMA folha (marca, barras, sublinhado): aceito, sem erro, balanceado — a entrada velha do R9-L5 é inofensiva numa folha só', async () => {
