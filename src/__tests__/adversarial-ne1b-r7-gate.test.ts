@@ -267,8 +267,14 @@ describe('NE-1b gate R7 — achados LOW', () => {
       writeText(d, 'content', lines(80, 'item'), { x: 30, y: 300, width: 290, sizePt: 9 })   // …que transborda para a folha 2
       d.restore()
     } catch (e) { error = e as Error }
+    // D-NE134 (Valdo 2026-10-17): erro de uso legível na abertura da folha — e o documento fica INVÁLIDO (a folha nova ficou sem o sheetStart;
+    // gate final F-L3): o `end()` recusa dizendo a causa, nunca fecha um PDF com folha sem cabeçalho
+    if (error) {
+      expect(error.message).toMatch(/^base de PDF: há save\(\) aberto atravessando a quebra de folha/)
+      expect(() => w.end()).toThrow(/documento ficou inválido.*save\(\) aberto atravessando a quebra/)
+      return
+    }
     const pages = pdfContentOps(await w.end((dd, i) => { writeText(dd, 'title', `FOLHA ${i.sheet}/${i.total}`, { x: 450, y: 20, lineBreak: false, sizePt: 8 }) }))
-    if (error) { expect(error.message).toMatch(/^base de PDF/); return }      // correção: acusar `save()` aberto no `pageAdded` (`_ctmStack.length > 0`)
     const seen = pages.map(viewer)
     expect(seen[0].runs.find(r => r.text.startsWith('FOLHA'))!.clipped).toBe(false)
     expect(seen.map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])

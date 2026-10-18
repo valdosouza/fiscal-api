@@ -5,8 +5,8 @@
  * estado do documento. O documento sai MARCADO como da base (D-NE127).
  *
  * Contrato do `sheetStart` (D-NE125, Valdo 2026-10-17): chamado ao ABRIR cada folha — inclusive as que o pdfkit abre sozinho no transbordo —
- * antes do conteúdo dela (desenho por baixo; o cabeçalho repetido da NE-5). ENTRA com estado NEUTRO (preto opaco, corpo 12, espaçamento 0 — o
- * cabeçalho sai igual em toda folha, re-gate D7) e roda ISOLADO: fonte, corpo, espaçamento, cor, opacidade, matriz e o texto encadeado da família
+ * antes do conteúdo dela (desenho por baixo; o cabeçalho repetido da NE-5). ENTRA com o estado de uma FOLHA NOVA (Helvetica 12, preto opaco, traço
+ * de 1 pt contínuo, espaçamento 0 — o cabeçalho sai igual em toda folha, re-gates D7/S3) e roda ISOLADO: fonte, corpo, espaçamento, cor, opacidade, matriz e o texto encadeado da família
  * voltam como estavam; o `y` em que ele PARAR fica sendo o começo do conteúdo da folha (é assim que o cabeçalho reserva o espaço dele) e tem de
  * deixar lugar para ao menos uma linha (re-gate D5); o `x` volta. Não pode abrir folha (cabeçalho maior que a folha — re-gate N4), terminar
  * noutra folha nem deixar `save()` sem `restore()` (re-gates D3/D4). Os papéis de fonte (`fontRoles`) já existem na 1ª folha.
@@ -98,8 +98,9 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
   let passing = false
   let starting = false
   /**
-   * A causa do erro de uso que deixou o documento INVÁLIDO — só o `sheetStart` que abre folha deixa uma folha ÓRFÃ no buffer (re-gate S6/R7-L3a:
-   * o `end()` culpava o flushPages e o documento nunca fechava). Os demais erros de uso sobem na hora e o documento ainda fecha.
+   * A causa do erro de uso que deixou o documento INVÁLIDO — a folha que ficou ÓRFÃ ou SEM o `sheetStart`: o `sheetStart` que abre folha (re-gate
+   * S6/R7-L3a: o `end()` culpava o flushPages e o documento nunca fechava) e o `save()` aberto atravessando a quebra (D-NE134 — a folha nova fica
+   * sem cabeçalho; gate final F-L3). Os demais erros de uso sobem na hora e o documento ainda fecha.
    */
   let broken: string | null = null
   doc.on('pageAdded', () => {
@@ -112,6 +113,7 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
     // D-NE134 (Valdo 2026-10-17 — gate R7-L4): o `addPage` do pdfkit reinicia a matriz mas NÃO a pilha de `save()` — pilha não vazia na
     // abertura da folha é `save()` da FAMÍLIA atravessando a quebra (um recorte que deixaria o "Folha n/N" invisível, q/Q desbalanceado)
     if ((doc as unknown as { _ctmStack: unknown[] })._ctmStack.length > 0) {
+      broken = broken ?? 'há save() aberto atravessando a quebra de folha (a folha nova ficou sem o sheetStart)'
       throw new Error('base de PDF: há save() aberto atravessando a quebra de folha (feche com restore() antes do conteúdo que transborda — D-NE134)')
     }
     const start = opts.sheetStart
@@ -137,6 +139,10 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
     end(sheetPass) {
       if (ended) throw new Error('base de PDF: o documento já foi fechado')
       if (broken) throw new Error(`base de PDF: o documento ficou inválido e não fecha — ${broken} (monte de novo)`)
+      // socrático L3: `save()` (com recorte) aberto no FIM do conteúdo deixaria a passada dentro dele — o "Folha n/N" invisível
+      if ((doc as unknown as { _ctmStack: unknown[] })._ctmStack.length > 0) {
+        throw new Error('base de PDF: há save() aberto no fim do conteúdo — feche com restore() antes do end()')
+      }
       ended = true
       const { start, count } = doc.bufferedPageRange()
       if (start !== 0 || count !== opened) {

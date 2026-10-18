@@ -11,7 +11,7 @@ import type { Code128Bars } from './barcode/code128'
 import type { QrMatrix } from './barcode/qr'
 import { baseDocument } from './base-document'
 import { toWinAnsi, STANDARD_FONTS, type StandardFont } from './fonts'
-import { isolated } from './state'
+import { assertStandardFontIntact, isolated } from './state'
 import { MAX_COORDINATE_PT, ptToCm } from './units'
 
 export interface PdfBox { readonly x: number; readonly y: number; readonly width: number; readonly height: number }
@@ -130,6 +130,7 @@ export function drawWatermark(doc: PDFKit.PDFDocument, text: string, styleIn: Wa
   const line = t.text.replace(/\n/g, ' ')
   if (line.trim() === '') throw new RangeError('base de PDF: marca d\'água vazia')
   if (!(STANDARD_FONTS as readonly string[]).includes(style?.font)) throw new RangeError('base de PDF: fonte da marca d\'água tem de ser fonte-padrão')
+  assertStandardFontIntact(doc, style.font)                                       // o nome não foi sobreposto no pdfkit (gate final F-L2)
   if (typeof style.sizePt !== 'number' || !Number.isFinite(style.sizePt) || style.sizePt <= 0 || style.sizePt > 1000) {
     throw new RangeError('base de PDF: tamanho da marca d\'água inválido')
   }

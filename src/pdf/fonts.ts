@@ -11,7 +11,7 @@
  * papel vale pelo registro DA BASE (re-gate D14), nunca pelo do pdfkit.
  */
 import { baseDocument } from './base-document'
-import { isolated } from './state'
+import { assertStandardFontIntact, isolated } from './state'
 import { MAX_COORDINATE_PT } from './units'
 
 export const STANDARD_FONTS = Object.freeze([
@@ -55,7 +55,9 @@ function fontOfRole(doc: PDFKit.PDFDocument, role: string): StandardFont {
   if (typeof role !== 'string' || !Object.prototype.hasOwnProperty.call(base.roles, role)) {
     throw new RangeError(`fontes da base: papel "${String(role)}" não registrado na base (registerFontRoles / fontRoles do createPdf)`)
   }
-  return base.roles[role] as StandardFont
+  const font = base.roles[role] as StandardFont
+  assertStandardFontIntact(doc, font)                    // e o NOME da fonte-padrão não foi sobreposto no pdfkit (gate final F-L2)
+  return font
 }
 
 /** Os 27 caracteres que o CP1252 põe em 0x80–0x9F (o resto do WinAnsi = Latin-1 imprimível) — texto constante, não coleção em memória. */
@@ -91,13 +93,17 @@ export function toWinAnsi(text: string): { readonly text: string; readonly repla
  * Espaçamentos só POSITIVOS (gate R7-L6: negativo leva o texto para fora da folha em silêncio); `lineGap` maior que zero — o pdfkit trata
  * `lineGap: 0` como "não informado" e usa o do documento.
  * - texto GIRADO (D-NE130 — o canhoto vertical do DANFE paisagem, MOC 7.00 Anexo II 3.8.2): não há `rotation` na porta; a família gira o
- *   DOCUMENTO em volta do `writeText` (`save()` → `rotate()` → `writeText` → `restore()`) — caminho que a cerca da NE-5 PERMITE.
+ *   DOCUMENTO em volta do `writeText` (`save()` → `rotate()` → `writeText` → `restore()`) — caminho que a cerca da NE-5 PERMITE. Dentro da
+ *   rotação só a LINHA ÚNICA é segura (gate socrático L6): o quebrador de linha do pdfkit compara o `y` do espaço GIRADO com o pé da folha e
+ *   abriria folha.
  *
- * LINHA ÚNICA (D-NE132/D-NE133, Valdo 2026-10-17 — gate R7-M2/L7): `lineBreak: false` COM `width` é a CÉLULA do DANFE — a base escreve UMA linha,
- * alinhada por ela dentro da largura (no pdfkit 0.20.2, havendo `width`, o texto passa pelo quebrador de linha, quebra e ABRE FOLHA); texto que
- * não cabe na largura é RECUSADO (a família mede antes com `measureText` e abrevia ou reduz o corpo). Depois de toda escrita de linha única
- * (`lineBreak: false`, com ou sem `width`) o `x` volta para onde ela COMEÇOU — o pdfkit o deixava no fim do texto e a coluna de rótulos escrita
- * só com `y` virava escada.
+ * LINHA ÚNICA (D-NE132/D-NE133/D-NE135…D-NE137, Valdo 2026-10-17 — gates R7-M2/L7 e final): `lineBreak: false` COM `width` é a CÉLULA do DANFE —
+ * a base escreve UMA linha, alinhada por ela dentro da largura (`justify` numa linha só = esquerda; no pdfkit 0.20.2, havendo `width`, o texto
+ * passa pelo quebrador de linha, quebra e ABRE FOLHA); os espaços do FIM não contam (D-NE137 — medidos, alinhados e desenhados sem eles, como o
+ * pdfkit faz); texto que não cabe na largura é RECUSADO (a família mede antes com `measureText` e abrevia ou reduz o corpo). Toda escrita com
+ * `lineBreak: false` (com ou sem `width`) recusa `continued` (D-NE136 — para juntar trechos na mesma linha: `x` explícito pelo `measureText`, ou
+ * `continued` com `width`) e recusa texto encadeado ABERTO (D-NE135 — o pdfkit fundiria a largura da cadeia), e devolve o `x` de onde COMEÇOU
+ * (D-NE133 — o pdfkit o deixava no fim do texto e a coluna de rótulos escrita só com `y` virava escada).
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -164,23 +170,38 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
   assertSize(sizePt)
   const textOptions = layoutOptions(all, ['x', 'y', 'sizePt']) as Record<string, unknown>
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
+  const d = doc as unknown as { _wrapper?: unknown; _textOptions?: unknown }
+  if (textOptions.lineBreak === false) {
+    if (textOptions.continued !== undefined) {
+      throw new RangeError('fontes da base: "continued" não combina com lineBreak: false — junte trechos com x pelo measureText ou continued com width (D-NE136)')
+    }
+    if (d._wrapper || d._textOptions) {
+      throw new RangeError('fontes da base: há texto encadeado aberto — feche-o antes (último trecho sem continued) para escrever uma linha única (D-NE135)')
+    }
+  }
   const singleLine = textOptions.lineBreak === false && textOptions.width !== undefined
+  const lineText = singleLine ? t.text.replace(/ +$/, '') : t.text               // D-NE137: espaços do FIM não contam na linha única
   let lineWidth = 0
   if (singleLine) {
-    for (const k of ['continued', 'height', 'ellipsis', 'indent', 'paragraphGap', 'lineGap']) {
+    for (const k of ['height', 'ellipsis', 'indent', 'paragraphGap', 'lineGap']) {
       if (textOptions[k] !== undefined) throw new RangeError(`fontes da base: "${k}" não se aplica à linha única (lineBreak: false com width — D-NE132)`)
     }
-    if (t.text.includes('\n')) throw new RangeError('fontes da base: linha única (lineBreak: false com width) não leva quebra de linha (D-NE132)')
+    if (lineText.includes('\n')) throw new RangeError('fontes da base: linha única (lineBreak: false com width) não leva quebra de linha (D-NE132)')
     // mede ANTES de escrever, sem mexer no estado da família — a recusa não deixa rastro
-    lineWidth = isolated(doc, () => { doc.font(font); if (sizePt !== undefined) doc.fontSize(sizePt); return doc.widthOfString(t.text) },
+    lineWidth = isolated(doc, () => { doc.font(font); if (sizePt !== undefined) doc.fontSize(sizePt); return doc.widthOfString(lineText) },
       { graphics: false, who: 'writeText' })
     if (lineWidth > (textOptions.width as number) + 1e-6) {
       throw new RangeError('fontes da base: o texto não cabe na largura da linha única — meça antes (measureText) e abrevie ou reduza o corpo (D-NE132)')
     }
   }
-  doc.font(font)                                          // a fonte do registro DA BASE (re-gate S1/R7-L1), nunca a resolução do pdfkit pelo nome
-  if (sizePt !== undefined) doc.fontSize(sizePt)
   const x0 = x ?? doc.x
+  if (!singleLine && textOptions.lineBreak !== false && textOptions.width === undefined && !d._textOptions
+    && doc.page.width - x0 - doc.page.margins.right <= 0) {
+    // gate final F-L5: sem largura útil a partir de x (além da margem direita) o pdfkit escreveria com largura 0, linhas empilhadas no mesmo y
+    throw new RangeError('fontes da base: não há largura útil a partir de x (além da margem direita) — informe width')
+  }
+  doc.font(font)                                          // a fonte do registro DA BASE (re-gate S1/R7-L1), com o nome conferido (F-L2)
+  if (sizePt !== undefined) doc.fontSize(sizePt)
   if (singleLine) {
     const width = textOptions.width as number
     const align = textOptions.align ?? 'left'
@@ -188,7 +209,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     const line: Record<string, unknown> = { lineBreak: false }
     if (textOptions.underline !== undefined) line.underline = textOptions.underline
     if (textOptions.strike !== undefined) line.strike = textOptions.strike
-    doc.text(t.text, x0 + dx, y ?? doc.y, line)
+    doc.text(lineText, x0 + dx, y ?? doc.y, line)
   } else if (x !== undefined || y !== undefined) doc.text(t.text, x0, y ?? doc.y, textOptions)
   else doc.text(t.text, textOptions)
   if (textOptions.lineBreak === false) doc.x = x0                // D-NE133: a linha única devolve o x de onde começou
@@ -204,7 +225,10 @@ export interface MeasureTextOptions extends Omit<TextLayoutOptions, 'continued' 
 /**
  * A porta de MEDIDA (D-NE129, Valdo 2026-10-17): o texto passa pela MESMA normalização do `writeText` e é medido na fonte do papel (registro da
  * base) e no corpo pedidos — `width` = a linha mais larga, sem quebra; `height` = a altura que o `writeText` ocuparia com essas opções (com
- * `width`, quebrando como ele; sem `width`, com a largura que sobra a partir de `x`). Não desenha e não mexe no estado da família.
+ * `width`, quebrando como ele; sem `width`, com a largura que sobra a partir de `x` — sem largura útil, recusa como a escrita). Não desenha e
+ * não mexe no estado da família.
+ * LIMITE CONHECIDO (gate final F-L6): o pdfkit confere o pé da folha com o `maxY` arredondado para baixo em float32 — um bloco posto EXATAMENTE em
+ * `pé − altura medida` pode abrir folha antes de escrever; deixe folga (≥ 0,01 pt) ao encostar no pé.
  */
 export function measureText(doc: PDFKit.PDFDocument, role: string, text: string, opts: MeasureTextOptions = {}):
   { readonly width: number; readonly height: number; readonly replaced: number } {
@@ -223,6 +247,9 @@ export function measureText(doc: PDFKit.PDFDocument, role: string, text: string,
     doc.font(font)
     if (sizePt !== undefined) doc.fontSize(sizePt)
     if (x !== undefined) doc.x = x
+    if (layout.width === undefined && doc.page.width - doc.x - doc.page.margins.right <= 0) {
+      throw new RangeError('fontes da base: não há largura útil a partir de x (além da margem direita) — informe width')
+    }
     const width = Math.max(0, ...t.text.split('\n').map(line => doc.widthOfString(line, layout)))
     const height = doc.heightOfString(t.text, layout)
     return Object.freeze({ width, height, replaced: t.replaced })

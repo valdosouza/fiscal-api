@@ -66,13 +66,17 @@ describe('NE-1b — fontes-padrão e WinAnsi', () => {
     writeText(w.doc, 'content', value, { ...cell, y: 140 })
     expect(() => writeText(w.doc, 'content', 'VALOR TOTAL DOS PRODUTOS 1.234.567,89', { ...cell, width: 60, y: 160 })).toThrow(/não cabe na largura/)
     expect(() => writeText(w.doc, 'content', 'a\nb', { ...cell, y: 180 })).toThrow(/não leva quebra de linha/)
-    expect(() => writeText(w.doc, 'content', 'a', { ...cell, y: 200, continued: true })).toThrow(/não se aplica à linha única/)
+    expect(() => writeText(w.doc, 'content', 'a', { ...cell, y: 200, continued: true })).toThrow(/não combina com lineBreak: false/)   // D-NE136
+    expect(() => writeText(w.doc, 'content', 'a', { ...cell, y: 200, height: 20 })).toThrow(/não se aplica à linha única/)
+    // D-NE137: os espaços do FIM não contam — "1.234,56   " à direita encosta na borda da célula como "1.234,56"
+    writeText(w.doc, 'content', `${value}   `, { ...cell, x: 300, y: 220, align: 'right' })
     const { pdfContentOps, pdfTextRuns } = await import('./pdf-oracle')
     const runs = pdfTextRuns(pdfContentOps(await w.end())[0])
-    expect(runs.map(r => r.text)).toEqual([value, value, value])
+    expect(runs.map(r => r.text)).toEqual([value, value, value, value])
     expect(runs[0].x).toBeCloseTo(300 + 120 - textWidth, 4)
     expect(runs[1].x).toBeCloseTo(300 + (120 - textWidth) / 2, 4)
     expect(runs[2].x).toBeCloseTo(300, 4)
+    expect(runs[3].x).toBeCloseTo(300 + 120 - textWidth, 4)                          // aparado: mesma posição do valor sem os espaços
   })
 
   it('D-NE131 — um papel, uma fonte: registrar de novo com a MESMA fonte é inofensivo; com OUTRA, recusado (a grade medida não muda no meio)', async () => {
