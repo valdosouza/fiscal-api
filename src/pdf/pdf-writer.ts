@@ -8,9 +8,11 @@
  * antes do conteúdo dela (desenho por baixo; o cabeçalho repetido da NE-5). ENTRA com o estado de uma FOLHA NOVA (Helvetica 12, preto opaco, traço
  * de 1 pt contínuo, espaçamento 0 — o cabeçalho sai igual em toda folha, re-gates D7/S3) e roda ISOLADO: fonte, corpo, espaçamento, cor, opacidade, matriz e o texto encadeado da família
  * voltam como estavam; o `y` em que ele PARAR fica sendo o começo do conteúdo da folha (é assim que o cabeçalho reserva o espaço dele) e tem de
- * deixar lugar para ao menos uma linha (re-gate D5); o `x` volta. Não pode abrir folha (cabeçalho maior que a folha — re-gate N4), terminar
- * noutra folha nem deixar `save()` sem `restore()` (re-gates D3/D4). Os papéis de fonte (`fontRoles`) já existem na 1ª folha.
- * A passada por folha roda ISOLADA do mesmo jeito, sem manter nada (D-NE128).
+ * deixar lugar para ao menos uma linha (re-gate D5); o `x` volta. Não pode abrir folha (cabeçalho maior que a folha — re-gate N4), trocar de
+ * folha (D-NE138) nem deixar `save()` sem `restore()` (re-gate D3). Os papéis de fonte (`fontRoles`) já existem na 1ª folha. TODA falha do
+ * `sheetStart` — erro dele, erro de uso da base, `y` fora da área útil — deixa o documento INVÁLIDO (D-NE144): o erro sobe na hora (no transbordo,
+ * pelo `writeText` do conteúdo) e o `end()` recusa SEMPRE, com a causa em texto da base — monte o documento de novo.
+ * A passada por folha roda ISOLADA do mesmo jeito, sem manter nada (D-NE128), e também não troca de folha (D-NE138).
  *
  * Contrato de erro: erro de USO (fechar duas vezes, passada que abre folha, `sheetStart`/passada assíncronos, folhas já despejadas por
  * `flushPages`, as violações acima) LANÇA na hora, sincronamente; o PDF vem pela promessa de `end()`.
@@ -109,8 +111,10 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
   doc.on('pageAdded', () => {
     if (passing) return                                   // a passada não abre folha (conferido no fim dela)
     if (starting) {
-      broken = broken ?? 'o sheetStart abriu folha (o que ele escreve não cabe na folha)'
-      throw new Error(`base de PDF: ${broken}`)
+      // a mensagem é a DESTA causa (gate R11-L3: dizia a 1ª causa guardada); o `broken` guarda a primeira para o `end()`
+      const cause = 'o sheetStart abriu folha (o que ele escreve não cabe na folha)'
+      broken = broken ?? cause
+      throw new Error(`base de PDF: ${cause}`)
     }
     opened++
     // D-NE134 (Valdo 2026-10-17 — gate R7-L4): o `addPage` do pdfkit reinicia a matriz mas NÃO a pilha de `save()` — pilha não vazia na
@@ -122,20 +126,24 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
     const start = opts.sheetStart
     if (!start) return
     starting = true
+    let cause = 'o sheetStart falhou (a folha ficou sem o cabeçalho inteiro — D-NE144)'
     try {
       isolated(doc, () => {
         refuseThenable(start(doc, opened), 'base de PDF: o sheetStart tem de ser síncrono (o desenho cairia depois da folha)')
       }, { keep: ['y'], neutral: true, who: 'o sheetStart' })
+      // re-gate D5: finito, na folha e com lugar para 1 linha — o `y` lido UMA vez, DENTRO do trecho que invalida (gate R11-L4); "lugar para 1
+      // linha" com a MESMA folga relativa da D-NE140 (gate R11-L2: o cabeçalho medido para terminar em "pé − 1 linha" passava por 1e-13 pt)
+      const y: unknown = doc.y
+      const room = doc.page.height - doc.page.margins.bottom - doc.currentLineHeight(true)
+      if (typeof y !== 'number' || !Number.isFinite(y) || y < 0 || y - room > Math.abs(room) * 2 ** -40) {
+        cause = 'o sheetStart deixou o y fora da área útil (D-NE144)'
+        throw new Error('base de PDF: o sheetStart deixou o y fora da área útil (sem lugar para o conteúdo da folha)')
+      }
     } catch (error) {
-      broken = broken ?? 'o sheetStart falhou (a folha ficou sem o cabeçalho inteiro — D-NE144)'
+      broken = broken ?? cause
       throw error
     } finally {
       starting = false
-    }
-    const room = doc.page.height - doc.page.margins.bottom - doc.currentLineHeight(true)
-    if (!Number.isFinite(doc.y) || doc.y < 0 || doc.y > room) {                         // re-gate D5: finito, na folha e com lugar para 1 linha
-      broken = broken ?? 'o sheetStart deixou o y fora da área útil (D-NE144)'
-      throw new Error('base de PDF: o sheetStart deixou o y fora da área útil (sem lugar para o conteúdo da folha)')
     }
   })
   doc.addPage()

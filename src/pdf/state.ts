@@ -58,9 +58,9 @@ export function useStandardFont(doc: PDFKit.PDFDocument, font: string): void {
 }
 
 /**
- * Marca das guardas instaladas pela base (aponta para a função que cada uma envolve). As guardas, a entrada, a saída e a limpeza do isolado chamam a
- * ORIGINAL (`rawOf`) — cada isolado conta SÓ os `save()` da família feitos enquanto a guarda DELE está instalada (gate R9-L5 / socrático do delta,
- * achado 1: o `save()` de entrada de um isolado aninhado passava pela guarda do de fora).
+ * Marca das guardas instaladas pela base (aponta para a função que cada uma envolve): a do `restore()` a mais e a do `switchToPage` no isolado, a
+ * do `switchToPage` no nível de cima (D-NE138). O `restore` do isolado (a guarda, a saída e a limpeza) chama a ORIGINAL pelo `rawOf` — nunca a
+ * guarda de um isolado de fora (gate R9-L5 / socrático do delta, achado 1).
  */
 const GUARD = Symbol('fiscal-api/pdf:guarda-da-base')
 type Raw = (this: unknown, ...args: unknown[]) => unknown
@@ -111,7 +111,7 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   const own = (k: string): boolean => Object.prototype.hasOwnProperty.call(d, k)
   const had = { restore: own('restore'), switchToPage: own('switchToPage') }
   const previous = { restore: d.restore as Guarded, switchToPage: d.switchToPage as Guarded }
-  const rawSave = rawOf(d.save as Guarded)
+  const rawSave = d.save as Raw                                                         // o `save()` não tem guarda (só o `restore()` a mais a tem)
   const rawRestore = rawOf(previous.restore)
   // a volta à folha do isolado (só no erro de uso — folha aberta lá dentro) é a do PRÓPRIO pdfkit (gates R10-L2/socrático L4: um embrulho sem a
   // marca — espião do jest — escondia a original do `rawOf` e a volta tropeçava na guarda da D-NE138, com o `q` do isolado ainda aberto)

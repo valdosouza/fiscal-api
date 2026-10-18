@@ -102,6 +102,7 @@ describe('NE-1b gate R7 — [ACHADO MEDIUM] R7-M1: o `isolated` só confere a pi
   const assertRefusedAndClean = (r: Awaited<ReturnType<typeof family>>) => {
     expect(r.error?.message).toMatch(/^base de PDF: o sheetStart deu restore\(\) a mais/)
     expect(r.closeError?.message).toMatch(D144)
+    expect(r.pages.flatMap(p => p.runs).some(x => x.text.startsWith('corpo'))).toBe(true)   // a asserção abaixo não é vazia (gate socrático L1)
     for (const p of r.pages) {
       expect({ final: p.final, min: p.min }).toEqual({ final: 0, min: 0 })
       for (const run of p.runs.filter(x => x.text.startsWith('corpo') || x.text.startsWith('FOLHA'))) {
@@ -414,7 +415,7 @@ describe('NE-1b gate R7 — erros de uso no MEIO de um encadeado que transborda 
     'promessa rejeitada': () => Promise.reject(new Error('assíncrono')),
   }
   for (const [name, bad] of Object.entries(cases)) {
-    it(`${name}: o erro sobe na hora, 2 folhas com q/Q balanceado, o conteúdo da folha 2 opaco e sem giro, e o documento INVÁLIDO (D-NE144)`, async () => {
+    it(`${name}: o erro sobe na hora, 2 folhas com q/Q balanceado, o conteúdo da família opaco e sem giro, e o documento INVÁLIDO (D-NE144)`, async () => {
       const w = createPdf({
         marginCm: 1, title: name, creationDate: FIXED, fontRoles: ROLES,
         sheetStart: (d, n) => {
@@ -430,7 +431,10 @@ describe('NE-1b gate R7 — erros de uso no MEIO de um encadeado que transborda 
       expect(error?.message).toMatch(/^base de PDF: o sheetStart|^getter then$/)
       const seen = liveContentOps(w.doc).map(viewer)
       expect(seen.map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
-      expect(seen[1].runs.filter(r => r.text.startsWith('palavra')).every(r => r.ca === 1 && !r.rotated)).toBe(true)
+      // (o transbordo parou no sheetStart da folha 2 — o conteúdo da família que existe está na folha 1; gate socrático L1: a asserção era vazia)
+      const family = seen.flatMap(p => p.runs).filter(r => r.text.startsWith('palavra') || r.text.startsWith('Inicio'))
+      expect(family.length).toBeGreaterThan(0)
+      expect(family.every(r => r.ca === 1 && !r.rotated)).toBe(true)
       expect(() => w.end()).toThrow(D144)
     })
   }

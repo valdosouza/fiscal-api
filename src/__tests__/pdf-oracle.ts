@@ -204,9 +204,16 @@ export function liveContentOps(doc: PDFKit.PDFDocument): string[] {
     _opacityRegistry: Record<string, [{ data: { ca?: number } }, string]>
   }
   const opacity: Record<string, string> = {}
-  for (const [dictionary, name] of Object.values(d._opacityRegistry)) opacity[name] = dictionary.data.ca === undefined ? '-' : String(dictionary.data.ca)
-  return d._pageBuffer.map(p => Buffer.concat(p.content.buffer).toString('latin1')
-    .replace(/^\/(Gs\d+) gs$/gm, (_l, name: string) => `/${name} gs %ca=${opacity[name] ?? '-'}`))   // a mesma anotação do pdfContentOps
+  for (const [dictionary, name] of Object.values(d._opacityRegistry)) {
+    // como o PDF final grava (6 casas — gate R11-L5: 0,9999999 era "translúcido" aqui e "opaco" no PDF)
+    opacity[name] = dictionary.data.ca === undefined ? '-' : String(Math.round(dictionary.data.ca * 1e6) / 1e6)
+  }
+  return d._pageBuffer.map((p, i) => {
+    const ops = Buffer.concat(p.content.buffer).toString('latin1')
+    // falha FECHADO (gate socrático L3): toda folha do pdfkit começa pela matriz-base; conteúdo vazio = documento já fechado ou outro pdfkit
+    if (!/^1 0 0 -1 0 [\d.]+ cm\n/.test(ops)) throw new Error(`oráculo: a folha ${i + 1} não tem o conteúdo vivo (documento fechado ou pdfkit diferente)`)
+    return ops.replace(/^\/(Gs\d+) gs$/gm, (_l, name: string) => `/${name} gs %ca=${opacity[name] ?? '-'}`)   // a mesma anotação do pdfContentOps
+  })
 }
 
 /** Equilíbrio q/Q de uma folha (o fim e o mínimo da profundidade). */

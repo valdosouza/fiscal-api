@@ -229,7 +229,8 @@ describe('NE-1b gate R10 — [ACHADO LOW] R10-L3: `advance`/`width` de texto com
     const text = 'AAAAAAAA\nB '
     const m = measureText(d, 'content', text, { x: 40, sizePt: 10 })
     const refused = errorOf(() => writeText(d, 'content', text, { x: 40, y: 100, lineBreak: false, sizePt: 10 }))
-    if (refused) { expect(refused).toBeInstanceOf(RangeError); await w.end(); return }
+    expect(refused?.message).toMatch(/não leva quebra de linha \(D-NE146\)/)                // D-NE146
+    if (refused) { await w.end(); return }
     const end = 40 + m.advance
     writeText(d, 'content', 'X', { x: end, y: 100, lineBreak: false, sizePt: 10 })
     const runs = pdfTextRuns(pdfContentOps(await w.end())[0])

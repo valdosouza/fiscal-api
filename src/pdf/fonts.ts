@@ -148,7 +148,11 @@ function fitFloat32(doc: PDFKit.PDFDocument, y0: number): number | null {
  * `measureText`, ou `continued` com `width`; `continued: false`, o padrão, passa — D-NE143) e recusa texto encadeado ABERTO (D-NE135 — o pdfkit
  * fundiria a largura da cadeia), e devolve o `x` de onde COMEÇOU (D-NE133 — o pdfkit o deixava no fim do texto e a coluna de rótulos escrita só
  * com `y` virava escada). D-NE139: linha que fica vazia depois de aparada não desenha nada — nem o sublinhado/riscado (a linha de preenchimento
- * do formulário é desenho vetorial da família).
+ * do formulário é desenho vetorial da família). D-NE146: TODA escrita `lineBreak: false` (com ou sem `width`) recusa quebra de linha — sem o
+ * quebrador o pdfkit cola as linhas na mesma linha de base.
+ *
+ * TEXTO VAZIO (D-NE147, Valdo 2026-10-18): sem `continued` e sem cadeia aberta, a base não chama o pdfkit — nada é escrito e nenhuma folha abre
+ * (a medida do vazio é 0); o `x`/`y` ficam como informados. Com a cadeia aberta o vazio a FECHA.
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -235,7 +239,6 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     for (const k of ['height', 'ellipsis', 'indent', 'paragraphGap', 'lineGap']) {
       if (textOptions[k] !== undefined) throw new RangeError(`fontes da base: "${k}" não se aplica à linha única (lineBreak: false com width — D-NE132)`)
     }
-    if (lineText.includes('\n')) throw new RangeError('fontes da base: linha única (lineBreak: false com width) não leva quebra de linha (D-NE132)')
     // mede ANTES de escrever, sem mexer no estado da família — a recusa não deixa rastro
     lineWidth = isolated(doc, () => { useStandardFont(doc, font); if (sizePt !== undefined) doc.fontSize(sizePt); return doc.widthOfString(lineText) },
       { graphics: false, who: 'writeText' })
@@ -289,7 +292,8 @@ export interface MeasureTextOptions extends Omit<TextLayoutOptions, 'continued' 
  * A largura de cada linha é medida SEM os espaços do fim (D-NE141 — a mesma regra da linha única da D-NE137: medida e escrita dizem o mesmo);
  * `advance` = a ÚLTIMA linha medida COM eles — o quanto o `x` anda para o PRÓXIMO trecho na mesma linha (o caminho da D-NE136: "CNPJ: " mede
  * 21 pt de `width` e anda 24 pt de `advance`; sem ele o número colaria no rótulo — consequência da D-NE141, RATIFICADA na D-NE145, Valdo
- * 2026-10-18). Sem quebra: com `width` que quebra o texto, o `advance` NÃO se aplica (a última linha da escrita é outra). Um
+ * 2026-10-18). Só sem quebra: se a escrita QUEBRA o texto (pela `width` pedida ou, sem ela, pela largura que sobra a partir de `x`) ou usa
+ * `indent`, o `advance` NÃO se aplica (a última linha da escrita é outra). Um
  * bloco posto EXATAMENTE em `pé − altura medida` cabe (D-NE140 — a escrita compensa o arredondamento float32 do pdfkit; gate final F-L6).
  * Sem `width`, a recusa por falta de largura útil olha o `x` (o informado ou o CORRENTE — gate socrático do delta, achado 3): para medir só a
  * LARGURA de um trecho (juntar trechos na mesma linha — D-NE136), passe o `x` onde ele vai ser escrito, nunca dependa do `x` que ficou no documento.
