@@ -62,7 +62,9 @@ function refuseThenable(result: unknown, message: string): void {
   throw new Error(message)
 }
 
-export function createPdf(opts: CreatePdfOptions): PdfWriter {
+export function createPdf(options: CreatePdfOptions): PdfWriter {
+  const opts = Object.freeze({ ...(options ?? {}) }) as CreatePdfOptions      // lidas UMA vez (a classe do A12/R7-L5)
+  if (opts.sheetStart !== undefined && typeof opts.sheetStart !== 'function') throw new RangeError('base de PDF: sheetStart tem de ser função')
   const m = typeof opts?.marginCm === 'number'
     ? { top: opts.marginCm, right: opts.marginCm, bottom: opts.marginCm, left: opts.marginCm } : opts?.marginCm
   const margins = {
@@ -95,9 +97,17 @@ export function createPdf(opts: CreatePdfOptions): PdfWriter {
   let opened = 0
   let passing = false
   let starting = false
+  /**
+   * A causa do erro de uso que deixou o documento INVÁLIDO — só o `sheetStart` que abre folha deixa uma folha ÓRFÃ no buffer (re-gate S6/R7-L3a:
+   * o `end()` culpava o flushPages e o documento nunca fechava). Os demais erros de uso sobem na hora e o documento ainda fecha.
+   */
+  let broken: string | null = null
   doc.on('pageAdded', () => {
     if (passing) return                                   // a passada não abre folha (conferido no fim dela)
-    if (starting) throw new Error('base de PDF: o sheetStart abriu folha (o que ele escreve não cabe na folha)')
+    if (starting) {
+      broken = broken ?? 'o sheetStart abriu folha (o que ele escreve não cabe na folha)'
+      throw new Error(`base de PDF: ${broken}`)
+    }
     opened++
     const start = opts.sheetStart
     if (!start) return
@@ -121,6 +131,7 @@ export function createPdf(opts: CreatePdfOptions): PdfWriter {
     doc,
     end(sheetPass) {
       if (ended) throw new Error('base de PDF: o documento já foi fechado')
+      if (broken) throw new Error(`base de PDF: o documento ficou inválido e não fecha — ${broken} (monte de novo)`)
       ended = true
       const { start, count } = doc.bufferedPageRange()
       if (start !== 0 || count !== opened) {
@@ -128,14 +139,19 @@ export function createPdf(opts: CreatePdfOptions): PdfWriter {
       }
       if (sheetPass) {
         passing = true
-        for (let i = start; i < start + count; i++) {
-          doc.switchToPage(i)
-          isolated(doc, () => {
-            refuseThenable(sheetPass(doc, Object.freeze({ sheet: i - start + 1, total: count })),
-              'base de PDF: a passada por folha tem de ser síncrona (o desenho cairia depois do fim)')
-          }, { neutral: true, who: 'a passada por folha' })
+        try {
+          for (let i = start; i < start + count; i++) {
+            doc.switchToPage(i)
+            isolated(doc, () => {
+              doc.x = doc.page.margins.left                  // a passada entra na posição de uma folha nova (re-gate S3)
+              doc.y = doc.page.margins.top
+              refuseThenable(sheetPass(doc, Object.freeze({ sheet: i - start + 1, total: count })),
+                'base de PDF: a passada por folha tem de ser síncrona (o desenho cairia depois do fim)')
+            }, { neutral: true, who: 'a passada por folha' })
+          }
+        } finally {
+          passing = false
         }
-        passing = false
         if (doc.bufferedPageRange().count !== count) {
           throw new Error('base de PDF: a passada por folha abriu folha nova — o total que ela recebeu ficou errado')
         }

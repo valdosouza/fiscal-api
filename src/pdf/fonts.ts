@@ -41,12 +41,16 @@ export function registerFontRoles<R extends string>(doc: PDFKit.PDFDocument, rol
   }
 }
 
-/** O papel tem de estar no registro DA BASE (re-gate D14: `doc.registerFont` direto punha a fonte Symbol na porta do WinAnsi). */
-function assertRole(doc: PDFKit.PDFDocument, role: string): void {
+/**
+ * O papel tem de estar no registro DA BASE e o desenho usa a fonte DESSE registro (re-gates D14 e S1/R7-L1: conferir num registro e desenhar
+ * pelo do pdfkit deixava `doc.registerFont` direto pôr a fonte Symbol na porta do WinAnsi). Devolve a fonte-padrão do papel.
+ */
+function fontOfRole(doc: PDFKit.PDFDocument, role: string): StandardFont {
   const base = baseDocument(doc)
   if (typeof role !== 'string' || !Object.prototype.hasOwnProperty.call(base.roles, role)) {
     throw new RangeError(`fontes da base: papel "${String(role)}" não registrado na base (registerFontRoles / fontRoles do createPdf)`)
   }
+  return base.roles[role] as StandardFont
 }
 
 /** Os 27 caracteres que o CP1252 põe em 0x80–0x9F (o resto do WinAnsi = Latin-1 imprimível) — texto constante, não coleção em memória. */
@@ -74,9 +78,13 @@ export function toWinAnsi(text: string): { readonly text: string; readonly repla
 
 /**
  * As opções de texto que a porta aceita (re-gate D12 — lista FECHADA: opção que o pdfkit interpretaria sem conferência, como `rotation` NaN
- * ou `horizontalScaling` em notação de expoente, é recusada antes de qualquer `q`). `columns` fica FORA de propósito — LIMITE CONHECIDO (re-gate
- * D6): nas folhas de transbordo o pdfkit reabre a 2ª coluna no topo da margem, por cima do espaço que o cabeçalho reservou (D-NE125); a NE-5
- * decide se o DANFE precisa de colunas.
+ * ou `horizontalScaling` em notação de expoente, é recusada antes de qualquer `q`). Fora, de propósito — LIMITES CONHECIDOS:
+ * - `columns` (re-gate D6): nas folhas de transbordo o pdfkit reabre a 2ª coluna no topo da margem, por cima do espaço que o cabeçalho
+ *   reservou (D-NE125); a NE-5 decide se o DANFE precisa de colunas;
+ * - `wordSpacing` e `characterSpacing` (gate R7-L2): no pdfkit 0.20.2 o `wordSpacing` APAGA quebras de linha (troca todo espaço duplo, inclusive
+ *   a quebra, por um espaço) e não entra na largura medida; o `characterSpacing` conta duas vezes no sublinhado. O DANFE não precisa de nenhum.
+ * Espaçamentos só POSITIVOS (gate R7-L6: negativo leva o texto para fora da folha em silêncio); `lineGap` maior que zero — o pdfkit trata
+ * `lineGap: 0` como "não informado" e usa o do documento.
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -88,8 +96,6 @@ export interface TextLayoutOptions {
   readonly indent?: number
   readonly paragraphGap?: number
   readonly lineGap?: number
-  readonly characterSpacing?: number
-  readonly wordSpacing?: number
   readonly underline?: boolean
   readonly strike?: boolean
 }
@@ -100,20 +106,21 @@ export interface WriteTextOptions extends TextLayoutOptions {
 }
 
 const SIZE_OPTIONS = ['width', 'height'] as const
-const GAP_OPTIONS = ['indent', 'paragraphGap', 'lineGap', 'characterSpacing', 'wordSpacing'] as const
+const GAP_OPTIONS = ['indent', 'paragraphGap'] as const
 const FLAG_OPTIONS = ['lineBreak', 'continued', 'ellipsis', 'underline', 'strike'] as const
 const ALIGNS = ['left', 'center', 'right', 'justify']
-const LAYOUT_KEYS: readonly string[] = [...SIZE_OPTIONS, ...GAP_OPTIONS, ...FLAG_OPTIONS, 'align']
+const LAYOUT_KEYS: readonly string[] = [...SIZE_OPTIONS, ...GAP_OPTIONS, 'lineGap', ...FLAG_OPTIONS, 'align']
 const finiteIn = (v: unknown, min: number, max: number): boolean => typeof v === 'number' && Number.isFinite(v) && v >= min && v <= max
 
 /** Valida a lista fechada e devolve só as opções informadas (cópia — o objeto de quem chama nunca vai ao pdfkit). */
-function layoutOptions(opts: Record<string, unknown>, extra: readonly string[]): PDFKit.Mixins.TextOptions {
+function layoutOptions(opts: Readonly<Record<string, unknown>>, extra: readonly string[]): PDFKit.Mixins.TextOptions {
   const out: Record<string, unknown> = {}
   for (const [k, v] of Object.entries(opts)) {
     if (v === undefined || extra.includes(k)) continue
     if (!LAYOUT_KEYS.includes(k)) throw new RangeError(`fontes da base: opção de texto "${k}" fora da porta (D-NE126)`)
     if ((SIZE_OPTIONS as readonly string[]).includes(k) && !(finiteIn(v, 0, MAX_COORDINATE_PT) && (v as number) > 0)) throw new RangeError(`fontes da base: ${k} inválido`)
-    if ((GAP_OPTIONS as readonly string[]).includes(k) && !finiteIn(v, -1000, 1000)) throw new RangeError(`fontes da base: ${k} inválido`)
+    if ((GAP_OPTIONS as readonly string[]).includes(k) && !finiteIn(v, 0, 1000)) throw new RangeError(`fontes da base: ${k} inválido (0 a 1000)`)
+    if (k === 'lineGap' && !(finiteIn(v, 0, 1000) && (v as number) > 0)) throw new RangeError('fontes da base: lineGap inválido (maior que 0, até 1000)')
     if ((FLAG_OPTIONS as readonly string[]).includes(k) && typeof v !== 'boolean') throw new RangeError(`fontes da base: ${k} tem de ser booleano`)
     if (k === 'align' && !ALIGNS.includes(v as string)) throw new RangeError('fontes da base: alinhamento inválido')
     out[k] = v
@@ -123,6 +130,12 @@ function layoutOptions(opts: Record<string, unknown>, extra: readonly string[]):
 const assertSize = (sizePt: unknown): void => {
   if (sizePt !== undefined && !(finiteIn(sizePt, 0, 1000) && (sizePt as number) > 0)) throw new RangeError('fontes da base: corpo inválido')
 }
+const assertPosition = (what: string, v: unknown): void => {
+  if (v !== undefined && !finiteIn(v, -MAX_COORDINATE_PT, MAX_COORDINATE_PT)) throw new RangeError(`fontes da base: posição ${what} inválida`)
+}
+/** As opções lidas UMA vez (gate R7-L5 — a classe do A12: um getter validava um valor e entregava outro). */
+const snapshotOptions = (opts: unknown): Readonly<Record<string, unknown>> =>
+  Object.freeze({ ...((opts && typeof opts === 'object') ? opts as Record<string, unknown> : {}) })
 
 /**
  * A ÚNICA porta de texto da família (D-NE126): papel REGISTRADO NA BASE + `toWinAnsi` sempre. Posição (`x`/`y`) e corpo (`sizePt`) opcionais —
@@ -130,16 +143,15 @@ const assertSize = (sizePt: unknown): void => {
  * opções pela lista fechada `TextLayoutOptions`. Devolve quantos caracteres viraram `?`.
  */
 export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, opts: WriteTextOptions = {}): { readonly replaced: number } {
-  assertRole(doc, role)
-  const all = (opts ?? {}) as Record<string, unknown>
+  const font = fontOfRole(doc, role)
+  const all = snapshotOptions(opts)
   const { x, y, sizePt } = all as { x?: number; y?: number; sizePt?: number }
-  for (const [what, v] of [['x', x], ['y', y]] as const) {
-    if (v !== undefined && !finiteIn(v, -MAX_COORDINATE_PT, MAX_COORDINATE_PT)) throw new RangeError(`fontes da base: posição ${what} inválida`)
-  }
+  assertPosition('x', x)
+  assertPosition('y', y)
   assertSize(sizePt)
   const textOptions = layoutOptions(all, ['x', 'y', 'sizePt'])
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
-  doc.font(role)
+  doc.font(font)                                          // a fonte do registro DA BASE (re-gate S1/R7-L1), nunca a resolução do pdfkit pelo nome
   if (sizePt !== undefined) doc.fontSize(sizePt)
   if (x !== undefined || y !== undefined) doc.text(t.text, x ?? doc.x, y ?? doc.y, textOptions)
   else doc.text(t.text, textOptions)
@@ -148,26 +160,32 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
 
 export interface MeasureTextOptions extends Omit<TextLayoutOptions, 'continued' | 'lineBreak' | 'ellipsis' | 'underline' | 'strike' | 'height'> {
   readonly sizePt?: number
+  /** Onde a escrita vai começar — sem `width`, a largura disponível é a que sobra a partir dele (padrão: o `x` corrente). Re-gate S4. */
+  readonly x?: number
 }
 
 /**
- * A porta de MEDIDA (D-NE129, Valdo 2026-10-17): o texto passa pela MESMA normalização do `writeText` e é medido no papel/corpo pedidos —
- * `width` = a linha sem quebra; `height` = a altura que o `writeText` ocuparia com essas opções (com `width`, quebrando como ele). Não desenha e
- * não mexe no estado da família.
+ * A porta de MEDIDA (D-NE129, Valdo 2026-10-17): o texto passa pela MESMA normalização do `writeText` e é medido na fonte do papel (registro da
+ * base) e no corpo pedidos — `width` = a linha mais larga, sem quebra; `height` = a altura que o `writeText` ocuparia com essas opções (com
+ * `width`, quebrando como ele; sem `width`, com a largura que sobra a partir de `x`). Não desenha e não mexe no estado da família.
  */
 export function measureText(doc: PDFKit.PDFDocument, role: string, text: string, opts: MeasureTextOptions = {}):
   { readonly width: number; readonly height: number; readonly replaced: number } {
-  assertRole(doc, role)
-  const all = (opts ?? {}) as Record<string, unknown>
+  const font = fontOfRole(doc, role)
+  const all = snapshotOptions(opts)
   for (const k of ['continued', 'lineBreak', 'ellipsis', 'underline', 'strike', 'height']) {
     if (all[k] !== undefined) throw new RangeError(`fontes da base: opção "${k}" não se aplica à medida`)
   }
-  assertSize(all.sizePt)
-  const layout = layoutOptions(all, ['sizePt'])
+  const sizePt = all.sizePt as number | undefined
+  const x = all.x as number | undefined
+  assertSize(sizePt)
+  assertPosition('x', x)
+  const layout = layoutOptions(all, ['sizePt', 'x'])
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
   return isolated(doc, () => {
-    doc.font(role)
-    if (all.sizePt !== undefined) doc.fontSize(all.sizePt as number)
+    doc.font(font)
+    if (sizePt !== undefined) doc.fontSize(sizePt)
+    if (x !== undefined) doc.x = x
     const width = Math.max(0, ...t.text.split('\n').map(line => doc.widthOfString(line, layout)))
     const height = doc.heightOfString(t.text, layout)
     return Object.freeze({ width, height, replaced: t.replaced })

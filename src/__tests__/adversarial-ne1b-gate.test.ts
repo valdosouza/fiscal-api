@@ -435,10 +435,14 @@ describe('NE-1b gate adversarial — escritor resistiu', () => {
     const familyXY = [w.doc.x, w.doc.y]
     const xy: number[][] = []
     const pdf = await w.end((d, { sheet, total }) => {
-      xy.push([d.x, d.y])                                                   // a passada anterior devolveu a posição da família
+      xy.push([d.x, d.y])
       d.font('Times-Bold').fontSize(8).text(`FOLHA ${sheet}/${total}`, 400, 20, { lineBreak: false })
     })
-    expect(new Set(xy.map(p => p.join()))).toEqual(new Set([familyXY.join()]))
+    // re-gate S3 (2026-10-17): a passada entra SEMPRE na posição de uma folha nova (margens) — não no x/y que sobrou do conteúdo; a posição da
+    // família volta intacta depois de cada folha (a passada é isolada — D-NE128)
+    const { left, top } = w.doc.page.margins
+    expect(new Set(xy.map(p => p.join()))).toEqual(new Set([`${left},${top}`]))
+    expect([w.doc.x, w.doc.y]).toEqual(familyXY)
     expect(opened).toEqual(Array.from({ length: 200 }, (_, i) => i + 1))
     const pages = pdfTextByStream(pdf)
     expect(pages).toHaveLength(200)

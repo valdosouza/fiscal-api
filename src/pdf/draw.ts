@@ -49,9 +49,11 @@ const assertBox = (b: PdfBox, what: string): void => {
  * Code-128 numa caixa: a LARGURA da caixa inclui a margem clara (`quietModules` de cada lado — 10 pela NT, a largura mínima de 11,5 cm já a
  * conta); a altura é a das barras. Não deixe caminho aberto antes (o preenchimento é do caminho corrente do PDF).
  */
-export function drawBars(doc: PDFKit.PDFDocument, bars: Code128Bars, box: PdfBox,
-  opts: { readonly quietModules?: number; readonly color?: PdfColor } = {}): DrawnModule {
+export function drawBars(doc: PDFKit.PDFDocument, bars: Code128Bars, boxIn: PdfBox,
+  optsIn: { readonly quietModules?: number; readonly color?: PdfColor } = {}): DrawnModule {
   baseDocument(doc)
+  const box = boxIn && typeof boxIn === 'object' ? Object.freeze({ ...boxIn }) : boxIn   // lidas UMA vez (R7-L5)
+  const opts = Object.freeze({ ...(optsIn ?? {}) })
   assertBox(box, 'das barras')
   const quiet = opts.quietModules ?? 10
   if (!Number.isInteger(quiet) || quiet < 0 || quiet > 100) throw new RangeError('base de PDF: margem clara inválida')
@@ -75,9 +77,11 @@ export function drawBars(doc: PDFKit.PDFDocument, bars: Code128Bars, box: PdfBox
 }
 
 /** QR (ou outra matriz) num quadrado de lado `size` — só o símbolo; a zona de silêncio em volta é do layout. Módulos contíguos da linha viram um retângulo só. */
-export function drawMatrix(doc: PDFKit.PDFDocument, matrix: QrMatrix, box: { readonly x: number; readonly y: number; readonly size: number },
-  opts: { readonly color?: PdfColor } = {}): DrawnModule {
+export function drawMatrix(doc: PDFKit.PDFDocument, matrix: QrMatrix, boxIn: { readonly x: number; readonly y: number; readonly size: number },
+  optsIn: { readonly color?: PdfColor } = {}): DrawnModule {
   baseDocument(doc)
+  const box = boxIn && typeof boxIn === 'object' ? Object.freeze({ ...boxIn }) : boxIn   // lidas UMA vez (R7-L5)
+  const opts = Object.freeze({ ...(optsIn ?? {}) })
   assertBox({ x: box?.x, y: box?.y, width: box?.size, height: box?.size }, 'da matriz')
   const size = matrix?.size
   const rows = matrix?.rows
@@ -119,8 +123,9 @@ export interface WatermarkStyle {
  * pelo `toWinAnsi` (quebra de linha vira espaço); o estado da família (fonte, corpo, cor, posição, texto encadeado) volta intacto — a marca
  * pode ser desenhada antes do conteúdo (`sheetStart`, fica por baixo) ou na passada por folha (por cima). Devolve quantos caracteres viraram `?`.
  */
-export function drawWatermark(doc: PDFKit.PDFDocument, text: string, style: WatermarkStyle): { readonly replaced: number } {
+export function drawWatermark(doc: PDFKit.PDFDocument, text: string, styleIn: WatermarkStyle): { readonly replaced: number } {
   baseDocument(doc)
+  const style = Object.freeze({ ...(styleIn ?? {}) }) as WatermarkStyle          // lido UMA vez (gate R7-L5: um getter validava Helvetica e entregava Symbol)
   const t = toWinAnsi(text)
   const line = t.text.replace(/\n/g, ' ')
   if (line.trim() === '') throw new RangeError('base de PDF: marca d\'água vazia')

@@ -38,30 +38,52 @@ export function isolated<T>(doc: PDFKit.PDFDocument, run: () => T, opts: Isolate
   d._wrapper = null
   d._textOptions = null
   let depth = 0
-  if (graphics) { doc.save(); depth = d._ctmStack.length }
+  let ours: unknown = null
+  const who = opts.who ?? 'o desenho'
+  const hadOwnRestore = Object.prototype.hasOwnProperty.call(d, 'restore')
+  const previousRestore = d.restore as () => unknown
+  if (graphics) {
+    doc.save(); depth = d._ctmStack.length; ours = d._ctmStack[depth - 1]                // a ENTRADA do nosso save (um array novo por save)
+    // gate R7-M1: `restore()` a MAIS barrado NA HORA, antes de emitir o `Q` — acusar depois não desfaz o que vazou para o resto da folha
+    d.restore = function guardedRestore(this: unknown) {
+      if (d._ctmStack.length <= depth) throw new Error(`base de PDF: ${who} deu restore() a mais (fecharia o estado que não abriu)`)
+      return previousRestore.call(doc)
+    }
+  }
+  const unguard = (): void => { if (!graphics) return; if (hadOwnRestore) d.restore = previousRestore; else delete d.restore }
   let result: T | undefined
   let failure: { error: unknown } | null = null
   try {
-    if (opts.neutral) doc.fillColor('#000000', 1).strokeColor('#000000', 1).fontSize(12).lineGap(0)
+    // estado de entrada NEUTRO = o de uma folha nova (re-gate S3): preto opaco, traço de 1 pt contínuo, Helvetica 12, espaçamento 0
+    if (opts.neutral) doc.fillColor('#000000', 1).strokeColor('#000000', 1).lineWidth(1).undash().font('Helvetica').fontSize(12).lineGap(0)
     result = run()
   } catch (error) {
     failure = { error }                                  // o erro de quem rodou sobe DEPOIS da limpeza — nunca trocado pelo de uso
   }
+  unguard()
   let misuse: string | null = null
   if (doc.page !== page) {
     misuse = (d._pageBuffer as unknown[]).length !== sheets
       ? 'abriu folha nova — o total que ela recebeu ficou errado' : 'terminou noutra folha (switchToPage sem voltar)'
+    // o save() aberto NA OUTRA folha fecha lá (re-gate R7-L3b) antes de voltar
+    if (graphics) while (d._ctmStack.length > depth) doc.restore()
     const index = (d._pageBuffer as unknown[]).indexOf(page)
     if (index >= 0) doc.switchToPage(d._pageBufferStart + index)
   }
   if (graphics) {
     if (d._ctmStack.length > depth) misuse = misuse ?? 'deixou save() sem restore()'
+    else if (d._ctmStack.length < depth || d._ctmStack[depth - 1] !== ours) {
+      // re-gate R7-M1: restore() A MAIS fechou o estado do isolamento (e `restore(); save()` equilibra a contagem com OUTRA entrada) — o que
+      // veio depois ficou fora de qualquer q; reabre o que falta para o PDF seguir balanceado e acusa
+      misuse = misuse ?? 'deu restore() a mais (fechou o estado que não abriu)'
+    }
     while (d._ctmStack.length > depth) doc.restore()
+    while (d._ctmStack.length < depth) doc.save()
     doc.restore()
   }
   const keep = (opts.keep ?? []) as readonly string[]
   TEXT_STATE.forEach((k, i) => { if (!keep.includes(k)) d[k] = saved[i] })
   if (failure) throw failure.error
-  if (misuse) throw new Error(`base de PDF: ${opts.who ?? 'o desenho'} ${misuse}`)
+  if (misuse) throw new Error(`base de PDF: ${who} ${misuse}`)
   return result as T
 }

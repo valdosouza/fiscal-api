@@ -22,8 +22,14 @@ export function markBaseDocument(doc: PDFKit.PDFDocument): void {
   })
 }
 
+/**
+ * O estado da marca — só como propriedade PRÓPRIA do objeto (re-gate S5: pela cadeia de protótipo, `Object.create(doc)` passava). A marca protege
+ * contra ENGANO (documento de outra cópia do pdfkit, objeto qualquer), não contra fraude: quem copia o símbolo por reflexão para outro objeto
+ * passa pela porta — e nada desenha fora do documento da base mesmo assim.
+ */
 export function baseDocument(doc: PDFKit.PDFDocument): BaseDocumentState {
-  const state = doc && typeof doc === 'object' ? (doc as unknown as Record<symbol, BaseDocumentState | undefined>)[BASE_DOCUMENT] : undefined
+  const own = !!doc && typeof doc === 'object' && Object.prototype.hasOwnProperty.call(doc, BASE_DOCUMENT)
+  const state = own ? (doc as unknown as Record<symbol, BaseDocumentState | undefined>)[BASE_DOCUMENT] : undefined
   if (!state) throw new RangeError('base de PDF: o documento não foi criado pelo createPdf da base (D-NE127)')
   return state
 }
