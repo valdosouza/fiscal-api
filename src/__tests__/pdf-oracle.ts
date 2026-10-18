@@ -106,9 +106,26 @@ export function pdfTextByStream(pdf: Buffer): string[][] {
   return pages
 }
 
-/** Os operadores crus de cada stream de conteúdo que desenha algo (uma por folha no pdfkit), na ordem. */
+/** A opacidade de PREENCHIMENTO (`ca`) de cada ExtGState do PDF, por nome de recurso (`Gs1` → 0.2); sem `ca` = não mexe no preenchimento. */
+function extGStateFillOpacity(s: string): Record<string, number | null> {
+  const byObject: Record<string, number | null> = {}
+  for (const m of s.matchAll(/(\d+) 0 obj\s*<<([^>]*\/Type \/ExtGState[^>]*)>>/g)) {
+    const ca = /\/ca ([\d.]+)/.exec(m[2])
+    byObject[m[1]] = ca ? Number(ca[1]) : null
+  }
+  const byName: Record<string, number | null> = {}
+  for (const m of s.matchAll(/\/(Gs\d+) (\d+) 0 R/g)) if (m[2] in byObject) byName[m[1]] = byObject[m[2]]
+  return byName
+}
+
+/**
+ * Os operadores crus de cada stream de conteúdo que desenha algo (uma por folha no pdfkit), na ordem. Cada `/GsN gs` sai ANOTADO com a
+ * opacidade de preenchimento real do ExtGState (`/GsN gs %ca=0.2`; `%ca=-` quando ele não mexe no preenchimento) — o `gs` de opacidade 1 que
+ * a base emite para AFIRMAR o desenho opaco não é "translúcido".
+ */
 export function pdfContentOps(pdf: Buffer): string[] {
   const s = pdf.toString('latin1')
+  const opacity = extGStateFillOpacity(s)
   const out: string[] = []
   let i = 0
   while ((i = s.indexOf('stream', i)) !== -1) {
@@ -121,7 +138,9 @@ export function pdfContentOps(pdf: Buffer): string[] {
     const raw = pdf.subarray(start, end)
     let txt: string
     try { txt = zlib.inflateSync(raw).toString('latin1') } catch { txt = raw.toString('latin1') }
-    if (/\bBT\b|\bre\b/.test(txt)) out.push(txt)
+    if (/\bBT\b|\bre\b/.test(txt)) {
+      out.push(txt.replace(/^\/(Gs\d+) gs$/gm, (_l, name: string) => `/${name} gs %ca=${opacity[name] ?? '-'}`))
+    }
     i = end + 9
   }
   return out
@@ -156,7 +175,12 @@ export function pdfTextRuns(ops: string): TextRun[] {
     if (line === 'q') stack.push({ ...gs })
     else if (line === 'Q') gs = stack.pop() ?? { color: '', translucent: false }
     else if (/ (scn|sc|rg|k)$/.test(line)) gs = { ...gs, color: line.replace(/ (scn|sc|rg|k)$/, '') }
-    else if (/ gs$/.test(line)) gs = { ...gs, translucent: true }
+    else if (/ gs( %ca=\S+)?$/.test(line)) {
+      // anotado pelo `pdfContentOps`: translúcido só com ca < 1; ExtGState sem `ca` não mexe no preenchimento; sem anotação = conservador
+      const ca = /%ca=(\S+)$/.exec(line)?.[1]
+      if (ca === undefined) gs = { ...gs, translucent: true }
+      else if (ca !== '-') gs = { ...gs, translucent: Number(ca) < 1 }
+    }
     else if (/ Tf$/.test(line)) { const m = /^\/(\S+) ([\d.]+) Tf$/.exec(line); if (m) { font = m[1]; size = Number(m[2]) } }
     else if (/ Tm$/.test(line)) { const p = line.split(/\s+/); x = Number(p[4]); y = Number(p[5]) }
     else if (/T[Jj]$/.test(line)) {

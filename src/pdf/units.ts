@@ -6,3 +6,9 @@ export const PT_PER_CM = 72 / 2.54
 
 export const cmToPt = (cm: number): number => cm * PT_PER_CM
 export const ptToCm = (pt: number): number => pt / PT_PER_CM
+
+/**
+ * Maior coordenada/medida aceita pela base: 14.400 pt (200 polegadas) = o limite de implementação dos LEITORES de PDF (o pdfkit formata números
+ * até 1e21, mas leitor nenhum honra página maior). Cobre com folga todo papel admitido pelo MOC (A4 a Ofício II).
+ */
+export const MAX_COORDINATE_PT = 14400

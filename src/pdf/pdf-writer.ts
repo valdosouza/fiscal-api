@@ -1,20 +1,24 @@
 /**
- * Escritor da base de PDF (D-NE20/D-NE122/D-NE125): A4 (ou tamanho em cm), margens em cm, papéis de fonte e a PASSADA POR FOLHA — depois do
- * conteúdo, cada folha é revisitada sabendo o TOTAL (`bufferPages` do pdfkit). É o que permite à família escrever "Folha n/N" no topo de TODAS
+ * Escritor da base de PDF (D-NE20/D-NE122/D-NE125/D-NE128): A4 (ou tamanho em cm), margens em cm, papéis de fonte e a PASSADA POR FOLHA — depois
+ * do conteúdo, cada folha é revisitada sabendo o TOTAL (`bufferPages` do pdfkit). É o que permite à família escrever "Folha n/N" no topo de TODAS
  * as folhas (MOC 7.00 Anexo II 3.10.2) ou afirmar página única (NT 008 da NFS-e). A base não sabe de "Folha", de cabeçalho repetido nem de
- * estado do documento.
+ * estado do documento. O documento sai MARCADO como da base (D-NE127).
  *
  * Contrato do `sheetStart` (D-NE125, Valdo 2026-10-17): chamado ao ABRIR cada folha — inclusive as que o pdfkit abre sozinho no transbordo —
- * antes do conteúdo dela (desenho por baixo; o cabeçalho repetido da NE-5). Roda ISOLADO: fonte, corpo, cor, opacidade, matriz e o texto
- * encadeado da família voltam como estavam; o `y` em que ele PARAR fica sendo o começo do conteúdo da folha (é assim que o cabeçalho reserva o
- * espaço dele); o `x` volta. Os papéis de fonte (`fontRoles`) já existem na 1ª folha.
+ * antes do conteúdo dela (desenho por baixo; o cabeçalho repetido da NE-5). ENTRA com estado NEUTRO (preto opaco, corpo 12, espaçamento 0 — o
+ * cabeçalho sai igual em toda folha, re-gate D7) e roda ISOLADO: fonte, corpo, espaçamento, cor, opacidade, matriz e o texto encadeado da família
+ * voltam como estavam; o `y` em que ele PARAR fica sendo o começo do conteúdo da folha (é assim que o cabeçalho reserva o espaço dele) e tem de
+ * deixar lugar para ao menos uma linha (re-gate D5); o `x` volta. Não pode abrir folha (cabeçalho maior que a folha — re-gate N4), terminar
+ * noutra folha nem deixar `save()` sem `restore()` (re-gates D3/D4). Os papéis de fonte (`fontRoles`) já existem na 1ª folha.
+ * A passada por folha roda ISOLADA do mesmo jeito, sem manter nada (D-NE128).
  *
  * Contrato de erro: erro de USO (fechar duas vezes, passada que abre folha, `sheetStart`/passada assíncronos, folhas já despejadas por
- * `flushPages`) LANÇA na hora, sincronamente; o PDF vem pela promessa de `end()`.
+ * `flushPages`, as violações acima) LANÇA na hora, sincronamente; o PDF vem pela promessa de `end()`.
  */
 import PDFDocument from 'pdfkit'
 import { cmToPt } from './units'
 import { registerFontRoles, type StandardFont } from './fonts'
+import { markBaseDocument } from './base-document'
 import { isolated } from './state'
 
 export interface PdfSheetInfo {
@@ -30,7 +34,7 @@ export interface CreatePdfOptions {
   /** Margens em cm — um valor para os quatro lados ou cada lado. */
   readonly marginCm: number | { readonly top: number; readonly right: number; readonly bottom: number; readonly left: number }
   readonly title: string
-  /** Data gravada no PDF (padrão: agora) — fixar dá PDF reprodutível. */
+  /** Data gravada no PDF (padrão: agora; ano de 0 a 9999) — fixar dá PDF reprodutível. */
   readonly creationDate?: Date
   /** Papéis de fonte (papel → fonte-padrão) registrados ANTES da 1ª folha — o `sheetStart` já pode usá-los (D-NE125). */
   readonly fontRoles?: Readonly<Record<string, StandardFont>>
@@ -48,7 +52,15 @@ const positive = (n: number, what: string): number => {
   if (typeof n !== 'number' || !Number.isFinite(n) || n < 0) throw new RangeError(`base de PDF: ${what} inválido`)
   return n
 }
-const isThenable = (v: unknown): boolean => !!v && (typeof v === 'object' || typeof v === 'function') && typeof (v as { then?: unknown }).then === 'function'
+
+/** Função síncrona que devolveu promessa = erro de uso; a promessa é OBSERVADA para nunca virar `unhandledRejection` (re-gate D9). */
+function refuseThenable(result: unknown, message: string): void {
+  if (!result || (typeof result !== 'object' && typeof result !== 'function')) return
+  const then = (result as { then?: unknown }).then
+  if (typeof then !== 'function') return
+  try { then.call(result, undefined, () => undefined) } catch { /* thenable quebrado: nada a observar */ }
+  throw new Error(message)
+}
 
 export function createPdf(opts: CreatePdfOptions): PdfWriter {
   const m = typeof opts?.marginCm === 'number'
@@ -63,12 +75,16 @@ export function createPdf(opts: CreatePdfOptions): PdfWriter {
     : [cmToPt(positive(paper.widthCm, 'papel')), cmToPt(positive(paper.heightCm, 'papel'))]
   if (typeof opts.title !== 'string' || opts.title.trim() === '') throw new RangeError('base de PDF: título obrigatório')
   const creationDate = opts.creationDate ?? new Date()
-  if (!(creationDate instanceof Date) || !Number.isFinite(creationDate.getTime())) throw new RangeError('base de PDF: data do documento inválida')
+  if (!(creationDate instanceof Date) || !Number.isFinite(creationDate.getTime())
+    || creationDate.getUTCFullYear() < 0 || creationDate.getUTCFullYear() > 9999) {      // re-gate D13: o PDF só grava 4 dígitos de ano
+    throw new RangeError('base de PDF: data do documento inválida')
+  }
 
   const doc = new PDFDocument({
     size, layout: opts.layout ?? 'portrait', margins, bufferPages: true, autoFirstPage: false,
     info: { Title: opts.title, CreationDate: creationDate },
   })
+  markBaseDocument(doc)
   const chunks: Buffer[] = []
   const done = new Promise<Buffer>((resolve, reject) => {
     doc.on('data', (c: Buffer) => chunks.push(c))
@@ -78,14 +94,25 @@ export function createPdf(opts: CreatePdfOptions): PdfWriter {
   if (opts.fontRoles !== undefined) registerFontRoles(doc, opts.fontRoles)
   let opened = 0
   let passing = false
+  let starting = false
   doc.on('pageAdded', () => {
     if (passing) return                                   // a passada não abre folha (conferido no fim dela)
+    if (starting) throw new Error('base de PDF: o sheetStart abriu folha (o que ele escreve não cabe na folha)')
     opened++
     const start = opts.sheetStart
     if (!start) return
-    isolated(doc, () => {
-      if (isThenable(start(doc, opened))) throw new Error('base de PDF: o sheetStart tem de ser síncrono (o desenho cairia depois da folha)')
-    }, ['y'])
+    starting = true
+    try {
+      isolated(doc, () => {
+        refuseThenable(start(doc, opened), 'base de PDF: o sheetStart tem de ser síncrono (o desenho cairia depois da folha)')
+      }, { keep: ['y'], neutral: true, who: 'o sheetStart' })
+    } finally {
+      starting = false
+    }
+    const room = doc.page.height - doc.page.margins.bottom - doc.currentLineHeight(true)
+    if (!Number.isFinite(doc.y) || doc.y < 0 || doc.y > room) {                         // re-gate D5: finito, na folha e com lugar para 1 linha
+      throw new Error('base de PDF: o sheetStart deixou o y fora da área útil (sem lugar para o conteúdo da folha)')
+    }
   })
   doc.addPage()
 
@@ -103,11 +130,10 @@ export function createPdf(opts: CreatePdfOptions): PdfWriter {
         passing = true
         for (let i = start; i < start + count; i++) {
           doc.switchToPage(i)
-          const x = doc.x, y = doc.y
-          if (isThenable(sheetPass(doc, Object.freeze({ sheet: i - start + 1, total: count })))) {
-            throw new Error('base de PDF: a passada por folha tem de ser síncrona (o desenho cairia depois do fim)')
-          }
-          doc.x = x; doc.y = y
+          isolated(doc, () => {
+            refuseThenable(sheetPass(doc, Object.freeze({ sheet: i - start + 1, total: count })),
+              'base de PDF: a passada por folha tem de ser síncrona (o desenho cairia depois do fim)')
+          }, { neutral: true, who: 'a passada por folha' })
         }
         passing = false
         if (doc.bufferedPageRange().count !== count) {

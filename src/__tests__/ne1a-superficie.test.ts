@@ -81,6 +81,10 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     expect(pkg.peerDependenciesMeta?.pdfkit).toBeUndefined()
     expect(pkg.devDependencies?.pdfkit).toBeUndefined()
     expect(pkg.dependencies['bwip-js']).toBe('4.11.4')
+    // re-gate N7: a superfície fala no namespace `PDFKit` — os tipos vão JUNTO (dependência exata) e o `.d.ts` publicado os referencia
+    expect(pkg.dependencies['@types/pdfkit']).toBe('0.17.6')
+    expect(pkg.devDependencies?.['@types/pdfkit']).toBeUndefined()
+    expect(read(path.join(SRC, 'pdf.ts')).split('\n')[0]).toBe('/// <reference types="pdfkit" preserve="true" />')
   })
   it('CERCA da F2a: o setes-api só importa `fiscal-api/reading` e `fiscal-api/federal-id` (D-CJ2 — peça pura, nada do lado de escrita)', () => {
     const root = setesApiPath('src')                                        // D-F117: a worktree da F2a (ou a árvore viva) — tem de existir
