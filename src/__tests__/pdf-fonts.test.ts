@@ -1,6 +1,6 @@
 /// <reference types="jest" />
 // NE-1b (D-NE120): fontes-padrão WinAnsi — a regra de substituição VISÍVEL e a ida e volta de TODO caractere representável por um PDF real.
-import { toWinAnsi, registerFontRoles, STANDARD_FONTS, WINANSI_REPLACEMENT, createPdf, writeText } from '../pdf'
+import { toWinAnsi, registerFontRoles, STANDARD_FONTS, WINANSI_REPLACEMENT, createPdf, writeText, measureText } from '../pdf'
 import { pdfTextByStream } from './pdf-oracle'
 
 const CP1252_EXTRA = '€‚ƒ„…†‡ˆ‰Š‹ŒŽ‘’“”•–—˜™š›œžŸ'
@@ -53,6 +53,35 @@ describe('NE-1b — fontes-padrão e WinAnsi', () => {
     expect(() => writeText(w.doc, 'content', 'x', { sizePt: 0 })).toThrow(RangeError)
     const lines = pdfTextByStream(await w.end()).flat()
     expect(lines).toEqual(expect.arrayContaining(['Ação 10?m ? ok', 'nº 5 — € 3']))
+  })
+
+  it('D-NE132/D-NE133 — LINHA ÚNICA (`lineBreak: false` com `width`): uma linha só, alinhada pela base dentro da largura; não cabe = recusa legível; o `x` volta para onde a escrita começou', async () => {
+    const w = createPdf({ marginCm: 1, title: 'linha única', creationDate: new Date('2026-10-17T03:00:00Z'), fontRoles: { content: 'Times-Roman' } })
+    const cell = { width: 120, lineBreak: false, sizePt: 8 } as const
+    const value = '1.234,56'
+    const textWidth = measureText(w.doc, 'content', value, { sizePt: 8 }).width
+    writeText(w.doc, 'content', value, { ...cell, x: 300, y: 100, align: 'right' })
+    expect(w.doc.x).toBe(300)
+    writeText(w.doc, 'content', value, { ...cell, y: 120, align: 'center' })         // só y: o x corrente é o 300 de onde a anterior COMEÇOU
+    writeText(w.doc, 'content', value, { ...cell, y: 140 })
+    expect(() => writeText(w.doc, 'content', 'VALOR TOTAL DOS PRODUTOS 1.234.567,89', { ...cell, width: 60, y: 160 })).toThrow(/não cabe na largura/)
+    expect(() => writeText(w.doc, 'content', 'a\nb', { ...cell, y: 180 })).toThrow(/não leva quebra de linha/)
+    expect(() => writeText(w.doc, 'content', 'a', { ...cell, y: 200, continued: true })).toThrow(/não se aplica à linha única/)
+    const { pdfContentOps, pdfTextRuns } = await import('./pdf-oracle')
+    const runs = pdfTextRuns(pdfContentOps(await w.end())[0])
+    expect(runs.map(r => r.text)).toEqual([value, value, value])
+    expect(runs[0].x).toBeCloseTo(300 + 120 - textWidth, 4)
+    expect(runs[1].x).toBeCloseTo(300 + (120 - textWidth) / 2, 4)
+    expect(runs[2].x).toBeCloseTo(300, 4)
+  })
+
+  it('D-NE131 — um papel, uma fonte: registrar de novo com a MESMA fonte é inofensivo; com OUTRA, recusado (a grade medida não muda no meio)', async () => {
+    const w = createPdf({ marginCm: 1, title: 'um papel', creationDate: new Date('2026-10-17T03:00:00Z'), fontRoles: { content: 'Times-Roman' } })
+    expect(() => registerFontRoles(w.doc, { content: 'Times-Roman' })).not.toThrow()
+    expect(() => registerFontRoles(w.doc, { content: 'Courier' })).toThrow(/já é Times-Roman/)
+    expect(() => registerFontRoles(w.doc, { outro: 'Courier', content: 'Courier' } as any)).toThrow(RangeError)
+    expect(() => writeText(w.doc, 'outro', 'x')).toThrow(/não registrado/)                       // recusa do lote INTEIRO: nada foi registrado
+    await w.end()
   })
 
   it('papel com nome de propriedade do JS ("toString", "constructor", "__proto__") é recusado no registro (gate adversarial A9)', () => {

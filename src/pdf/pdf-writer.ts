@@ -109,6 +109,11 @@ export function createPdf(options: CreatePdfOptions): PdfWriter {
       throw new Error(`base de PDF: ${broken}`)
     }
     opened++
+    // D-NE134 (Valdo 2026-10-17 — gate R7-L4): o `addPage` do pdfkit reinicia a matriz mas NÃO a pilha de `save()` — pilha não vazia na
+    // abertura da folha é `save()` da FAMÍLIA atravessando a quebra (um recorte que deixaria o "Folha n/N" invisível, q/Q desbalanceado)
+    if ((doc as unknown as { _ctmStack: unknown[] })._ctmStack.length > 0) {
+      throw new Error('base de PDF: há save() aberto atravessando a quebra de folha (feche com restore() antes do conteúdo que transborda — D-NE134)')
+    }
     const start = opts.sheetStart
     if (!start) return
     starting = true

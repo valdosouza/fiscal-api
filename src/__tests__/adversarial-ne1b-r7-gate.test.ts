@@ -161,7 +161,7 @@ describe('NE-1b gate R7 — [ACHADO MEDIUM] R7-M2: `lineBreak: false` com `width
   const VALUE = 'VALOR TOTAL DOS PRODUTOS 1.234.567,89'
   const cell = { x: 400, width: 80, align: 'right' as const, lineBreak: false, sizePt: 8 }
 
-  it.failing('[ACHADO MEDIUM] R7-M2a — no meio da folha: o valor sai em 3 linhas (uma por cima da célula de baixo), não em 1', async () => {
+  it('[CORRIGIDO — ACHADO MEDIUM] R7-M2a — no meio da folha: o valor sai em 3 linhas (uma por cima da célula de baixo), não em 1', async () => {
     const w = createPdf({ marginCm: 1, title: 'M2a', creationDate: FIXED, fontRoles: ROLES })
     const refused = errorOf(() => writeText(w.doc, 'content', VALUE, { ...cell, y: 100 }))
     const pdf = await w.end()
@@ -169,7 +169,7 @@ describe('NE-1b gate R7 — [ACHADO MEDIUM] R7-M2: `lineBreak: false` com `width
     expect(pdfTextRuns(pdfContentOps(pdf)[0]).map(r => r.text)).toEqual([VALUE])
   })
 
-  it.failing('[ACHADO MEDIUM] R7-M2b — perto do pé: ABRE FOLHA (2 folhas para uma célula; o desenho seguinte da família cai na folha nova)', async () => {
+  it('[CORRIGIDO — ACHADO MEDIUM] R7-M2b — perto do pé: ABRE FOLHA (2 folhas para uma célula; o desenho seguinte da família cai na folha nova)', async () => {
     const w = createPdf({ marginCm: 1, title: 'M2b', creationDate: FIXED, fontRoles: ROLES })
     const refused = errorOf(() => writeText(w.doc, 'content', VALUE, { ...cell, y: 800 }))
     const pageAfterCell = internals(w.doc)._pageBuffer.indexOf(w.doc.page)
@@ -178,7 +178,7 @@ describe('NE-1b gate R7 — [ACHADO MEDIUM] R7-M2: `lineBreak: false` com `width
     expect({ pages: pdfPageCount(pdf), pageAfterCell }).toEqual({ pages: 1, pageAfterCell: 0 })
   })
 
-  it.failing('[ACHADO MEDIUM] R7-M2c — na passada por folha (o "Folha n/N" alinhado à direita no pé): o documento NÃO fecha — "a passada abriu folha nova"', async () => {
+  it('[CORRIGIDO — ACHADO MEDIUM] R7-M2c — na passada por folha (o "Folha n/N" alinhado à direita no pé): o documento NÃO fecha — "a passada abriu folha nova"', async () => {
     const w = createPdf({ marginCm: 1, title: 'M2c', creationDate: FIXED, fontRoles: ROLES })
     let error: Error | null = null
     try {
@@ -258,7 +258,7 @@ describe('NE-1b gate R7 — achados LOW', () => {
     expect(pages.map(viewer).map(p => ({ final: p.final, min: p.min }))).toEqual([{ final: 0, min: 0 }, { final: 0, min: 0 }])
   })
 
-  it.failing('[ACHADO LOW] R7-L4 — a entrada NEUTRA não cobre recorte nem matriz: um `save()`+`clip()` da família que ATRAVESSA a quebra de folha deixa o "FOLHA 1/2" da passada RECORTADO (invisível) e q/Q desbalanceado nas duas folhas, sem erro', async () => {
+  it('[CORRIGIDO — ACHADO LOW] R7-L4 — a entrada NEUTRA não cobre recorte nem matriz: um `save()`+`clip()` da família que ATRAVESSA a quebra de folha deixa o "FOLHA 1/2" da passada RECORTADO (invisível) e q/Q desbalanceado nas duas folhas, sem erro', async () => {
     const w = createPdf({ marginCm: 1, title: 'L4', creationDate: FIXED, fontRoles: ROLES })
     const d = w.doc
     let error: Error | null = null
@@ -296,7 +296,7 @@ describe('NE-1b gate R7 — achados LOW', () => {
     expect(measureText(w.doc, 'content', words(60), { width: 200, lineGap: -1000 }).height).toBeGreaterThanOrEqual(0)
   })
 
-  it.failing('[ACHADO LOW] R7-L7 — "só `y` usa o `x` corrente" (re-gate D2), mas depois de um `lineBreak: false` o x corrente é o FIM do texto anterior (o pdfkit avança `x` sem quebrador): a coluna de rótulos escrita só com `y` vira ESCADA (40 → 71 → 86 pt)', async () => {
+  it('[CORRIGIDO — ACHADO LOW] R7-L7 — "só `y` usa o `x` corrente" (re-gate D2), mas depois de um `lineBreak: false` o x corrente é o FIM do texto anterior (o pdfkit avança `x` sem quebrador): a coluna de rótulos escrita só com `y` vira ESCADA (40 → 71 → 86 pt)', async () => {
     const w = createPdf({ marginCm: 1, title: 'L7', creationDate: FIXED, fontRoles: ROLES })
     writeText(w.doc, 'content', 'CNPJ:', { x: 40, y: 100, lineBreak: false })
     writeText(w.doc, 'content', 'IE:', { y: 115, lineBreak: false })

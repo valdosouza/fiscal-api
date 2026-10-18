@@ -34,6 +34,11 @@ export function registerFontRoles<R extends string>(doc: PDFKit.PDFDocument, rol
       throw new RangeError(`fontes da base: papel "${role}" inválido (minúscula no início, sem nome de fonte-padrão nem de propriedade do JS)`)
     }
     if (!(STANDARD_FONTS as readonly string[]).includes(font)) throw new RangeError(`fontes da base: "${font}" não é fonte-padrão WinAnsi`)
+    // D-NE131 (Valdo 2026-10-17): um papel tem UMA fonte no documento inteiro — a grade medida não muda no meio; registrar de novo com a
+    // MESMA fonte é inofensivo
+    if (Object.prototype.hasOwnProperty.call(base.roles, role) && base.roles[role] !== font) {
+      throw new RangeError(`fontes da base: o papel "${role}" já é ${base.roles[role]} neste documento (um papel, uma fonte — D-NE131)`)
+    }
   }
   for (const [role, font] of entries) {
     base.roles[role] = font
@@ -85,6 +90,14 @@ export function toWinAnsi(text: string): { readonly text: string; readonly repla
  *   a quebra, por um espaço) e não entra na largura medida; o `characterSpacing` conta duas vezes no sublinhado. O DANFE não precisa de nenhum.
  * Espaçamentos só POSITIVOS (gate R7-L6: negativo leva o texto para fora da folha em silêncio); `lineGap` maior que zero — o pdfkit trata
  * `lineGap: 0` como "não informado" e usa o do documento.
+ * - texto GIRADO (D-NE130 — o canhoto vertical do DANFE paisagem, MOC 7.00 Anexo II 3.8.2): não há `rotation` na porta; a família gira o
+ *   DOCUMENTO em volta do `writeText` (`save()` → `rotate()` → `writeText` → `restore()`) — caminho que a cerca da NE-5 PERMITE.
+ *
+ * LINHA ÚNICA (D-NE132/D-NE133, Valdo 2026-10-17 — gate R7-M2/L7): `lineBreak: false` COM `width` é a CÉLULA do DANFE — a base escreve UMA linha,
+ * alinhada por ela dentro da largura (no pdfkit 0.20.2, havendo `width`, o texto passa pelo quebrador de linha, quebra e ABRE FOLHA); texto que
+ * não cabe na largura é RECUSADO (a família mede antes com `measureText` e abrevia ou reduz o corpo). Depois de toda escrita de linha única
+ * (`lineBreak: false`, com ou sem `width`) o `x` volta para onde ela COMEÇOU — o pdfkit o deixava no fim do texto e a coluna de rótulos escrita
+ * só com `y` virava escada.
  */
 export interface TextLayoutOptions {
   readonly width?: number
@@ -149,12 +162,36 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
   assertPosition('x', x)
   assertPosition('y', y)
   assertSize(sizePt)
-  const textOptions = layoutOptions(all, ['x', 'y', 'sizePt'])
+  const textOptions = layoutOptions(all, ['x', 'y', 'sizePt']) as Record<string, unknown>
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
+  const singleLine = textOptions.lineBreak === false && textOptions.width !== undefined
+  let lineWidth = 0
+  if (singleLine) {
+    for (const k of ['continued', 'height', 'ellipsis', 'indent', 'paragraphGap', 'lineGap']) {
+      if (textOptions[k] !== undefined) throw new RangeError(`fontes da base: "${k}" não se aplica à linha única (lineBreak: false com width — D-NE132)`)
+    }
+    if (t.text.includes('\n')) throw new RangeError('fontes da base: linha única (lineBreak: false com width) não leva quebra de linha (D-NE132)')
+    // mede ANTES de escrever, sem mexer no estado da família — a recusa não deixa rastro
+    lineWidth = isolated(doc, () => { doc.font(font); if (sizePt !== undefined) doc.fontSize(sizePt); return doc.widthOfString(t.text) },
+      { graphics: false, who: 'writeText' })
+    if (lineWidth > (textOptions.width as number) + 1e-6) {
+      throw new RangeError('fontes da base: o texto não cabe na largura da linha única — meça antes (measureText) e abrevie ou reduza o corpo (D-NE132)')
+    }
+  }
   doc.font(font)                                          // a fonte do registro DA BASE (re-gate S1/R7-L1), nunca a resolução do pdfkit pelo nome
   if (sizePt !== undefined) doc.fontSize(sizePt)
-  if (x !== undefined || y !== undefined) doc.text(t.text, x ?? doc.x, y ?? doc.y, textOptions)
+  const x0 = x ?? doc.x
+  if (singleLine) {
+    const width = textOptions.width as number
+    const align = textOptions.align ?? 'left'
+    const dx = align === 'right' ? width - lineWidth : align === 'center' ? (width - lineWidth) / 2 : 0
+    const line: Record<string, unknown> = { lineBreak: false }
+    if (textOptions.underline !== undefined) line.underline = textOptions.underline
+    if (textOptions.strike !== undefined) line.strike = textOptions.strike
+    doc.text(t.text, x0 + dx, y ?? doc.y, line)
+  } else if (x !== undefined || y !== undefined) doc.text(t.text, x0, y ?? doc.y, textOptions)
   else doc.text(t.text, textOptions)
+  if (textOptions.lineBreak === false) doc.x = x0                // D-NE133: a linha única devolve o x de onde começou
   return Object.freeze({ replaced: t.replaced })
 }
 
