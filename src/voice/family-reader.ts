@@ -54,6 +54,9 @@ export async function readFamilyTransmissionsMany<V extends TransmissionView>(
  * (o setes-api na F2a; a nfse-api também, sobre as próprias views) confere que a view de tentativas de CADA família do catálogo responde ao
  * SELECT publicado — com toda coluna da projeção comum (inclusive `authority_recorded` — nota (9) da F2a) e as da família. Falta de view,
  * coluna ou GRANT = falha ALTO no boot (nunca 500 na 1ª leitura da lista). Ordem de deploy: o serviço da família ANTES de quem lê.
+ * D-NE158 (NE-2, Valdo 2026-10-20): uma família FORA do catálogo (a `merchandise` até a janela da NE-6) é conferida pelo serviço dela
+ * passando a PRÓPRIA leitura em [readings] (a nfe-api: `[MERCHANDISE_VOICE_READING]`); o valor padrão (catálogo inteiro) segue para
+ * a nfse-api e o setes-api — "cada chamador diz o que confere" (sem padrão) fica para a janela da NE-6, quando os dois reiniciam.
  */
 export async function assertFamilyViewsReadable(
   q: ReadQueryable, db: string, readings: readonly VoiceFamilyReading<TransmissionView>[] = Object.values(VOICE_READINGS) as VoiceFamilyReading<TransmissionView>[],

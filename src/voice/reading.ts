@@ -44,7 +44,7 @@ export interface TransmissionView {
   lastEventAt:   string | null
 }
 
-/** Linha da view de VOZES de qualquer família (uma voz). */
+/** Linha da view de VOZES — D-NE160 (NE-2): FORA do contrato publicado (`fiscal-api/reading`); hoje só a NFS-e tem a view (`SERVICE_VOICE_READING.voiceView`) e nenhum leitor a consome pela biblioteca — a forma fica no barrel. */
 export interface VoiceView {
   institutionId: number
   invoiceId:     number
@@ -88,10 +88,12 @@ export interface VoiceFamilyReading<V extends TransmissionView> {
   /** A view de tentativas — CONVENÇÃO: `vw_<x>` sobre a tabela `tb_<x>` da família (o "instalada?" da D-NE76 deriva a tabela daqui; o
    *  teste da família confere contra o DDL). */
   readonly transmissionView: string
-  readonly voiceView:        string
+  // D-NE160 (= Q-NE160 (a), Valdo 2026-10-20 — NE-2): `voiceView` SAIU do contrato publicado — a view de VOZES não tem consumidor em família
+  // nenhuma (a tela "No fisco" lê as próprias tabelas; o setes-api lê só a de tentativas — L5 da NE-1a). A da NFS-e fica no banco, sem DROP,
+  // declarada só pela própria família (`families/service.ts`); a da NF-e não nasce.
   readonly ownColumns:       readonly ViewColumn[]
   readonly map:              (row: any) => V
-  /** Cancelamento cujo efeito no ERP só nasce de ato HUMANO (NFS-e: substituição e de ofício — D-F82); a NF-e define o dela (NE-2). */
+  /** Cancelamento cujo efeito no ERP só nasce de ato HUMANO (NFS-e: substituição e de ofício — D-F82; NF-e: NUNCA — D-NE159, `families/merchandise.ts`). */
   readonly humanEffectCancel: (current: Pick<TransmissionView, 'lastKind' | 'lastCode'> | null) => boolean
 }
 
