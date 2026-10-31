@@ -67,7 +67,11 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     const pkg = JSON.parse(read(path.resolve(SRC, '..', 'package.json')))
     // D-CJ2 (frente do CNPJ alfanumérico, 2026-10-15): o 2º subpath é a inscrição federal — peça PURA (sem banco), mesma forma de publicar
     // D-NE121 (NE-1b, 2026-10-17): o 3º subpath é a base de PDF — fora do índice principal e do `reading` (cerca `pdf-cerca.test.ts`)
-    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './federal-id', './package.json', './pdf', './reading'])
+    // D-AU6 (costura A1 da auth-api, 2026-10-31): o 4º subpath é o LEITOR do veredito de acesso `fiscal-api/access` (pilha de views — nada de
+    // escrita; vira `auth-api/access` na A2)
+    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './access', './federal-id', './package.json', './pdf', './reading'])
+    expect(pkg.exports['./access']).toEqual({ types: './dist/access.d.ts', default: './dist/access.js' })
+    expect(pkg.typesVersions['*'].access).toEqual(['dist/access.d.ts'])
     expect(pkg.exports['./reading']).toEqual({ types: './dist/reading.d.ts', default: './dist/reading.js' })
     expect(pkg.typesVersions['*'].reading).toEqual(['dist/reading.d.ts'])
     expect(pkg.exports['./federal-id']).toEqual({ types: './dist/federal-id.d.ts', default: './dist/federal-id.js' })
@@ -87,7 +91,7 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // por linha com OU sem \r — num checkout do Windows (core.autocrlf) o fonte vem em CRLF (achado na janela D-NE123)
     expect(read(path.join(SRC, 'pdf.ts')).split(/\r?\n/)[0]).toBe('/// <reference types="pdfkit" preserve="true" />')
   })
-  it('CERCA da F2a: o setes-api só importa `fiscal-api/reading` e `fiscal-api/federal-id` (D-CJ2 — peça pura, nada do lado de escrita)', () => {
+  it('CERCA da F2a: o setes-api só importa `fiscal-api/reading`, `fiscal-api/federal-id` (D-CJ2 — peça pura) e, só no adaptador, `fiscal-api/access` (D-AU6)', () => {
     const root = setesApiPath('src')                                        // D-F117: a worktree da F2a (ou a árvore viva) — tem de existir
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
       d.isDirectory() ? (d.name === 'node_modules' ? [] : walk(path.join(dir, d.name))) : /\.(?:ts|js)$/.test(d.name) ? [path.join(dir, d.name)] : [])
@@ -105,6 +109,8 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       }
       visit(sf)
     }
-    expect(specs.filter(s => !s.endsWith(': fiscal-api/reading') && !s.endsWith(': fiscal-api/federal-id'))).toEqual([])
+    // D-AU6: `fiscal-api/access` só no ADAPTADOR do setes-api (`@shared/access` — um leitor do veredito lá)
+    expect(specs.filter(s => !s.endsWith(': fiscal-api/reading') && !s.endsWith(': fiscal-api/federal-id')
+      && !/shared[\\/]access[\\/]index\.ts: fiscal-api\/access$/.test(s))).toEqual([])
   })
 })

@@ -24,6 +24,8 @@ export * from './db/migrations'
 
 // autenticação pelo login do produto (D-F13)
 export * from './auth/product-jwt'
+// veredito de acesso — a peça ÚNICA (costura A1 da auth-api, D-AU6); também no subpath `fiscal-api/access`
+export * as access from './access/access'
 
 // cofre (D-F16) e certificado A1
 export * from './secret/cipher'

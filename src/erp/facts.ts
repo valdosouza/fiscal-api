@@ -16,31 +16,32 @@ import { FederalIdFact, readFederalIdFact } from '../federal-id/federal-id'
  * O que vem daqui:
  *  - POLÍTICAS do ERP pelas VIEWs que o setes-api publica (D-F32 — migration 065): interface do RAMO
  *    por pedido (`vw_order_interface`) e VIDA da nota (`vw_invoice_life`) — uma verdade só;
- *  - privilégio por usuário × interface e licença (interface contratada — D-F14), fuso do
- *    estabelecimento (config `time_zone`), cadeia de entidade e `tb_entity_tax`;
+ *  - fuso do estabelecimento (config `time_zone`), cadeia de entidade e `tb_entity_tax`. O VEREDITO de acesso (privilégio,
+ *    licença, perfil — D-F13/D-F14) SAIU daqui na costura A1 da auth-api (D-AU6, 2026-10-31): é a biblioteca `access/` (subpath
+ *    `fiscal-api/access`), lendo a pilha de views publicada — sem número de privilégio no núcleo (D-PV49/D-PV53: verbo pelo NOME);
  *  - a TRAVA da nota (D-F31): `FOR UPDATE` na linha da `tb_invoice` + leitura travante COMPARTILHADA do
  *    último evento (regra 2 do PADROES §9) — a ÚNICA coisa que uma API fiscal faz no ERP além de ler.
  */
-
-export const PRIVILEGE_CANCELAR = 7
-export const PRIVILEGE_TRANSMITIR = 9
 
 const TTL_MS = Number(process.env.ERP_FACTS_CACHE_TTL_MS ?? 60_000)
 
 interface Cached<T> { value: T; expires: number }
 const zoneCache = new Map<string, Cached<string>>()
 const schemaCache = new Map<number, Cached<string | null>>()
-const interfaceIdCache = new Map<string, number>()
 
 export function resetErpFactsCache(): void {
-  zoneCache.clear(); schemaCache.clear(); interfaceIdCache.clear()
+  zoneCache.clear(); schemaCache.clear()
 }
 
 // ---------------------------------------------------------------------------
 // Identidade: o schema do token é o da institution?
 // ---------------------------------------------------------------------------
 
-/** Defesa em profundidade sobre o JWT: institution ativa e com ESTE schema. */
+/**
+ * Defesa em profundidade sobre o JWT: institution ativa e com ESTE schema. A nfse-api trocou esta conferência pela SESSÃO viva
+ * (`access.sessionOf` — vínculo, credencial e estabelecimento vivos + perfil vivo; D-UC9/D-AU3, costura A1); fica para quem ainda não
+ * trocou (a nfe-api da NE-2) — a troca lá é item do roteiro da NE-2 (D-UC9 vale para toda API do produto).
+ */
 export async function assertInstitutionSchema(q: Queryable, institutionId: number, schemaName: string): Promise<void> {
   assertSchema(schemaName)
   const hit = schemaCache.get(institutionId)
@@ -118,44 +119,6 @@ export async function invoiceLives(q: Queryable, schemaName: string, scope: Pick
     [scope.institutionId, invoiceIds, scope.terminal])
   for (const r of rows) out.set(Number(r.invoiceId), mapLife(r))
   return out
-}
-
-// ---------------------------------------------------------------------------
-// Autorização de AÇÃO (regra do ERP aplicada na porta fiscal — D-F13) e licença (D-F14)
-// ---------------------------------------------------------------------------
-
-async function interfaceIdOf(q: Queryable, interfaceKey: string): Promise<number | null> {
-  const cached = interfaceIdCache.get(interfaceKey)
-  if (cached !== undefined) return cached
-  const [rows] = await q.query(`SELECT id FROM setes_central.tb_interface WHERE i18n_key = ? AND deleted = 'N' LIMIT 1`, [interfaceKey])
-  if (!rows[0]) return null
-  const id = Number(rows[0].id)
-  interfaceIdCache.set(interfaceKey, id)
-  return id
-}
-
-/** Usuário regular tem o privilégio na interface? (vínculo ativo — mesma SQL do setes-api) */
-export async function userHasPrivilege(q: Queryable, schemaName: string, userId: number, interfaceKey: string, privilegeId: number): Promise<boolean> {
-  const s = assertSchema(schemaName)
-  const interfaceId = await interfaceIdOf(q, interfaceKey)
-  if (interfaceId == null) return false
-  const [rows] = await q.query(
-    `SELECT 1 FROM \`${s}\`.tb_user_has_privilege
-      WHERE tb_user_id = ? AND tb_interface_id = ? AND tb_privilege_id = ? AND active = 'S' AND deleted = 'N' LIMIT 1`,
-    [userId, interfaceId, privilegeId])
-  return rows.length > 0
-}
-
-/** Interface no contrato da institution (Q-N32 — leituras fiscais; licença — D-F14). */
-export async function institutionHasInterface(q: Queryable, schemaName: string, institutionId: number, interfaceKey: string): Promise<boolean> {
-  const s = assertSchema(schemaName)
-  const interfaceId = await interfaceIdOf(q, interfaceKey)
-  if (interfaceId == null) return false
-  const [rows] = await q.query(
-    `SELECT 1 FROM \`${s}\`.tb_institution_has_interface
-      WHERE tb_institution_id = ? AND tb_interface_id = ? AND (active IS NULL OR active = 'S') AND deleted = 'N' LIMIT 1`,
-    [institutionId, interfaceId])
-  return rows.length > 0
 }
 
 // ---------------------------------------------------------------------------

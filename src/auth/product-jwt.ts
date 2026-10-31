@@ -227,8 +227,10 @@ const defaultAuthReject = authRejectLog()
  * Middleware de autenticação. [check] (opcional) confere a identidade contra o banco — a fonte de
  * fatos garante que o `schemaName` do token é o da institution (defesa em profundidade). [onReject] = o log da CLASSE de cada 401
  * (D-F157; nunca o token); um 401 do [check] é "identity_mismatch". O log nunca derruba a resposta.
+ * Costura A1 da auth-api (D-UC9/D-AU3, 2026-10-31): o [check] pode DEVOLVER a identidade a usar — a SESSÃO viva (`access.sessionOf`)
+ * devolve o payload com o PERFIL VIVO no lugar do `role` do token (até a A2 o token ainda o leva, mas ninguém confia nele).
  */
-export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload) => Promise<void>,
+export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload) => Promise<void | InstitutionPayload>,
   onReject: (r: AuthReject) => void = defaultAuthReject) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     let payload: InstitutionPayload | undefined
@@ -239,7 +241,7 @@ export function productAuth(verifier: ProductTokenVerifier, check?: (p: Institut
       if (!header || !header.trim() || header.trim() === 'Bearer') throw new ProductAuthError('Token ausente', 'missing')
       if (!header.startsWith('Bearer ')) throw new ProductAuthError('Esquema de autenticação inesperado — use "Bearer <token>"', 'malformed')
       payload = verifier.verify(header.slice(7).trim())
-      if (check) await check(payload)
+      if (check) payload = (await check(payload)) ?? payload
       ;(req as any).institution = payload
       next()
     } catch (err) {
