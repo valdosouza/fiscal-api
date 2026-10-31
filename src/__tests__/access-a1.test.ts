@@ -5,7 +5,7 @@
 // prova do setes-api (`scripts/prove-user-access-views.ts`).
 import { HttpError } from '../errors/http-error'
 import {
-  sessionOf, liveIdentity, accessVerdict, reachableKeys, grantedKeys, accessRows, isPrivilegeName, PRIVILEGE_NAMES,
+  sessionOf, liveIdentity, accessVerdict, reachableKeys, grantedKeys, accessRows, isPrivilegeName, PRIVILEGE_NAMES, iatAsUtcDatetime,
 } from '../access/access'
 import * as surface from '../access'
 
@@ -23,6 +23,7 @@ function fakeDb(answer: (sql: string, params: any[]) => any[]) {
 }
 
 const WHO = { userId: 9, institutionId: 7, schemaName: 'setes_acme' }
+const IAT = 1_793_000_000                        // 2026-10-26 07:33:20 UTC
 
 describe('accessVerdict — caminho quente numa leitura; o motivo do 403 só na negação', () => {
   it('permitido: UMA leitura de vw_user_access pelo schema do token, verbo pelo NOME, chaves pela lista', async () => {
@@ -96,26 +97,46 @@ describe('reachableKeys / grantedKeys / accessRows', () => {
 })
 
 describe('sessionOf / liveIdentity — D-UC9: a sessão vale enquanto o vínculo vive', () => {
-  it('vínculo vivo: perfil e "a Setes" da view; pergunta pelo schema do token', async () => {
+  it('vínculo vivo: perfil e "a Setes" da view; pergunta pelo schema do token e pelo iat (D-EA7) na MESMA leitura', async () => {
     const { q, calls } = fakeDb(() => [{ profile: 'admin', vendor: 'N' }])
-    expect(await sessionOf(q, WHO)).toEqual({ ...WHO, profile: 'admin', vendor: false })
-    expect(calls[0].sql).toMatch(/FROM setes_central\.vw_user_link WHERE tb_user_id = \? AND tb_institution_id = \? AND schema_name = \?/)
-    expect(calls[0].params).toEqual([9, 7, 'setes_acme'])
+    expect(await sessionOf(q, WHO, IAT)).toEqual({ ...WHO, profile: 'admin', vendor: false })
+    expect(calls).toHaveLength(1)
+    expect(calls[0].sql).toMatch(/FROM setes_central\.vw_user_link WHERE tb_user_id = \? AND tb_institution_id = \? AND schema_name = \? AND \(password_set_at IS NULL OR password_set_at <= \?\) LIMIT 2$/)
+    expect(calls[0].params).toEqual([9, 7, 'setes_acme', '2026-10-26 07:33:20'])
   })
 
   it('sem linha, com DUAS linhas ou perfil fora do domínio → null (falha fechada)', async () => {
     for (const rows of [[], [{ profile: 'admin', vendor: 'N' }, { profile: 'user', vendor: 'N' }], [{ profile: 'Admin', vendor: 'N' }]]) {
-      expect(await sessionOf(fakeDb(() => rows).q, WHO)).toBeNull()
+      expect(await sessionOf(fakeDb(() => rows).q, WHO, IAT)).toBeNull()
     }
+  })
+
+  it('D-EA7: o iat vira o literal DATETIME UTC da coluna — sem fuso de sessão nem do driver; iat inválido nem chega ao banco', async () => {
+    expect(iatAsUtcDatetime(IAT)).toBe('2026-10-26 07:33:20')
+    expect(iatAsUtcDatetime(1)).toBe('1970-01-01 00:00:01')
+    const { q, calls } = fakeDb(() => [{ profile: 'user', vendor: 'N' }])
+    for (const bad of [0, -5, 1.5, NaN, Number.MAX_SAFE_INTEGER + 2] as number[]) {
+      await expect(sessionOf(q, WHO, bad)).rejects.toThrow(/iat/)
+    }
+    expect(calls).toHaveLength(0)
+  })
+
+  it('D-EA7 (semântica fixada — não "corrigir"): `password_set_at <= iat` — iat = T VALE; iat < T revoga (a view filtra)', () => {
+    // a fronteira mora no SQL: `password_set_at <= ?` com ? = iat. Mesma segundo → vale (token reemitido na mesma resposta, 1º login
+    // logo depois da criação); limite conhecido: token do MESMO segundo, anterior à troca, sobrevive até o exp. Prova ao vivo em banco
+    // descartável: setes-api `scripts/prove-user-access-views.ts`.
+    const sql = sessionOf.toString()
+    expect(sql).toContain('password_set_at IS NULL OR password_set_at <= ?')
+    expect(sql).not.toMatch(/password_set_at < \?/)
   })
 
   it('liveIdentity: o role do token é TROCADO pelo perfil vivo (rebaixar vale na hora)', async () => {
     const { q } = fakeDb(() => [{ profile: 'user', vendor: 'N' }])
-    expect(await liveIdentity(q, { ...WHO, role: 'admin' })).toEqual({ ...WHO, role: 'user' })
+    expect(await liveIdentity(q, { ...WHO, role: 'admin' }, IAT)).toEqual({ ...WHO, role: 'user' })
   })
 
-  it('liveIdentity sem sessão → 401 SESSION_REVOKED', async () => {
-    const err = await liveIdentity(fakeDb(() => []).q, { ...WHO, role: 'admin' }).catch(e => e)
+  it('liveIdentity sem sessão (vínculo morto OU senha trocada depois do token) → 401 SESSION_REVOKED', async () => {
+    const err = await liveIdentity(fakeDb(() => []).q, { ...WHO, role: 'admin' }, IAT).catch(e => e)
     expect(err).toBeInstanceOf(HttpError)
     expect([err.statusCode, err.code]).toEqual([401, 'SESSION_REVOKED'])
   })
@@ -131,8 +152,8 @@ describe('vocabulário e superfície', () => {
 
   it('o subpath `fiscal-api/access` expõe só o leitor do veredito (nada de escrita)', () => {
     expect(Object.keys(surface).sort()).toEqual([
-      'ACCESS_VIEWS', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'grantedKeys', 'isPrivilegeName', 'liveIdentity',
-      'reachableKeys', 'sessionOf',
+      'ACCESS_VIEWS', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'grantedKeys', 'iatAsUtcDatetime', 'isPrivilegeName',
+      'liveIdentity', 'reachableKeys', 'sessionOf',
     ])
   })
 })

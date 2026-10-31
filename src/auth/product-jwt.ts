@@ -179,7 +179,17 @@ export class ProductTokenVerifier {
     return new ProductTokenVerifier(keys, defaultKid ?? Object.keys(publicKeys)[0])
   }
 
+  /** A identidade do token (sem o `iat`) — o formato de sempre das rotas. */
   verify(token: string): InstitutionPayload {
+    return this.verifyWithIat(token).payload
+  }
+
+  /**
+   * A identidade + o `iat` (segundos). D-EA7 (Valdo 2026-10-31, costura A1): a SESSÃO viva compara o `iat` com o instante em que a senha
+   * foi definida (`vw_user_link.password_set_at`) — token sem `iat` inteiro = 401 (molde do `exp` — D-F165: sem ele a revogação seria
+   * falha ABERTA).
+   */
+  verifyWithIat(token: string): { payload: InstitutionPayload; iat: number } {
     // gate adversarial da Rodada 7 (R7-ADV-01): o `jws` faz JSON.parse do corpo — corpo que não é JSON LANÇA (SyntaxError) e virava 500
     // com stack no log, sem o limite do log do 401 (o setes-api responde 401 ao mesmo token): token que não decodifica = malformado
     let decoded: { header: JwtHeader } | null
@@ -209,7 +219,11 @@ export class ProductTokenVerifier {
       && typeof payload.role === 'string' && payload.role.length > 0
       && typeof payload.schemaName === 'string' && SCHEMA_RE.test(payload.schemaName)
     if (!ok) throw new ProductAuthError('Token sem a identidade da institution (token de seleção não serve aqui)', 'no_identity', safeKid(kid))
-    return { institutionId: payload.institutionId, userId: payload.userId, role: payload.role, schemaName: payload.schemaName }
+    if (!Number.isSafeInteger(payload.iat) || payload.iat <= 0) throw new ProductAuthError('Token sem o instante de emissão (iat)', 'invalid', safeKid(kid))
+    return {
+      payload: { institutionId: payload.institutionId, userId: payload.userId, role: payload.role, schemaName: payload.schemaName },
+      iat: payload.iat,
+    }
   }
 }
 
@@ -228,9 +242,10 @@ const defaultAuthReject = authRejectLog()
  * fatos garante que o `schemaName` do token é o da institution (defesa em profundidade). [onReject] = o log da CLASSE de cada 401
  * (D-F157; nunca o token); um 401 do [check] é "identity_mismatch". O log nunca derruba a resposta.
  * Costura A1 da auth-api (D-UC9/D-AU3, 2026-10-31): o [check] pode DEVOLVER a identidade a usar — a SESSÃO viva (`access.sessionOf`)
- * devolve o payload com o PERFIL VIVO no lugar do `role` do token (até a A2 o token ainda o leva, mas ninguém confia nele).
+ * devolve o payload com o PERFIL VIVO no lugar do `role` do token (até a A2 o token ainda o leva, mas ninguém confia nele); ele recebe
+ * o `iat` do token (D-EA7: troca de senha revoga o token anterior).
  */
-export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload) => Promise<void | InstitutionPayload>,
+export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload, iat: number) => Promise<void | InstitutionPayload>,
   onReject: (r: AuthReject) => void = defaultAuthReject) {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     let payload: InstitutionPayload | undefined
@@ -240,8 +255,9 @@ export function productAuth(verifier: ProductTokenVerifier, check?: (p: Institut
       // não diz "não veio token" quando veio um (gate adversarial da Rodada 6, R6-ADV-03)
       if (!header || !header.trim() || header.trim() === 'Bearer') throw new ProductAuthError('Token ausente', 'missing')
       if (!header.startsWith('Bearer ')) throw new ProductAuthError('Esquema de autenticação inesperado — use "Bearer <token>"', 'malformed')
-      payload = verifier.verify(header.slice(7).trim())
-      if (check) payload = (await check(payload)) ?? payload
+      const verified = verifier.verifyWithIat(header.slice(7).trim())
+      payload = verified.payload
+      if (check) payload = (await check(payload, verified.iat)) ?? payload
       ;(req as any).institution = payload
       next()
     } catch (err) {

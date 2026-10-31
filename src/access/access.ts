@@ -65,16 +65,31 @@ export const ACCESS_VIEWS = {
 const PROFILES: readonly string[] = ['super', 'admin', 'user']
 
 /**
+ * O `iat` do token (segundos de época) como o literal DATETIME UTC que a coluna `password_set_at` guarda. DATETIME × literal não depende do
+ * fuso da sessão nem do `timezone` do driver (nunca `UNIX_TIMESTAMP` na view — depende do `time_zone` de quem lê).
+ */
+export function iatAsUtcDatetime(iat: number): string {
+  if (!Number.isSafeInteger(iat) || iat <= 0) throw new Error(`iat inválido: ${iat}`)
+  return new Date(iat * 1000).toISOString().slice(0, 19).replace('T', ' ')
+}
+
+/**
  * A SESSÃO viva (D-UC9 + D-AU3): o vínculo do usuário com o estabelecimento DO TOKEN, com o schema do token, está vivo (credencial,
  * vínculo e estabelecimento ativos)? Devolve o PERFIL VIVO — quem autentica sobrescreve o `role` do token com ele até a A2 (o token
  * ainda leva `role`, mas ninguém confia nele). `null` = a sessão não vale mais (401 SESSION_REVOKED em quem chama).
+ *
+ * D-EA7 (Valdo 2026-10-31): na MESMA leitura, o token emitido ANTES de a senha atual ser definida (`iat < password_set_at`) não vale —
+ * trocar a senha derruba as sessões anteriores. `iat = T` VALE (o token reemitido na mesma resposta e o 1º login logo depois da criação);
+ * limite conhecido: um token emitido no mesmo segundo, antes da troca, sobrevive até o `exp`. `password_set_at` NULL = senha definida antes
+ * da regra (sem revogação; o TTL de 24 h fecha). Conhecimento negativo: não trocar para `<` / `<=` "por segurança" — o teste fixa.
  */
-export async function sessionOf(q: Queryable, who: AccessWho): Promise<AccessSession | null> {
+export async function sessionOf(q: Queryable, who: AccessWho, iat: number): Promise<AccessSession | null> {
   assertSchema(who.schemaName)
   const [rows] = await q.query(
     `SELECT profile, vendor FROM setes_central.vw_user_link
-      WHERE tb_user_id = ? AND tb_institution_id = ? AND schema_name = ? LIMIT 2`,
-    [who.userId, who.institutionId, who.schemaName])
+      WHERE tb_user_id = ? AND tb_institution_id = ? AND schema_name = ?
+        AND (password_set_at IS NULL OR password_set_at <= ?) LIMIT 2`,
+    [who.userId, who.institutionId, who.schemaName, iatAsUtcDatetime(iat)])
   if (!Array.isArray(rows) || rows.length !== 1) return null          // PK (institution, user): mais de uma linha = view adulterada
   const profile = String(rows[0].profile)
   if (!PROFILES.includes(profile)) return null                         // falha FECHADA: perfil fora do domínio não autentica
@@ -85,8 +100,8 @@ export async function sessionOf(q: Queryable, who: AccessWho): Promise<AccessSes
  * O [check] do middleware de autenticação (`productAuth` do núcleo; o setes-api tem o adaptador dele): a sessão viva ou 401
  * SESSION_REVOKED; o payload sai com o PERFIL VIVO no `role` (D-UC9 + D-AU3 — rebaixar/promover/inativar vale na hora, em toda rota).
  */
-export async function liveIdentity<P extends AccessWho & { role: string }>(q: Queryable, payload: P): Promise<P> {
-  const session = await sessionOf(q, payload)
+export async function liveIdentity<P extends AccessWho & { role: string }>(q: Queryable, payload: P, iat: number): Promise<P> {
+  const session = await sessionOf(q, payload, iat)
   if (!session) {
     throw new HttpError(401, 'O acesso deste usuário a este estabelecimento não vale mais — entre de novo', undefined,
       ErrorCodes.SESSION_REVOKED)
