@@ -16,6 +16,7 @@ export const ErrorCodes = {
   INTERFACE_NOT_ALLOWED:             'INTERFACE_NOT_ALLOWED',
   INSTITUTION_MISMATCH:              'INSTITUTION_MISMATCH',
   SESSION_REVOKED:                   'SESSION_REVOKED',
+  SESSION_UNAVAILABLE:               'SESSION_UNAVAILABLE',   // a sessão viva não pôde ser LIDA (banco fora) — 503, nunca 500
   // Nota (lida no ERP pela fonte de fatos — D-F10)
   INVOICE_NOT_FOUND:                 'INVOICE_NOT_FOUND',
   INVOICE_REASON_REQUIRED:           'INVOICE_REASON_REQUIRED',
@@ -68,6 +69,7 @@ export const ErrorCatalog: Record<ErrorCode, string> = {
   INTERFACE_NOT_ALLOWED:             'Interface do ramo não contratada para este estabelecimento (licença — D-F14)',
   INSTITUTION_MISMATCH:              'Token aponta um schema que não é o da institution — recusado',
   SESSION_REVOKED:                   'O acesso deste usuário a este estabelecimento não vale mais (vínculo, credencial ou estabelecimento inativo — D-UC9); entre de novo',
+  SESSION_UNAVAILABLE:               'A sessão não pôde ser conferida agora (banco indisponível) — tente novamente; o login segue valendo',
   INVOICE_NOT_FOUND:                 'Nota fiscal não encontrada (ou não emitida por este estabelecimento)',
   INVOICE_REASON_REQUIRED:           'Motivo do cancelamento é obrigatório',
   INVOICE_SERVICE_BRANCH_MISSING:    'Nota sem ramo de serviço — só nota com serviço gera DPS',

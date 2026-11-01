@@ -5,7 +5,7 @@ import { ErrorCodes } from '../errors/error-codes'
 
 /**
  * VEREDITO DE ACESSO DO PRODUTO — a peça ÚNICA (costura A1 da frente auth-api, D-AU3/D-AU6/D-AU8, Valdo 2026-10-31 —
- * `Infra-IA/prompts/prompt_frente_auth_api.md`; parecer do guardião no §7 de lá). "O usuário U pode exercer o verbo V na interface I
+ * `Infra-IA/prompts/prompt_frente_auth_api.md`; parecer do guardião no §3 de lá). "O usuário U pode exercer o verbo V na interface I
  * do estabelecimento X?" deixa de ter QUATRO cópias (setes-api `require-privilege`, núcleo `erp/facts`, guardas da nfse-api, SQL do
  * menu) e passa a ser UMA pilha de VIEWS fundíveis publicada no banco do produto, lida VIVA a cada requisição (sem cache — D-AU8:
  * revogação na hora em todos os processos, por construção):
@@ -97,6 +97,23 @@ export async function sessionOf(q: Queryable, who: AccessWho, iat: number): Prom
 }
 
 /**
+ * BOOT das APIs fiscais (gate socrático da costura A1): a `setes_central.vw_user_link` (script sql/70) responde, com o GRANT do serviço,
+ * pelas colunas que a sessão lê. Sem ela TODA rota autenticada viraria 503 na 1ª requisição — o serviço NÃO sobe (ordem da janela: sql/70 e
+ * o GRANT da D-AU12 ANTES do restart). As views POR SCHEMA (migration 075) são conferidas pelo boot do setes-api, que as cria.
+ */
+export async function assertSessionViewReadable(q: Queryable): Promise<string> {
+  try {
+    await q.query(`SELECT tb_user_id, tb_institution_id, schema_name, password_set_at, profile, vendor
+                     FROM setes_central.vw_user_link LIMIT 0`)   // nome LITERAL: a cerca do GRANT (D-AU12) lê o nome
+  } catch (err) {
+    const e = err as { code?: unknown; errno?: unknown }
+    throw new Error(`setes_central.vw_user_link ilegível (${String(e?.code ?? e?.errno ?? 'erro')}) — aplique o script `
+      + 'sql/70_user_access_central_views.sql e o GRANT da D-AU12 (ops/grants.sql) ANTES de subir (costura A1 — D-AU3/D-AU12)')
+  }
+  return 'ok'
+}
+
+/**
  * O [check] do middleware de autenticação (`productAuth` do núcleo; o setes-api tem o adaptador dele): a sessão viva ou 401
  * SESSION_REVOKED; o payload sai com o PERFIL VIVO no `role` (D-UC9 + D-AU3 — rebaixar/promover/inativar vale na hora, em toda rota).
  */
@@ -109,8 +126,15 @@ export async function liveIdentity<P extends AccessWho & { role: string }>(q: Qu
   return { ...payload, role: session.profile }
 }
 
+/**
+ * A forma CANÔNICA da chave de interface (D-PV42 — a MESMA do `INTERFACE_KEY_PATTERN` do setes-api, a forma das rotas do app).
+ * Conhecimento negativo: no MariaDB 10.4 o `utf8mb4_bin` é PAD SPACE — `interface_key IN ('orders ')` casa 'orders'. Chave fora da forma
+ * nunca chega ao banco: as quatro leituras julgam IGUAL (antes o veredito dizia 'ok' e o alcance dizia nada — gate adversarial da A1).
+ */
+const INTERFACE_KEY_FORM = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
+
 function keysOf(keys: readonly string[]): string[] {
-  return keys.filter((k, i) => typeof k === 'string' && k.length > 0 && keys.indexOf(k) === i)
+  return keys.filter((k, i) => typeof k === 'string' && INTERFACE_KEY_FORM.test(k) && keys.indexOf(k) === i)
 }
 
 /**
@@ -123,7 +147,8 @@ export async function accessVerdict(
 ): Promise<AccessVerdict> {
   const s = assertSchema(who.schemaName)
   const wanted = keysOf(keys)
-  if (wanted.length === 0 || !isPrivilegeName(privilege)) return 'not-contracted'
+  if (wanted.length === 0) return 'not-contracted'
+  if (!isPrivilegeName(privilege)) return 'no-privilege'   // verbo fora do vocabulário: ninguém o tem — o motivo é o VERBO, sem ir ao banco
   const [hit] = await q.query(
     `SELECT 1 FROM \`${s}\`.${ACCESS_VIEWS.userAccess}
       WHERE tb_user_id = ? AND tb_institution_id = ? AND interface_key IN (?) AND privilege = ? LIMIT 1`,

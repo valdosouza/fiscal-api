@@ -257,7 +257,17 @@ export function productAuth(verifier: ProductTokenVerifier, check?: (p: Institut
       if (!header.startsWith('Bearer ')) throw new ProductAuthError('Esquema de autenticação inesperado — use "Bearer <token>"', 'malformed')
       const verified = verifier.verifyWithIat(header.slice(7).trim())
       payload = verified.payload
-      if (check) payload = (await check(payload, verified.iat)) ?? payload
+      if (check) {
+        try {
+          payload = (await check(payload, verified.iat)) ?? payload
+        } catch (e) {
+          if (e instanceof HttpError) throw e
+          // a sessão viva não pôde ser LIDA (banco fora — gate adversarial da costura A1): 503 SESSION_UNAVAILABLE, fechado e sem
+          // derrubar o login no app (o 500 do `next(err)` dizia "erro interno"); a causa vai ao log, nunca à resposta
+          try { defaultLogger.error('Sessão viva não pôde ser lida', { message: e instanceof Error ? e.message : String(e) }) } catch { /* o log nunca derruba */ }
+          throw new HttpError(503, 'Serviço indisponível — tente novamente', undefined, ErrorCodes.SESSION_UNAVAILABLE)
+        }
+      }
       ;(req as any).institution = payload
       next()
     } catch (err) {

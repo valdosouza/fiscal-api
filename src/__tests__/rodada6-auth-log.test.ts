@@ -99,3 +99,19 @@ describe('D-F157 — a CLASSE do 401 no log (nunca o token)', () => {
     expect((await call(`Bearer ${sign(claims)}`)).next).toHaveBeenCalled()                      // com kid e exp: passa
   })
 })
+
+describe('costura A1 (gate adversarial) — a sessão viva que não pôde ser LIDA', () => {
+  it('check lançando erro de banco → 503 SESSION_UNAVAILABLE (nunca 500, nunca next); 401 do check segue 401 com o código', async () => {
+    const down = await call(`Bearer ${sign(claims)}`, async () => {
+      const e: any = new Error('connect ECONNREFUSED 127.0.0.1:3306'); e.code = 'ECONNREFUSED'; throw e
+    })
+    expect(down.res.status).toHaveBeenCalledWith(503)
+    expect(down.res.json.mock.calls[0][0]).toEqual({ error: 'Serviço indisponível — tente novamente', code: 'SESSION_UNAVAILABLE' })
+    expect(JSON.stringify(down.res.json.mock.calls[0][0])).not.toMatch(/ECONNREFUSED|3306/)          // a causa nunca vai à resposta
+    expect([down.next.mock.calls.length, down.seen.length]).toEqual([0, 0])                          // não é recusa de identidade
+    const revoked = await call(`Bearer ${sign(claims)}`, async () => {
+      throw new HttpError(401, 'não vale mais', undefined, 'SESSION_REVOKED')
+    })
+    expect([revoked.res.status.mock.calls[0][0], revoked.res.json.mock.calls[0][0].code]).toEqual([401, 'SESSION_REVOKED'])
+  })
+})

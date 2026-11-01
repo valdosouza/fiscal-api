@@ -38,7 +38,9 @@ function signRaw(header: object, payloadJson: string, key = privPem): string {
   const s = crypto.createSign('RSA-SHA256').update(`${h}.${p}`).sign(key)
   return `${h}.${p}.${b64u(s)}`
 }
-const realWith = (exp: string) => signRaw({ alg: 'RS256', typ: 'JWT', kid: 'k1' }, `{"institutionId":3,"userId":7,"role":"admin","schemaName":"setes_x","exp":${exp}}`)
+// D-EA7 (costura A1): o token do produto leva o `iat` — sem ele o verificador recusa (a revogação pela troca de senha seria falha aberta)
+const realWith = (exp: string) => signRaw({ alg: 'RS256', typ: 'JWT', kid: 'k1' },
+  `{"institutionId":3,"userId":7,"role":"admin","schemaName":"setes_x","iat":${Math.floor(Date.now() / 1000)},"exp":${exp}}`)
 const forge = (header: object, payloadText: string) =>
   `${b64u(Buffer.from(JSON.stringify(header), 'utf8'))}.${b64u(Buffer.from(payloadText, 'utf8'))}.${b64u(Buffer.from('lixo'))}`
 

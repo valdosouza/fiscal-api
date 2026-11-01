@@ -138,7 +138,7 @@ describe('2 — D-F157: a CLASSE contra o cabeçalho cru', () => {
     } finally { await srv.close() }
   })
 
-  it('[RESISTIU] o 401 do conferidor de identidade = identity_mismatch COM a institution; erro NÃO-HTTP do conferidor (banco fora) = next(err) → 500, nada no log do 401; a frase do kid desconhecido é a do saneado (nunca o cru)', async () => {
+  it('[RESISTIU] o 401 do conferidor de identidade = identity_mismatch COM a institution; erro NÃO-HTTP do conferidor (banco fora) = 503 SESSION_UNAVAILABLE (costura A1 — era next(err) → 500), nada no log do 401; a frase do kid desconhecido é a do saneado (nunca o cru)', async () => {
     const seen: AuthReject[] = []
     let mode: 'mismatch' | 'db' = 'mismatch'
     const srv = await serve(r => { seen.push(r) }, async () => {
@@ -149,7 +149,7 @@ describe('2 — D-F157: a CLASSE contra o cabeçalho cru', () => {
       const a = await srv.raw([`Authorization: Bearer ${sign()}`])
       mode = 'db'
       const b = await srv.raw([`Authorization: Bearer ${sign()}`])
-      expect([a.status, b.status]).toEqual([401, 500])
+      expect([a.status, b.status]).toEqual([401, 503])
       expect(seen).toEqual([{ authClass: 'identity_mismatch', kid: undefined, institutionId: 3, route: 'GET /v1/nfse/x' }])
     } finally { await srv.close() }
   })

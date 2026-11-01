@@ -6,6 +6,7 @@
 import { HttpError } from '../errors/http-error'
 import {
   sessionOf, liveIdentity, accessVerdict, reachableKeys, grantedKeys, accessRows, isPrivilegeName, PRIVILEGE_NAMES, iatAsUtcDatetime,
+  assertSessionViewReadable,
 } from '../access/access'
 import * as surface from '../access'
 
@@ -50,12 +51,25 @@ describe('accessVerdict — caminho quente numa leitura; o motivo do 403 só na 
     expect(await accessVerdict(q, WHO, ['orders'], 'FATURAR')).toBe('not-contracted')
   })
 
-  it('sem chave ou com verbo fora do vocabulário: nega SEM ir ao banco (falha fechada)', async () => {
+  it('sem chave ou com verbo fora do vocabulário: nega SEM ir ao banco (falha fechada); o motivo do verbo é o VERBO', async () => {
     const { q, calls } = fakeDb(() => [{ 1: 1 }])
     expect(await accessVerdict(q, WHO, [], 'VISUALIZAR')).toBe('not-contracted')
     expect(await accessVerdict(q, WHO, ['', ''], 'VISUALIZAR')).toBe('not-contracted')
-    expect(await accessVerdict(q, WHO, ['orders'], 'visualizar' as any)).toBe('not-contracted')
+    expect(await accessVerdict(q, WHO, ['orders'], 'visualizar' as any)).toBe('no-privilege')
     expect(calls).toHaveLength(0)
+  })
+
+  it('chave fora da forma canônica (D-PV42) nunca chega ao banco — PAD SPACE: `orders ` casaria `orders` (gate adversarial da A1)', async () => {
+    const { q, calls } = fakeDb(() => [{ 1: 1 }, { k: 'orders' }])
+    for (const k of ['orders ', ' orders', 'Orders', 'ORDERS', 'orders\t', 'service_orders', 'orders-', '-orders', 'or ders']) {
+      expect([k, await accessVerdict(q, WHO, [k], 'FATURAR')]).toEqual([k, 'not-contracted'])
+      expect([k, await reachableKeys(q, WHO, [k])]).toEqual([k, []])
+      expect([k, await grantedKeys(q, WHO, [k], 'FATURAR')]).toEqual([k, []])
+    }
+    expect(calls).toHaveLength(0)
+    // a chave canônica junto da torta: só a canônica vai ao banco
+    await accessVerdict(q, WHO, ['orders ', 'service-orders'], 'FATURAR')
+    expect(calls[0].params[2]).toEqual(['service-orders'])
   })
 
   it('schema inválido no token: lança antes de qualquer SQL', async () => {
@@ -142,6 +156,16 @@ describe('sessionOf / liveIdentity — D-UC9: a sessão vale enquanto o vínculo
   })
 })
 
+describe('boot das APIs fiscais — a vw_user_link legível (gate socrático da costura A1)', () => {
+  it('lê as colunas da sessão com LIMIT 0; ilegível = erro que diz o script e o GRANT (o serviço não sobe)', async () => {
+    const ok = fakeDb(() => [])
+    expect(await assertSessionViewReadable(ok.q)).toBe('ok')
+    expect(ok.calls[0].sql).toBe('SELECT tb_user_id, tb_institution_id, schema_name, password_set_at, profile, vendor FROM setes_central.vw_user_link LIMIT 0')
+    const down = { query: jest.fn(async () => { throw Object.assign(new Error('SELECT command denied'), { code: 'ER_TABLEACCESS_DENIED_ERROR' }) }) }
+    await expect(assertSessionViewReadable(down as any)).rejects.toThrow(/ER_TABLEACCESS_DENIED_ERROR.*sql\/70.*D-AU12/)
+  })
+})
+
 describe('vocabulário e superfície', () => {
   it('os verbos são os do catálogo, pelo NOME (D-PV53) — caixa exata', () => {
     expect(PRIVILEGE_NAMES).toEqual(['INSERIR', 'ALTERAR', 'EXCLUIR', 'IMPRIMIR', 'FATURAR', 'VISUALIZAR', 'CANCELAR', 'DESCONTO',
@@ -152,8 +176,8 @@ describe('vocabulário e superfície', () => {
 
   it('o subpath `fiscal-api/access` expõe só o leitor do veredito (nada de escrita)', () => {
     expect(Object.keys(surface).sort()).toEqual([
-      'ACCESS_VIEWS', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'grantedKeys', 'iatAsUtcDatetime', 'isPrivilegeName',
-      'liveIdentity', 'reachableKeys', 'sessionOf',
+      'ACCESS_VIEWS', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'assertSessionViewReadable', 'grantedKeys', 'iatAsUtcDatetime',
+      'isPrivilegeName', 'liveIdentity', 'reachableKeys', 'sessionOf',
     ])
   })
 })
