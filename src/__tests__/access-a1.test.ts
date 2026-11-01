@@ -176,8 +176,28 @@ describe('vocabulário e superfície', () => {
 
   it('o subpath `fiscal-api/access` expõe só o leitor do veredito (nada de escrita)', () => {
     expect(Object.keys(surface).sort()).toEqual([
-      'ACCESS_VIEWS', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'assertSessionViewReadable', 'grantedKeys', 'iatAsUtcDatetime',
+      'ACCESS_VIEWS', 'INTERFACE_KEY_FORM', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'assertSessionViewReadable', 'grantedKeys',
+      'iatAsUtcDatetime',
       'isPrivilegeName', 'liveIdentity', 'reachableKeys', 'sessionOf',
     ])
+  })
+})
+
+describe('UM classificador para a falha de LER a sessão (re-gate socrático da costura A1, L1)', () => {
+  it('banco fora na leitura da sessão → HttpError 503 SESSION_UNAVAILABLE (sessionOf e liveIdentity); a causa não vai à mensagem', async () => {
+    const down = { query: jest.fn(async () => { throw Object.assign(new Error('connect ECONNREFUSED 127.0.0.1:3306'), { code: 'ECONNREFUSED' }) }) }
+    for (const call of [() => sessionOf(down as any, WHO, IAT), () => liveIdentity(down as any, { ...WHO, role: 'admin' }, IAT)]) {
+      const err = await call().catch(e => e)
+      expect(err).toBeInstanceOf(HttpError)
+      expect([err.statusCode, err.code]).toEqual([503, 'SESSION_UNAVAILABLE'])
+      expect(err.message).not.toMatch(/ECONNREFUSED|3306/)
+    }
+  })
+
+  it('iat inválido ou schema inválido NÃO viram 503 (não é falha de banco — nem chegam a ele)', async () => {
+    const q = { query: jest.fn() }
+    await expect(sessionOf(q as any, WHO, 1.5)).rejects.not.toMatchObject({ statusCode: 503 })
+    await expect(sessionOf(q as any, { ...WHO, schemaName: 'x`;' }, IAT)).rejects.not.toMatchObject({ statusCode: 503 })
+    expect(q.query).not.toHaveBeenCalled()
   })
 })

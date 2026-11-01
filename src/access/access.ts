@@ -2,6 +2,7 @@ import { Queryable } from '../db/tx'
 import { assertSchema } from '../db/schema'
 import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
+import { logger } from '../log/logger'
 
 /**
  * VEREDITO DE ACESSO DO PRODUTO — a peça ÚNICA (costura A1 da frente auth-api, D-AU3/D-AU6/D-AU8, Valdo 2026-10-31 —
@@ -85,11 +86,20 @@ export function iatAsUtcDatetime(iat: number): string {
  */
 export async function sessionOf(q: Queryable, who: AccessWho, iat: number): Promise<AccessSession | null> {
   assertSchema(who.schemaName)
-  const [rows] = await q.query(
-    `SELECT profile, vendor FROM setes_central.vw_user_link
-      WHERE tb_user_id = ? AND tb_institution_id = ? AND schema_name = ?
-        AND (password_set_at IS NULL OR password_set_at <= ?) LIMIT 2`,
-    [who.userId, who.institutionId, who.schemaName, iatAsUtcDatetime(iat)])
+  const iatLiteral = iatAsUtcDatetime(iat)                              // iat inválido lança AQUI, antes do banco (nunca vira 503)
+  let rows: unknown
+  try {
+    ;[rows] = await q.query(
+      `SELECT profile, vendor FROM setes_central.vw_user_link
+        WHERE tb_user_id = ? AND tb_institution_id = ? AND schema_name = ?
+          AND (password_set_at IS NULL OR password_set_at <= ?) LIMIT 2`,
+      [who.userId, who.institutionId, who.schemaName, iatLiteral])
+  } catch (err) {
+    // UM classificador para a falha de LER a sessão (re-gate socrático da costura A1, L1): 503 SESSION_UNAVAILABLE em toda porta — o
+    // middleware do setes-api, a troca do token de seleção e o `productAuth` das APIs fiscais. A causa vai ao log, nunca à resposta.
+    try { logger.error('Sessão viva não pôde ser lida', { message: err instanceof Error ? err.message : String(err) }) } catch { /* o log nunca derruba */ }
+    throw new HttpError(503, 'Serviço indisponível — tente novamente', undefined, ErrorCodes.SESSION_UNAVAILABLE)
+  }
   if (!Array.isArray(rows) || rows.length !== 1) return null          // PK (institution, user): mais de uma linha = view adulterada
   const profile = String(rows[0].profile)
   if (!PROFILES.includes(profile)) return null                         // falha FECHADA: perfil fora do domínio não autentica
@@ -127,11 +137,12 @@ export async function liveIdentity<P extends AccessWho & { role: string }>(q: Qu
 }
 
 /**
- * A forma CANÔNICA da chave de interface (D-PV42 — a MESMA do `INTERFACE_KEY_PATTERN` do setes-api, a forma das rotas do app).
+ * A forma CANÔNICA da chave de interface (D-PV42 — a forma das rotas do app). UMA cópia: o setes-api a usa como `INTERFACE_KEY_PATTERN`
+ * pelo adaptador (re-gate socrático da costura A1, L3 — duas cópias divergentes negariam até ao super uma chave que a guarda aceita).
  * Conhecimento negativo: no MariaDB 10.4 o `utf8mb4_bin` é PAD SPACE — `interface_key IN ('orders ')` casa 'orders'. Chave fora da forma
  * nunca chega ao banco: as quatro leituras julgam IGUAL (antes o veredito dizia 'ok' e o alcance dizia nada — gate adversarial da A1).
  */
-const INTERFACE_KEY_FORM = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
+export const INTERFACE_KEY_FORM = /^[a-z][a-z0-9]*(-[a-z0-9]+)*$/
 
 function keysOf(keys: readonly string[]): string[] {
   return keys.filter((k, i) => typeof k === 'string' && INTERFACE_KEY_FORM.test(k) && keys.indexOf(k) === i)
@@ -205,6 +216,9 @@ export async function accessRows(q: Queryable, who: AccessWho): Promise<AccessRo
   const out: AccessRow[] = []
   for (const r of Array.isArray(rows) ? rows : []) {
     if (!isPrivilegeName(r.privilege)) continue                       // verbo fora do vocabulário (linha nova no catálogo): ninguém o pergunta
+    // chave fora da forma canônica (o RTRIM do sql/70 só tira espaço ASCII: 'Orders', tab, NBSP): as outras 3 leituras nunca a respondem —
+    // o menu também não (gate adversarial do delta da costura A1, L1)
+    if (typeof r.interfaceKey !== 'string' || !INTERFACE_KEY_FORM.test(r.interfaceKey)) continue
     out.push({ interfaceId: Number(r.interfaceId), interfaceKey: String(r.interfaceKey), privilege: r.privilege })
   }
   return out
