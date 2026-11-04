@@ -72,8 +72,11 @@ export function isSubstitutionCancel(current: Pick<TransmissionView, 'lastKind' 
   return current?.lastKind === 'C' && current.lastCode === SUBSTITUTION_CANCEL_CODE
 }
 
-/** A leitura PUBLICADA da família de serviço (views da migration da nfse-api — D-F35). */
-export const SERVICE_VOICE_READING: VoiceFamilyReading<ServiceTransmissionView> = Object.freeze({
+/**
+ * A leitura PUBLICADA da família de serviço (views da migration da nfse-api — D-F35). D-NE160 (NE-2): `voiceView` saiu do contrato COMUM
+ * (`VoiceFamilyReading`); a view de vozes da NFS-e FICA no banco (sem DROP) como fato só desta família — declarada aqui, fora do contrato.
+ */
+export const SERVICE_VOICE_READING: VoiceFamilyReading<ServiceTransmissionView> & { readonly voiceView: string } = Object.freeze({
   branch:            'service' as const,
   transmissionView:  'vw_invoice_service_transmission',
   voiceView:         'vw_invoice_service_transmission_event',

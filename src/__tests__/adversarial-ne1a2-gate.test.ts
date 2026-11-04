@@ -189,7 +189,7 @@ describe('B — o funil do escritor genérico e o descritor', () => {
     }
   })
 
-  it('contexto (→ NE1A2-09 da nfse-api; D-NE82 (a) — a cerca da família endurecida; o registro em execução, (c), segue EM PAUTA): o núcleo NÃO guarda registro de descritores — um 2º descritor da MESMA tabela com S na lista grava S nela; "um descritor só" é promessa da CERCA da família', async () => {
+  it('contexto (→ NE1A2-09 da nfse-api; D-NE82 (a) — a cerca da família endurecida; (c) REJEITADA pela D-NE167, NE-2 2026-10-20: a defesa em EXECUÇÃO é o CHECK BINÁRIO da tabela da família no banco — um registro no processo não cobre o outro serviço): o núcleo NÃO guarda registro de descritores — um 2º descritor da MESMA tabela com S na lista grava S nela; "um descritor só" por serviço é promessa da CERCA por AST da família (nfse-api e nfe-api)', async () => {
     const WIDE = defineVoiceFamily({ reading: SERVICE_VOICE_READING, eventTable: 'tb_invoice_service_transmission_event', writeKinds: ['A', 'S', 'P', 'D'] as const, label: 'NFS-e' })
     const { pool, inserts } = fakeConn()
     await underLock(pool, REF, async itx => {

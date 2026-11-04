@@ -29,9 +29,13 @@ import type { ExpectedCnpj } from '../secret/certificate'
  *   DELETE da habilitação de M                  — vivas da família de M em qualquer ambiente;
  *   DELETE do A1                                — vivas de TODAS as famílias (sem o A1 nenhuma reconciliação fecha, em família nenhuma).
  * CONHECIMENTO NEGATIVO: (1) as vivas do A1 NÃO filtram terminal (o A1 serve todos os terminais — o cuidado da D-NE12 não se aplica);
- * (2) 55 e 65 dividem a MESMA família — as vivas de um barram o ambiente do outro (sobre-bloqueio, falha FECHADO; a NE-2 decide se a
- * projeção ganha `model`); (3) família no catálogo sem a migration dela aplicada = erro 1146 no DELETE do A1 — NUNCA tratar como 0
- * (falha ABERTO); a família só entra em `VOICE_READINGS` junto com a conferência de boot da view dela.
+ * (2) 55 e 65 dividem a MESMA família — as vivas de um barram o ambiente do outro (sobre-bloqueio, falha FECHADO). D-NE160 (NE-2,
+ * Valdo 2026-10-20): a projeção NÃO ganha `model` até a F5 — na F4 só existe o 55 (D-NE2) e o sobre-bloqueio não tem objeto; na F5 o
+ * modelo sai da CHAVE (posições 21-22) e, se este emitter precisar filtrar por modelo, `model` entra na PROJEÇÃO COMUM (a NFS-e
+ * publica 'SE'), nunca como coluna só da família; (3) família no catálogo sem a migration dela aplicada = erro 1146 no DELETE do A1 —
+ * NUNCA tratar como 0 (falha ABERTO); a família só entra em `VOICE_READINGS` junto com a conferência de boot da view dela (D-NE158: a
+ * leitura `merchandise` existe no núcleo desde a NE-2 e entra no catálogo na janela da NE-6 — até lá este emitter conta 0 para ela,
+ * legítimo: nenhuma tentativa de NF-e é possível antes).
  */
 
 export interface EmitterDeps {

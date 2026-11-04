@@ -22,7 +22,9 @@ export {
   fiscalStateOf, isFiscalRecord, blocksNewAttempt, localCancelPendingIn,
 } from './voice/reading'
 export type {
-  InvoiceBranch, TransmissionView, VoiceView, ViewColumn, VoiceFamilyReading, FiscalState, ServiceFiscalState,
+  // D-NE160 (NE-2, gate socrático L6): `VoiceView` (a forma da view de VOZES) SAIU da superfície junto com `voiceView` — não tem produtor nem
+  // consumidor no contrato publicado; a forma segue no barrel como tipo da view própria da NFS-e
+  InvoiceBranch, TransmissionView, ViewColumn, VoiceFamilyReading, FiscalState, ServiceFiscalState,
 } from './voice/reading'
 export * from './voice/family-reader'
 export {
