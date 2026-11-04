@@ -95,6 +95,10 @@ export function toUtcDb(value: string | null | undefined, zone: string = DEFAULT
     utc = wall - offsetMs(zone, utc)
   }
   const dt = new Date(utc)
+  // D-NE172 (gate adversarial, BORDA_DE_DATA): a conversão para UTC pode sair do intervalo do DATETIME ('9999-12-31T23:59:59-03:00' vira o
+  // ano 10000) — antes a sessão sem modo estrito gravava data zero calada; na sessão ESTRITA o 1292 derrubaria a transação da voz (e a
+  // mesma resposta do fisco a derrubaria em toda consulta). Fora do intervalo = data inválida = null, a regra que esta peça já segue.
+  if (dt.getUTCFullYear() < 1000 || dt.getUTCFullYear() > 9999) return null
   return `${dt.getUTCFullYear()}-${pad(dt.getUTCMonth() + 1)}-${pad(dt.getUTCDate())} ${pad(dt.getUTCHours())}:${pad(dt.getUTCMinutes())}:${pad(dt.getUTCSeconds())}`
 }
 

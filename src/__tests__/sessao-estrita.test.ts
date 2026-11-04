@@ -32,6 +32,19 @@ describe('D-NE172 — a conexão nova do pool nasce ESTRITA', () => {
     expect(REQUIRED_SQL_MODE).toBe('STRICT_ALL_TABLES')
   })
 
+  it('gates (LOW): a conexão em que um invariante FALHA é DESTRUÍDA — nunca segue no pool fora da casa', () => {
+    createFiscalPool({ host: 'h', port: 1, user: 'u', password: 'p', database: 'fiscal_api' })
+    const destroy = jest.fn()
+    handlers.connection({
+      destroy,
+      query: (sql: string, cb: (e: unknown) => void) => cb(sql === STRICT_SESSION_SQL ? new Error('sem privilégio') : null),
+    })
+    expect(destroy).toHaveBeenCalledTimes(1)
+    const ok = jest.fn()
+    handlers.connection({ destroy: ok, query: (_: string, cb: (e: unknown) => void) => cb(null) })
+    expect(ok).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES', true],   // o modo do dev somado
     ['STRICT_ALL_TABLES', true],                                                                     // servidor com modo vazio
@@ -128,4 +141,31 @@ describe('D-NE172 — assertLengthRefused: o motor recusa o texto maior que a co
       .rejects.toThrow(/ACEITOU o kind fora do domínio \(S\)/)
     expect(log).toEqual(['BEGIN', 'INSERT', 'ROLLBACK', 'release'])
   })
+})
+
+describe('D-NE172 — cerca: nenhum código do núcleo mexe no sql_mode fora do pool', () => {
+  it('só `db/pool.ts` cita sql_mode no código (comentário não conta) — `SET [SESSION] sql_mode` ou `SET STATEMENT sql_mode=… FOR` desligaria o modo estrito sem o boot perceber', () => {
+    const fs = require('fs') as typeof import('fs')
+    const path = require('path') as typeof import('path')
+    const root = path.resolve(__dirname, '..')
+    const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
+      e.isDirectory() ? (e.name === '__tests__' ? [] : walk(path.join(dir, e.name))) : /\.[cm]?ts$/.test(e.name) ? [path.join(dir, e.name)] : [])
+    const hits = walk(root)
+      .filter(f => path.relative(root, f).split(path.sep).join('/') !== 'db/pool.ts')
+      .filter(f => /sql_mode/i.test(fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')))
+      .map(f => path.relative(root, f))
+    expect(hits).toEqual([])
+  })
+})
+
+describe('D-NE172 (gate adversarial, BORDA_DE_DATA) — a data do fisco fora do intervalo do DATETIME vira null, nunca o 1292 que derruba a voz', () => {
+  // import tardio: o mock do mysql2 acima não interfere na peça do fuso
+  const { toUtcDb } = require('../time/zone') as typeof import('../time/zone')
+  it.each([
+    ['9999-12-31T23:59:59-03:00', null],                    // vira o ano 10000 em UTC
+    ['9999-12-31T20:59:59-03:00', '9999-12-31 23:59:59'],   // o último instante que cabe
+    ['1000-01-01T00:00:00+03:00', null],                    // vira o ano 999 em UTC
+    ['1000-01-01T03:00:00+03:00', '1000-01-01 00:00:00'],
+    ['2026-11-04T09:00:00-03:00', '2026-11-04 12:00:00'],
+  ])('toUtcDb(%j) = %j', (v, expected) => expect(toUtcDb(v)).toBe(expected))
 })

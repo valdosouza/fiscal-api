@@ -55,9 +55,13 @@ export function createFiscalPool(cfg: FiscalDbConfig): Pool {
   }
   const pool = mysql.createPool(options)
   pool.on('connection', conn => {
-    const onFail = (what: string) => (err: unknown) =>
-      logger.error(`Conexão nova sem ${what} — invariante da casa violada`, { err })
-    const raw = conn as unknown as { query: (sql: string, cb: (err: unknown) => void) => void }
+    // gates da D-NE172 (LOW): a conexão que NÃO recebeu um invariante é DESTRUÍDA — nunca segue no pool fora da casa (o boot confere uma
+    // conexão só; antes o SET que falhava só ia ao log). O comando seguinte nela falha ALTO e o pool abre outra.
+    const raw = conn as unknown as { query: (sql: string, cb: (err: unknown) => void) => void; destroy?: () => void }
+    const onFail = (what: string) => (err: unknown) => {
+      logger.error(`Conexão nova sem ${what} — invariante da casa violada; conexão DESTRUÍDA`, { err })
+      try { raw.destroy?.() } catch { /* já caiu */ }
+    }
     raw.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ', err => { if (err) onFail('REPEATABLE READ')(err) })
     raw.query(`SET time_zone = '+00:00'`, err => { if (err) onFail("time_zone '+00:00'")(err) })
     raw.query(STRICT_SESSION_SQL, err => { if (err) onFail(REQUIRED_SQL_MODE)(err) })
