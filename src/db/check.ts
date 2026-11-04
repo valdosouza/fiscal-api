@@ -39,19 +39,8 @@ export async function assertCheckRefuses(
   pool: Pick<Pool, 'getConnection'>, what: string, probes: readonly CheckProbe[], opts: { withoutForeignKeys?: boolean } = {},
 ): Promise<void> {
   if (!probes.length) throw new Error('assertCheckRefuses: nenhuma sonda')
-  const conn = await pool.getConnection()
   const accepted: string[] = []
-  let previousForeignKeys: unknown = undefined
-  let reusable = true
-  try {
-    await conn.beginTransaction()
-    if (opts.withoutForeignKeys) {
-      // a tabela filha só aceita a linha com a mãe — a sonda mira o CHECK, não a FK; a sessão VOLTA ao valor que tinha (BEGIN que falha
-      // antes daqui não altera a sessão)
-      const [rows] = await conn.query('SELECT @@SESSION.foreign_key_checks AS v')
-      previousForeignKeys = (rows as any[])?.[0]?.v ?? 1
-      await conn.query('SET SESSION foreign_key_checks = 0')
-    }
+  await probeInTransaction(pool, opts, async conn => {
     for (const p of probes) {
       try {
         await conn.query(p.sql, [...p.params])
@@ -66,6 +55,71 @@ export async function assertCheckRefuses(
         throw err
       }
     }
+  })
+  reportAccepted(what, probes, accepted)
+}
+
+/** MariaDB e MySQL 1406 ER_DATA_TOO_LONG — o texto maior que a coluna, recusado pela sessão ESTRITA (D-NE172). */
+export function isDataTooLong(err: any): boolean {
+  return err?.errno === 1406 || String(err?.code ?? '') === 'ER_DATA_TOO_LONG'
+}
+
+/** Uma sonda de COMPRIMENTO: o valor tem 1 posição a mais que a coluna e, cortado nela, seria VÁLIDO (passaria em todo CHECK). */
+export interface LengthProbe {
+  /** O que a sonda grava (aparece na mensagem — nunca dado de cliente). */
+  readonly value:  string
+  /** A coluna atacada (`tabela.coluna` — só para a mensagem). */
+  readonly column: string
+  readonly sql:    string
+  readonly params: readonly unknown[]
+}
+
+/**
+ * D-NE172 (Valdo 2026-10-31): o boot PROVA que a sessão do pool é ESTRITA gravando, numa transação SEMPRE desfeita, um texto 1 posição
+ * maior que a coluna — o motor tem de RECUSAR com 1406. Sem o modo estrito ele TRUNCA calado (aviso 1265) e a linha cortada — válida —
+ * passaria no CHECK: a sonda é montada para que o corte dê um valor que o domínio ACEITA (senão um CHECK a recusaria e a sonda não
+ * provaria nada). Outro erro (sem GRANT, coluna, CHECK) sobe como está — nunca vira "a sessão é estrita". Mesma disciplina da conexão de
+ * `assertCheckRefuses` (ROLLBACK que falha = conexão destruída; FK da sessão volta ao que era).
+ */
+export async function assertLengthRefused(
+  pool: Pick<Pool, 'getConnection'>, what: string, probes: readonly LengthProbe[], opts: { withoutForeignKeys?: boolean } = {},
+): Promise<void> {
+  if (!probes.length) throw new Error('assertLengthRefused: nenhuma sonda')
+  await probeInTransaction(pool, opts, async conn => {
+    const accepted: string[] = []
+    for (const p of probes) {
+      try {
+        await conn.query(p.sql, [...p.params])
+        accepted.push(`${p.column} com ${p.value.length} posições`)
+      } catch (err) {
+        if (isDataTooLong(err)) continue
+        throw err
+      }
+    }
+    if (accepted.length) {
+      throw new Error(`O banco ACEITOU ${what} maior que a coluna (${accepted.join(', ')}) — a sessão NÃO é estrita: o motor truncou calado `
+        + `antes do CHECK (D-NE172 — o pool do núcleo soma STRICT_ALL_TABLES ao modo; algo o tirou, ou a conexão não veio do pool do núcleo)`)
+    }
+  })
+}
+
+/** A transação SEMPRE desfeita das sondas do boot (`assertCheckRefuses`/`assertLengthRefused`). */
+async function probeInTransaction(
+  pool: Pick<Pool, 'getConnection'>, opts: { withoutForeignKeys?: boolean }, body: (conn: PoolConnection) => Promise<void>,
+): Promise<void> {
+  const conn = await pool.getConnection()
+  let previousForeignKeys: unknown = undefined
+  let reusable = true
+  try {
+    await conn.beginTransaction()
+    if (opts.withoutForeignKeys) {
+      // a tabela filha só aceita a linha com a mãe — a sonda mira o CHECK/o comprimento, não a FK; a sessão VOLTA ao valor que tinha (BEGIN
+      // que falha antes daqui não altera a sessão)
+      const [rows] = await conn.query('SELECT @@SESSION.foreign_key_checks AS v')
+      previousForeignKeys = (rows as any[])?.[0]?.v ?? 1
+      await conn.query('SET SESSION foreign_key_checks = 0')
+    }
+    await body(conn)
   } finally {
     // ROLLBACK que falha com a conexão viva deixaria a transação aberta (o próximo BEGIN comitaria a sonda) — conexão DESTRUÍDA, nunca pool
     try { await conn.rollback() } catch { reusable = false }
@@ -75,6 +129,9 @@ export async function assertCheckRefuses(
     if (reusable) conn.release()
     else (conn as PoolConnection & { destroy?: () => void }).destroy?.()
   }
+}
+
+function reportAccepted(what: string, probes: readonly CheckProbe[], accepted: readonly string[]): void {
   const constraints = probes.map(p => p.constraint).filter((c, i, all) => all.indexOf(c) === i).join(', ')
   if (accepted.length === probes.length) {
     throw new Error(`O banco ACEITOU ${what} fora do domínio (${accepted.join(', ')}) — o motor não aplica CHECK ou falta a migration que `

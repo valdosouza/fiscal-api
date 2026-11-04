@@ -7,7 +7,12 @@ import { logger } from '../log/logger'
  * escreve no `fiscal_api`. Invariantes da casa (PADROES_BANCO §9/§10), fixados POR CONEXÃO e
  * conferidos no boot (`assertSessionInvariants`):
  *  - REPEATABLE READ (Q-G17) — os gap/range locks e a leitura travante dependem dele;
- *  - sessão em UTC (`timezone: 'Z'` do driver + `SET time_zone = '+00:00'` — Q-TZ1).
+ *  - sessão em UTC (`timezone: 'Z'` do driver + `SET time_zone = '+00:00'` — Q-TZ1);
+ *  - sessão ESTRITA (D-NE172, Valdo 2026-10-31 — `STRICT_ALL_TABLES` SOMADO ao modo do servidor): sem ele o MariaDB do dev TRUNCA o valor
+ *    maior que a coluna ANTES do CHECK (`access_key` de 45 gravava os 44 primeiros; 'HX' virava 'H') e o domínio "que fecha o que passa
+ *    por fora" valia só para o CONTEÚDO, nunca para o COMPRIMENTO — com ele, 1406 (ER_DATA_TOO_LONG). Os outros modos do servidor ficam
+ *    como estão (o MySQL 8 da F3 traz os dele — D-NE165). ⚠️ CONHECIMENTO NEGATIVO: `INSERT IGNORE` segue rebaixando o erro a AVISO mesmo
+ *    na sessão estrita (o `IGNORE` vence o STRICT) — quem precisa do domínio confere ANTES (PADROES_BANCO §11 regra 11 (a)).
  * O banco DEFAULT é o `fiscal_api` (tabelas da casa sem qualificador); todo SQL sobre o ERP
  * qualifica o schema (`setes_x`.…).
  */
@@ -55,12 +60,24 @@ export function createFiscalPool(cfg: FiscalDbConfig): Pool {
     const raw = conn as unknown as { query: (sql: string, cb: (err: unknown) => void) => void }
     raw.query('SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ', err => { if (err) onFail('REPEATABLE READ')(err) })
     raw.query(`SET time_zone = '+00:00'`, err => { if (err) onFail("time_zone '+00:00'")(err) })
+    raw.query(STRICT_SESSION_SQL, err => { if (err) onFail(REQUIRED_SQL_MODE)(err) })
   })
   return pool
 }
 
-/** Boot: confere REPEATABLE READ e UTC na sessão (falha alto — nunca roda fora dos invariantes). */
-export async function assertSessionInvariants(pool: Pool): Promise<{ isolation: string; timeZone: string }> {
+/** D-NE172: o modo que a sessão da casa EXIGE (somado ao do servidor — nunca substitui os outros). */
+export const REQUIRED_SQL_MODE = 'STRICT_ALL_TABLES'
+/** O comando que cada conexão nova roda: soma o modo estrito ao modo que a sessão herdou do servidor (vazio → só ele). */
+export const STRICT_SESSION_SQL =
+  `SET SESSION sql_mode = CONCAT_WS(',', NULLIF(@@SESSION.sql_mode, ''), '${REQUIRED_SQL_MODE}')`
+
+/** O modo da sessão contém o exigido (a lista do motor é separada por vírgula, em maiúsculas — comparação por item, nunca por pedaço). */
+export function sqlModeIsStrict(sqlMode: string): boolean {
+  return String(sqlMode).split(',').map(m => m.trim().toUpperCase()).includes(REQUIRED_SQL_MODE)
+}
+
+/** Boot: confere REPEATABLE READ, UTC e a sessão ESTRITA (falha alto — nunca roda fora dos invariantes). */
+export async function assertSessionInvariants(pool: Pool): Promise<{ isolation: string; timeZone: string; sqlMode: string }> {
   const [iso] = await pool.query<any[]>(`SHOW VARIABLES WHERE Variable_name IN ('tx_isolation', 'transaction_isolation')`)
   const isolation = String(iso[0]?.Value ?? '')
   if (isolation !== 'REPEATABLE-READ') {
@@ -69,5 +86,10 @@ export async function assertSessionInvariants(pool: Pool): Promise<{ isolation: 
   const [tz] = await pool.query<any[]>(`SELECT @@session.time_zone AS tz`)
   const timeZone = String(tz[0]?.tz ?? '')
   if (timeZone !== '+00:00') throw new Error(`Fuso da sessão é ${timeZone || 'desconhecido'} — a casa exige '+00:00'`)
-  return { isolation, timeZone }
+  const [mode] = await pool.query<any[]>(`SELECT @@SESSION.sql_mode AS m`)
+  const sqlMode = String(mode[0]?.m ?? '')
+  if (!sqlModeIsStrict(sqlMode)) {
+    throw new Error(`Modo da sessão é '${sqlMode || 'vazio'}' — a casa exige ${REQUIRED_SQL_MODE} (D-NE172: sem ele o motor trunca o texto maior que a coluna antes do CHECK)`)
+  }
+  return { isolation, timeZone, sqlMode }
 }
