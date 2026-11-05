@@ -194,8 +194,39 @@ describe('D-NE173 (Valdo 2026-11-05) — o executor de migrations abre a conexã
   })
   it('o SET não pegou (sessão sem o modo): FALHA ALTO antes de criar o banco ou aplicar qualquer migration — e a conexão é fechada', async () => {
     conn.sqlMode = 'NO_ENGINE_SUBSTITUTION'
-    await expect(runMigrations(cfg, [])).rejects.toThrow(/executor de migrations sem STRICT_ALL_TABLES .* nada aplicado \(D-NE173\)/)
+    await expect(runMigrations(cfg, [])).rejects.toThrow(/do executor de migrations \(nada aplicado — D-NE173\) é 'NO_ENGINE_SUBSTITUTION' — a casa exige STRICT_ALL_TABLES/)
     expect(conn.log.some(s => s.startsWith('CREATE DATABASE') || s.startsWith('USE') || /GET_LOCK/.test(s))).toBe(false)
     expect((jest.requireMock('mysql2/promise') as any).__conn.end).toHaveBeenCalled()
+  })
+  it('D-NE174: servidor com NO_BACKSLASH_ESCAPES — o executor FALHA ALTO antes de criar o banco (nada aplicado)', async () => {
+    conn.sqlMode = 'NO_BACKSLASH_ESCAPES,NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
+    await expect(runMigrations(cfg, [])).rejects.toThrow(/do executor de migrations .* traz NO_BACKSLASH_ESCAPES herdado do servidor — a casa o recusa \(D-NE174/)
+    expect(conn.log.some(s => s.startsWith('CREATE DATABASE') || /GET_LOCK/.test(s))).toBe(false)
+  })
+})
+
+describe('D-NE174 (Valdo 2026-11-05) — somar o estrito e RECUSAR os modos que quebram o escape do driver', () => {
+  const { forbiddenSqlModesIn, FORBIDDEN_SQL_MODES, assertSessionInvariants: inv } = require('../db/pool') as typeof import('../db/pool')
+  const poolWith = (sqlMode: string) => ({
+    query: jest.fn(async (sql: string) => {
+      if (/tx_isolation/.test(sql)) return [[{ Value: 'REPEATABLE-READ' }]]
+      if (/time_zone/.test(sql)) return [[{ tz: '+00:00' }]]
+      return [[{ m: sqlMode }]]
+    }),
+  })
+  it('a lista proibida é EXATAMENTE as duas do escape e das aspas', () => {
+    expect([...FORBIDDEN_SQL_MODES]).toEqual(['NO_BACKSLASH_ESCAPES', 'ANSI_QUOTES'])
+  })
+  it.each([
+    ['NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES', ['NO_BACKSLASH_ESCAPES']],
+    // o modo ANSI do servidor: o motor o EXPANDE e o ANSI_QUOTES vem junto
+    ['REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ANSI,STRICT_ALL_TABLES', ['ANSI_QUOTES']],
+    ['ansi_quotes,no_backslash_escapes,STRICT_ALL_TABLES', ['NO_BACKSLASH_ESCAPES', 'ANSI_QUOTES']],
+    ['IGNORE_SPACE,NO_ZERO_IN_DATE,NO_ZERO_DATE,NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES', []],     // o modo do dev somado — limpo
+    ['NO_BACKSLASH_ESCAPESX,XANSI_QUOTES,STRICT_ALL_TABLES', []],                                     // por ITEM, nunca por pedaço
+  ])('forbiddenSqlModesIn(%j) = %j', (mode, bad) => expect(forbiddenSqlModesIn(mode)).toEqual(bad))
+  it('o boot FALHA ALTO com o modo proibido herdado, mesmo com o estrito presente', async () => {
+    await expect(inv(poolWith('NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/do pool traz NO_BACKSLASH_ESCAPES herdado do servidor — a casa o recusa \(D-NE174/)
+    await expect(inv(poolWith('ANSI_QUOTES,NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/traz NO_BACKSLASH_ESCAPES e ANSI_QUOTES herdado/)
   })
 })
