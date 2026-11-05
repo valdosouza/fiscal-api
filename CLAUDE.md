@@ -12,10 +12,11 @@ Ao concluir tarefa que gere conhecimento novo, siga `Infra-IA/skills-genericas/a
 A **biblioteca do núcleo comum** das duas APIs fiscais — `nfse-api` (NFS-e/ADN) e `nfe-api`
 (NF-e/NFC-e/SEFAZ). **Não roda sozinha**: não tem porta, `server.ts` nem rotas. Os serviços a
 consomem como dependência pelo **pacote versionado** (D-F221…D-F225, 2026-11-05 — `prompt_apis_fiscais_isoladas.md` §23):
-`fiscal-api-X.Y.Z.tgz` gerado por `node scripts/pack-release.mjs <saída>` numa worktree LIMPA da tag `vX.Y.Z` e guardado em
+`fiscal-api-X.Y.Z.tgz` gerado por `node scripts/pack-release.mjs vX.Y.Z <saída>` (o script cria uma cópia NOVA da tag e a apaga) e guardado em
 `vendor/` de cada consumidor (`"fiscal-api": "file:vendor/fiscal-api-X.Y.Z.tgz"`); nenhum consumidor lê a pasta irmã (nem `paths`, nem
 `moduleNameMapper`). Número: correção sobe o 3º; só acrescenta sobe o do meio; muda o que os consumidores usam sobe o 1º. Dependências de
-execução em versão EXATA (D-F224). ⚠️ `npm pack` recompila o `dist` da pasta onde roda (mesmo com `--dry-run`/`--ignore-scripts`).
+execução em versão EXATA (D-F224). ⚠️ `npm pack` recompila o `dist` da pasta onde roda (mesmo com `--dry-run`/`--ignore-scripts`) e NÃO
+normaliza o fim de linha — por isso o `.gitattributes` (LF no que vai no pacote) e o `newLine: lf` do `tsconfig.build.json`.
 
 Conceito: *um emitente habilitado declara um documento fiscal ao fisco e recebe a voz dele.*
 O núcleo guarda o que é COMUM às famílias:

@@ -1,0 +1,6 @@
+# D-F221 (2026-11-05): o pacote versionado tem de sair IGUAL, byte a byte, de qualquer cópia limpa da tag, em qualquer máquina —
+# o `npm pack` NÃO normaliza o fim de linha (um package.json com CRLF numa cópia e LF noutra = integridade diferente). Tudo o que vai no
+# pacote (`files` do package.json + package.json + README) fica LF no disco; o `dist` sai LF pelo `newLine` do tsconfig.build.json.
+package.json text eol=lf
+README.md text eol=lf
+src/migrations/sql/** text eol=lf
