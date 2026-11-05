@@ -23,14 +23,35 @@ describe('D-NE172 — a conexão nova do pool nasce ESTRITA', () => {
     createFiscalPool({ host: 'h', port: 1, user: 'u', password: 'p', database: 'fiscal_api' })
     expect((mysql.createPool as jest.Mock)).toHaveBeenCalled()
     const ran: string[] = []
-    handlers.connection({ query: (sql: string, cb: (e: unknown) => void) => { ran.push(sql); cb(null) } })
+    const destroy = jest.fn()
+    handlers.connection({ destroy, query: (sql: string, cb: (e: unknown, rows?: any) => void) => { ran.push(sql); cb(null, [{ m: 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES' }]) } })
     expect(ran).toEqual([
+      'SELECT @@SESSION.sql_mode AS m',                       // D-NE175: o modo HERDADO, antes de qualquer SET (proibido nele = alarme + destruir)
       'SET SESSION TRANSACTION ISOLATION LEVEL REPEATABLE READ',
       `SET time_zone = '+00:00'`,
-      STRICT_SESSION_SQL,
+      STRICT_SESSION_SQL,                                     // retira os proibidos e soma o estrito — a defesa que o SERVIDOR executa em ordem
+      'SELECT @@SESSION.sql_mode AS m',                       // o modo final conferido
     ])
-    expect(STRICT_SESSION_SQL).toBe(`SET SESSION sql_mode = CONCAT_WS(',', NULLIF(@@SESSION.sql_mode, ''), 'STRICT_ALL_TABLES')`)
+    expect(destroy).not.toHaveBeenCalled()
     expect(REQUIRED_SQL_MODE).toBe('STRICT_ALL_TABLES')
+  })
+
+  it('D-NE175: o SET da sessão RETIRA os proibidos e os combinados que os trazem (o resultado no motor real está em strict-writers-db da nfse-api)', () => {
+    const { SQL_MODES_STRIPPED_FROM_SESSION } = require('../db/pool') as typeof import('../db/pool')
+    expect([...SQL_MODES_STRIPPED_FROM_SESSION]).toEqual(['NO_BACKSLASH_ESCAPES', 'ANSI_QUOTES', 'ANSI', 'ORACLE', 'MSSQL', 'POSTGRESQL', 'DB2', 'MAXDB'])
+    expect(STRICT_SESSION_SQL).toMatch(/^SET SESSION sql_mode = CONCAT_WS\(',', NULLIF\(TRIM\(BOTH ',' FROM .*\), ''\), 'STRICT_ALL_TABLES'\)$/)
+    for (const item of SQL_MODES_STRIPPED_FROM_SESSION) expect([item, STRICT_SESSION_SQL.includes(`',${item},', ','`)]).toEqual([item, true])
+  })
+
+  it('D-NE175: a conexão que HERDA um modo proibido é DESTRUÍDA na 1ª leitura (alarme), mesmo que o SET da casa a deixe limpa', () => {
+    createFiscalPool({ host: 'h', port: 1, user: 'u', password: 'p', database: 'fiscal_api' })
+    const destroy = jest.fn()
+    let reads = 0
+    handlers.connection({ destroy, query: (sql: string, cb: (e: unknown, rows?: any) => void) => {
+      if (/sql_mode AS m$/.test(sql)) return cb(null, [{ m: reads++ === 0 ? 'NO_BACKSLASH_ESCAPES,NO_ENGINE_SUBSTITUTION' : 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES' }])
+      cb(null)
+    } })
+    expect(destroy).toHaveBeenCalledTimes(1)
   })
 
   it('gates (LOW): a conexão em que um invariante FALHA é DESTRUÍDA — nunca segue no pool fora da casa', () => {
@@ -42,8 +63,27 @@ describe('D-NE172 — a conexão nova do pool nasce ESTRITA', () => {
     })
     expect(destroy).toHaveBeenCalledTimes(1)
     const ok = jest.fn()
-    handlers.connection({ destroy: ok, query: (_: string, cb: (e: unknown) => void) => cb(null) })
+    handlers.connection({ destroy: ok, query: (_: string, cb: (e: unknown, rows?: any) => void) => cb(null, [{ m: 'STRICT_ALL_TABLES' }]) })
     expect(ok).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES'],                                     // o servidor mudou o GLOBAL depois do boot
+    ['REAL_AS_FLOAT,PIPES_AS_CONCAT,ANSI_QUOTES,IGNORE_SPACE,ANSI,STRICT_ALL_TABLES'], // outro servidor atrás do proxy, em ANSI
+    ['NO_ENGINE_SUBSTITUTION'],                                                     // o SET do estrito "passou" mas a sessão não ficou estrita
+    [''],
+  ])('D-NE175: a conexão nova que nasce com o modo %j é DESTRUÍDA (a conferência é por conexão, não só no boot)', mode => {
+    createFiscalPool({ host: 'h', port: 1, user: 'u', password: 'p', database: 'fiscal_api' })
+    const destroy = jest.fn()
+    handlers.connection({ destroy, query: (_: string, cb: (e: unknown, rows?: any) => void) => cb(null, [{ m: mode }]) })
+    expect(destroy).toHaveBeenCalledTimes(1)
+  })
+
+  it('D-NE175: a leitura do modo que FALHA também destrói a conexão (nunca "sem resposta = está certo")', () => {
+    createFiscalPool({ host: 'h', port: 1, user: 'u', password: 'p', database: 'fiscal_api' })
+    const destroy = jest.fn()
+    handlers.connection({ destroy, query: (sql: string, cb: (e: unknown, rows?: any) => void) => cb(/sql_mode AS m/.test(sql) ? new Error('caiu') : null) })
+    expect(destroy).toHaveBeenCalledTimes(1)
   })
 
   it.each([
@@ -189,8 +229,16 @@ describe('D-NE173 (Valdo 2026-11-05) — o executor de migrations abre a conexã
   it('sessão estrita: o executor soma o modo logo depois do UTC e segue (cria o banco, trava, aplica)', async () => {
     conn.sqlMode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
     await expect(runMigrations(cfg, [])).resolves.toEqual([])
-    expect(conn.log.slice(0, 3)).toEqual([`SET time_zone = '+00:00'`, STRICT_SESSION_SQL, 'SELECT @@SESSION.sql_mode AS m'])
+    expect(conn.log.slice(0, 3)).toEqual([`SET time_zone = '+00:00'`, STRICT_SESSION_SQL, 'SELECT @@SESSION.sql_mode AS m, @@GLOBAL.sql_mode AS g'])
     expect(conn.log.some(s => s.startsWith('CREATE DATABASE IF NOT EXISTS'))).toBe(true)
+  })
+  it('D-NE174/D-NE175: servidor com NO_BACKSLASH_ESCAPES no GLOBAL — o executor não migra (a sessão sairia limpa, o servidor é que é recusado)', async () => {
+    conn.sqlMode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
+    const base = conn.query.getMockImplementation()!
+    conn.query.mockImplementation(async (sql: string, p?: unknown) =>
+      /@@GLOBAL\.sql_mode/.test(sql) ? [[{ m: conn.sqlMode, g: 'NO_BACKSLASH_ESCAPES,NO_ENGINE_SUBSTITUTION' }]] : base(sql, p))
+    await expect(runMigrations(cfg, [])).rejects.toThrow(/O sql_mode GLOBAL do servidor \(no executor de migrations — nada aplicado\) é 'NO_BACKSLASH_ESCAPES,NO_ENGINE_SUBSTITUTION': traz NO_BACKSLASH_ESCAPES/)
+    expect(conn.log.some(s => s.startsWith('CREATE DATABASE') || /GET_LOCK/.test(s))).toBe(false)
   })
   it('o SET não pegou (sessão sem o modo): FALHA ALTO antes de criar o banco ou aplicar qualquer migration — e a conexão é fechada', async () => {
     conn.sqlMode = 'NO_ENGINE_SUBSTITUTION'
@@ -248,6 +296,14 @@ describe('D-NE174 (Valdo 2026-11-05) — somar o estrito e RECUSAR os modos que 
   it('o boot FALHA ALTO com o modo proibido herdado, mesmo com o estrito presente', async () => {
     await expect(inv(poolWith('NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/do pool é '[^']*': traz NO_BACKSLASH_ESCAPES herdado do servidor — a casa o recusa \(D-NE174/)
     await expect(inv(poolWith('ANSI_QUOTES,NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/traz NO_BACKSLASH_ESCAPES e ANSI_QUOTES herdado/)
+  })
+  it('D-NE175: o boot confere o modo GLOBAL do servidor — a sessão sai limpa (o SET retira), mas o servidor torto NÃO sobe', async () => {
+    const pool = { query: jest.fn(async (sql: string) => {
+      if (/tx_isolation/.test(sql)) return [[{ Value: 'REPEATABLE-READ' }]]
+      if (/time_zone/.test(sql)) return [[{ tz: '+00:00' }]]
+      return [[{ m: 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES', g: 'ANSI_QUOTES,NO_ENGINE_SUBSTITUTION' }]]
+    }) }
+    await expect(inv(pool as any)).rejects.toThrow(/O sql_mode GLOBAL do servidor \(no boot do pool\) é 'ANSI_QUOTES,NO_ENGINE_SUBSTITUTION': traz ANSI_QUOTES/)
   })
   it('gate socrático L6: sem o estrito E com modo proibido, os DOIS problemas saem numa mensagem só', async () => {
     await expect(inv(poolWith('NO_BACKSLASH_ESCAPES') as any)).rejects.toThrow(/a casa exige STRICT_ALL_TABLES .*; traz NO_BACKSLASH_ESCAPES herdado/)

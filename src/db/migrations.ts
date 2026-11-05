@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import mysql, { Connection, ConnectionOptions } from 'mysql2/promise'
 import { logger } from '../log/logger'
-import { FiscalDbConfig, STRICT_SESSION_SQL, assertSqlModeOfHouse } from './pool'
+import { FiscalDbConfig, STRICT_SESSION_SQL, assertSqlModeOfHouse, assertServerSqlModeClean } from './pool'
 
 /**
  * EXECUTOR de migrations do banco `fiscal_api` (D-F35): o núcleo cria o executor e as suas
@@ -69,8 +69,10 @@ export async function runMigrations(cfg: FiscalDbConfig, sets: MigrationSet[]): 
     // FALHA ALTO (antes cortava calada — provado: 'abcdefgh' num VARCHAR(5) gravava 'abcde')
     await conn.query(STRICT_SESSION_SQL)
     // D-NE174: a mesma conferência do pool — estrito presente e nenhum modo que quebre o escape do driver; falhou = nada aplicado
-    const [mode] = await conn.query<any[]>(`SELECT @@SESSION.sql_mode AS m`)
+    const [mode] = await conn.query<any[]>(`SELECT @@SESSION.sql_mode AS m, @@GLOBAL.sql_mode AS g`)
     assertSqlModeOfHouse(String(mode[0]?.m ?? ''), 'do executor de migrations (nada aplicado — D-NE173)')
+    // D-NE174/D-NE175: a sessão RETIRA os itens proibidos — quem acusa o servidor torto é o modo GLOBAL: ele não migra
+    assertServerSqlModeClean(String(mode[0]?.g ?? ''), 'no executor de migrations — nada aplicado')
     await conn.query(`CREATE DATABASE IF NOT EXISTS \`${cfg.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`)
     await conn.query(`USE \`${cfg.database}\``)
     const [got] = await conn.query<any[]>(`SELECT GET_LOCK(?, 60) AS ok`, [`${cfg.database}:migrations`])
