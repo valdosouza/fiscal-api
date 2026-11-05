@@ -97,14 +97,17 @@ export function forbiddenSqlModesIn(sqlMode: string): string[] {
 
 /** A conferência ÚNICA do modo da sessão da casa (pool e executor de migrations): estrito presente E nenhum modo proibido. */
 export function assertSqlModeOfHouse(sqlMode: string, who: string): void {
+  // os DOIS problemas numa mensagem só (gate socrático L6: o operador não corrige um e bate no outro no boot seguinte)
+  const problems: string[] = []
   if (!sqlModeIsStrict(sqlMode)) {
-    throw new Error(`Modo da sessão ${who} é '${sqlMode || 'vazio'}' — a casa exige ${REQUIRED_SQL_MODE} (D-NE172: sem ele o motor trunca o texto maior que a coluna antes do CHECK)`)
+    problems.push(`a casa exige ${REQUIRED_SQL_MODE} (D-NE172: sem ele o motor trunca o texto maior que a coluna antes do CHECK)`)
   }
   const bad = forbiddenSqlModesIn(sqlMode)
   if (bad.length) {
-    throw new Error(`Modo da sessão ${who} traz ${bad.join(' e ')} herdado do servidor — a casa o recusa (D-NE174: quebra o escape do driver nos parâmetros `
-      + 'e o sentido das aspas); tire do sql_mode do servidor antes de subir')
+    problems.push(`traz ${bad.join(' e ')} herdado do servidor — a casa o recusa (D-NE174: quebra o escape do driver nos parâmetros `
+      + 'e o sentido das aspas; tire do sql_mode do servidor antes de subir)')
   }
+  if (problems.length) throw new Error(`Modo da sessão ${who} é '${sqlMode || 'vazio'}': ${problems.join('; ')}`)
 }
 
 /** Boot: confere REPEATABLE READ, UTC e a sessão ESTRITA sem modo proibido (falha alto — nunca roda fora dos invariantes). */

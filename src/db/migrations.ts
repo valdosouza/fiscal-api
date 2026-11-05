@@ -91,6 +91,11 @@ export async function runMigrations(cfg: FiscalDbConfig, sets: MigrationSet[]): 
           if (done.has(m.version)) continue
           const sql = fs.readFileSync(path.join(set.dir, m.file), 'utf8')
           for (const st of splitStatements(sql)) await conn.query(st)
+          // gates do delta D-NE173/D-NE174: a migration que mexeu no modo (`SET SESSION sql_mode`, o cabeçalho `/*!40101 SET SQL_MODE … */` do
+          // mysqldump) desligaria o estrito para TODAS as seguintes, inclusive de outra família — confere de novo DEPOIS de cada arquivo e,
+          // falhou, a migration NÃO é registrada (e o resto não roda). A cerca dos `.sql` impede o texto; esta conferência pega o efeito.
+          const [after] = await conn.query<any[]>(`SELECT @@SESSION.sql_mode AS m`)
+          assertSqlModeOfHouse(String(after[0]?.m ?? ''), `do executor de migrations depois de ${set.project}/${m.file} (não registrada — D-NE173)`)
           await conn.query(`INSERT INTO \`_migrations\` (project, version, name) VALUES (?, ?, ?)`, [set.project, m.version, m.name])
           applied.push(`${set.project}/${m.version}_${m.name}`)
           logger.info(`Migration aplicada: ${set.project} ${m.version} - ${m.name}`, { database: cfg.database })

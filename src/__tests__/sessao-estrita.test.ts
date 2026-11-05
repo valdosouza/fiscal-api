@@ -194,9 +194,29 @@ describe('D-NE173 (Valdo 2026-11-05) — o executor de migrations abre a conexã
   })
   it('o SET não pegou (sessão sem o modo): FALHA ALTO antes de criar o banco ou aplicar qualquer migration — e a conexão é fechada', async () => {
     conn.sqlMode = 'NO_ENGINE_SUBSTITUTION'
-    await expect(runMigrations(cfg, [])).rejects.toThrow(/do executor de migrations \(nada aplicado — D-NE173\) é 'NO_ENGINE_SUBSTITUTION' — a casa exige STRICT_ALL_TABLES/)
+    const end = (jest.requireMock('mysql2/promise') as any).__conn.end as jest.Mock
+    end.mockClear()                                         // gate socrático L2: mede o fechamento DESTE caminho, não o do teste anterior
+    await expect(runMigrations(cfg, [])).rejects.toThrow(/do executor de migrations \(nada aplicado — D-NE173\) é 'NO_ENGINE_SUBSTITUTION': a casa exige STRICT_ALL_TABLES/)
     expect(conn.log.some(s => s.startsWith('CREATE DATABASE') || s.startsWith('USE') || /GET_LOCK/.test(s))).toBe(false)
-    expect((jest.requireMock('mysql2/promise') as any).__conn.end).toHaveBeenCalled()
+    expect(end).toHaveBeenCalledTimes(1)
+  })
+  it('gates do delta: a migration que DESLIGA o estrito (SET SESSION sql_mode) é pega DEPOIS do arquivo — não é registrada e a seguinte não roda', async () => {
+    const fs = require('fs') as typeof import('fs'), os = require('os') as typeof import('os'), path = require('path') as typeof import('path')
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mig-mode-'))
+    try {
+      fs.writeFileSync(path.join(dir, '001_desliga.sql'), "SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION';\n")
+      fs.writeFileSync(path.join(dir, '002_seguinte.sql'), 'CREATE TABLE IF NOT EXISTS `t` (`k` VARCHAR(5));\n')
+      conn.sqlMode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
+      const base = conn.query.getMockImplementation()!
+      conn.query.mockImplementation(async (sql: string, p?: unknown) => {
+        if (/^SET SESSION sql_mode = 'NO_ENGINE_SUBSTITUTION'/.test(sql)) conn.sqlMode = 'NO_ENGINE_SUBSTITUTION'
+        return base(sql, p)
+      })
+      await expect(runMigrations(cfg, [{ project: 'p', dir }])).rejects.toThrow(/depois de p\/001_desliga\.sql \(não registrada — D-NE173\) é 'NO_ENGINE_SUBSTITUTION': a casa exige STRICT_ALL_TABLES/)
+      expect(conn.log.some(s => s.startsWith('INSERT INTO `_migrations`'))).toBe(false)
+      expect(conn.log.some(s => s.startsWith('CREATE TABLE IF NOT EXISTS `t`'))).toBe(false)
+      expect(conn.log.some(s => /RELEASE_LOCK/.test(s))).toBe(true)                        // a trava nomeada é solta mesmo na falha
+    } finally { fs.rmSync(dir, { recursive: true, force: true }) }
   })
   it('D-NE174: servidor com NO_BACKSLASH_ESCAPES — o executor FALHA ALTO antes de criar o banco (nada aplicado)', async () => {
     conn.sqlMode = 'NO_BACKSLASH_ESCAPES,NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
@@ -226,7 +246,22 @@ describe('D-NE174 (Valdo 2026-11-05) — somar o estrito e RECUSAR os modos que 
     ['NO_BACKSLASH_ESCAPESX,XANSI_QUOTES,STRICT_ALL_TABLES', []],                                     // por ITEM, nunca por pedaço
   ])('forbiddenSqlModesIn(%j) = %j', (mode, bad) => expect(forbiddenSqlModesIn(mode)).toEqual(bad))
   it('o boot FALHA ALTO com o modo proibido herdado, mesmo com o estrito presente', async () => {
-    await expect(inv(poolWith('NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/do pool traz NO_BACKSLASH_ESCAPES herdado do servidor — a casa o recusa \(D-NE174/)
+    await expect(inv(poolWith('NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/do pool é '[^']*': traz NO_BACKSLASH_ESCAPES herdado do servidor — a casa o recusa \(D-NE174/)
     await expect(inv(poolWith('ANSI_QUOTES,NO_BACKSLASH_ESCAPES,STRICT_ALL_TABLES') as any)).rejects.toThrow(/traz NO_BACKSLASH_ESCAPES e ANSI_QUOTES herdado/)
+  })
+  it('gate socrático L6: sem o estrito E com modo proibido, os DOIS problemas saem numa mensagem só', async () => {
+    await expect(inv(poolWith('NO_BACKSLASH_ESCAPES') as any)).rejects.toThrow(/a casa exige STRICT_ALL_TABLES .*; traz NO_BACKSLASH_ESCAPES herdado/)
+  })
+})
+
+describe('gates do delta — cerca dos .sql: nenhuma migration do núcleo cita sql_mode nem usa INSERT IGNORE', () => {
+  it('as migrations do núcleo (o executor confere o EFEITO depois de cada arquivo; esta cerca impede o TEXTO)', () => {
+    const fs = require('fs') as typeof import('fs'), path = require('path') as typeof import('path')
+    const { CORE_MIGRATIONS_DIR } = require('../db/migrations') as typeof import('../db/migrations')
+    const hits = fs.readdirSync(CORE_MIGRATIONS_DIR).filter(f => f.endsWith('.sql')).filter(f => {
+      const sql = fs.readFileSync(path.join(CORE_MIGRATIONS_DIR, f), 'utf8').replace(/--[^\n]*/g, '')   // comentário de linha não conta; /*!…*/ do mysqldump CONTA
+      return /sql_mode/i.test(sql) || /INSERT\s+IGNORE/i.test(sql)
+    })
+    expect(hits).toEqual([])
   })
 })
