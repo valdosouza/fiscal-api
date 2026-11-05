@@ -6,7 +6,8 @@
 jest.mock('mysql2/promise', () => {
   const handlers: Record<string, (conn: unknown) => void> = {}
   const pool = { on: (ev: string, fn: (conn: unknown) => void) => { handlers[ev] = fn; return pool } }
-  return { __esModule: true, default: { createPool: jest.fn(() => pool) }, __handlers: handlers }
+  const conn = { sqlMode: '', log: [] as string[], query: jest.fn(), end: jest.fn(async () => undefined) }
+  return { __esModule: true, default: { createPool: jest.fn(() => pool), createConnection: jest.fn(async () => conn) }, __handlers: handlers, __conn: conn }
 })
 
 import mysql, { Pool } from 'mysql2/promise'
@@ -144,14 +145,15 @@ describe('D-NE172 — assertLengthRefused: o motor recusa o texto maior que a co
 })
 
 describe('D-NE172 — cerca: nenhum código do núcleo mexe no sql_mode fora do pool', () => {
-  it('só `db/pool.ts` cita sql_mode no código (comentário não conta) — `SET [SESSION] sql_mode` ou `SET STATEMENT sql_mode=… FOR` desligaria o modo estrito sem o boot perceber', () => {
+  it('só `db/pool.ts` e `db/migrations.ts` citam sql_mode no código (comentário não conta) — `SET [SESSION] sql_mode` ou `SET STATEMENT sql_mode=… FOR` desligaria o modo estrito sem o boot perceber', () => {
     const fs = require('fs') as typeof import('fs')
     const path = require('path') as typeof import('path')
     const root = path.resolve(__dirname, '..')
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(e =>
       e.isDirectory() ? (e.name === '__tests__' ? [] : walk(path.join(dir, e.name))) : /\.[cm]?ts$/.test(e.name) ? [path.join(dir, e.name)] : [])
     const hits = walk(root)
-      .filter(f => path.relative(root, f).split(path.sep).join('/') !== 'db/pool.ts')
+      // as DUAS portas da sessão da casa: o pool (D-NE172) e o executor de migrations (D-NE173 — usa a constante do pool)
+      .filter(f => !['db/pool.ts', 'db/migrations.ts'].includes(path.relative(root, f).split(path.sep).join('/')))
       .filter(f => /sql_mode/i.test(fs.readFileSync(f, 'utf8').replace(/\/\*[\s\S]*?\*\//g, '').replace(/\/\/[^\n]*/g, '')))
       .map(f => path.relative(root, f))
     expect(hits).toEqual([])
@@ -168,4 +170,32 @@ describe('D-NE172 (gate adversarial, BORDA_DE_DATA) — a data do fisco fora do 
     ['1000-01-01T03:00:00+03:00', '1000-01-01 00:00:00'],
     ['2026-11-04T09:00:00-03:00', '2026-11-04 12:00:00'],
   ])('toUtcDb(%j) = %j', (v, expected) => expect(toUtcDb(v)).toBe(expected))
+})
+
+describe('D-NE173 (Valdo 2026-11-05) — o executor de migrations abre a conexão no MESMO modo estrito e confere ANTES de aplicar', () => {
+  const { runMigrations } = require('../db/migrations') as typeof import('../db/migrations')
+  const conn = (jest.requireMock('mysql2/promise') as { __conn: { sqlMode: string; log: string[]; query: jest.Mock } }).__conn
+  const cfg = { host: 'h', port: 1, user: 'u', password: 'p', database: 'fiscal_api_adv_x' }
+  beforeEach(() => {
+    conn.log = []
+    conn.query.mockImplementation(async (sql: string) => {
+      conn.log.push(sql.split('\n')[0].trim())
+      if (/@@SESSION\.sql_mode/.test(sql)) return [[{ m: conn.sqlMode }]]
+      if (/GET_LOCK/.test(sql)) return [[{ ok: 1 }]]
+      if (/SELECT version FROM/.test(sql)) return [[]]
+      return [[]]
+    })
+  })
+  it('sessão estrita: o executor soma o modo logo depois do UTC e segue (cria o banco, trava, aplica)', async () => {
+    conn.sqlMode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
+    await expect(runMigrations(cfg, [])).resolves.toEqual([])
+    expect(conn.log.slice(0, 3)).toEqual([`SET time_zone = '+00:00'`, STRICT_SESSION_SQL, 'SELECT @@SESSION.sql_mode AS m'])
+    expect(conn.log.some(s => s.startsWith('CREATE DATABASE IF NOT EXISTS'))).toBe(true)
+  })
+  it('o SET não pegou (sessão sem o modo): FALHA ALTO antes de criar o banco ou aplicar qualquer migration — e a conexão é fechada', async () => {
+    conn.sqlMode = 'NO_ENGINE_SUBSTITUTION'
+    await expect(runMigrations(cfg, [])).rejects.toThrow(/executor de migrations sem STRICT_ALL_TABLES .* nada aplicado \(D-NE173\)/)
+    expect(conn.log.some(s => s.startsWith('CREATE DATABASE') || s.startsWith('USE') || /GET_LOCK/.test(s))).toBe(false)
+    expect((jest.requireMock('mysql2/promise') as any).__conn.end).toHaveBeenCalled()
+  })
 })

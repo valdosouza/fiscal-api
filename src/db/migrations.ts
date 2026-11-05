@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import mysql, { Connection, ConnectionOptions } from 'mysql2/promise'
 import { logger } from '../log/logger'
-import { FiscalDbConfig } from './pool'
+import { FiscalDbConfig, STRICT_SESSION_SQL, REQUIRED_SQL_MODE, sqlModeIsStrict } from './pool'
 
 /**
  * EXECUTOR de migrations do banco `fiscal_api` (D-F35): o núcleo cria o executor e as suas
@@ -64,6 +64,14 @@ export async function runMigrations(cfg: FiscalDbConfig, sets: MigrationSet[]): 
   const applied: string[] = []
   try {
     await conn.query(`SET time_zone = '+00:00'`)
+    // D-NE173 (Valdo 2026-11-05, Q-NE173 = (a)): o executor escreve DDL e backfill no `fiscal_api` por conexão PRÓPRIA — nasce no MESMO modo
+    // estrito do pool (D-NE172), conferido ANTES de aplicar qualquer coisa: uma migration que encurta coluna ou grava dado fora do tamanho
+    // FALHA ALTO (antes cortava calada — provado: 'abcdefgh' num VARCHAR(5) gravava 'abcde')
+    await conn.query(STRICT_SESSION_SQL)
+    const [mode] = await conn.query<any[]>(`SELECT @@SESSION.sql_mode AS m`)
+    if (!sqlModeIsStrict(String(mode[0]?.m ?? ''))) {
+      throw new Error(`Sessão do executor de migrations sem ${REQUIRED_SQL_MODE} ('${String(mode[0]?.m ?? '')}') — nada aplicado (D-NE173)`)
+    }
     await conn.query(`CREATE DATABASE IF NOT EXISTS \`${cfg.database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`)
     await conn.query(`USE \`${cfg.database}\``)
     const [got] = await conn.query<any[]>(`SELECT GET_LOCK(?, 60) AS ok`, [`${cfg.database}:migrations`])
