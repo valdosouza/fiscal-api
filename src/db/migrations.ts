@@ -2,7 +2,7 @@ import fs from 'fs'
 import path from 'path'
 import mysql, { Connection, ConnectionOptions } from 'mysql2/promise'
 import { logger } from '../log/logger'
-import { FiscalDbConfig, STRICT_SESSION_SQL, assertSqlModeOfHouse, assertServerSqlModeClean } from './pool'
+import { FiscalDbConfig, STRICT_SESSION_SQL, assertSqlModeOfHouse, assertServerSqlModeClean, forbiddenSqlModesIn } from './pool'
 
 /**
  * EXECUTOR de migrations do banco `fiscal_api` (D-F35): o núcleo cria o executor e as suas
@@ -67,6 +67,14 @@ export async function runMigrations(cfg: FiscalDbConfig, sets: MigrationSet[]): 
     // D-NE173 (Valdo 2026-11-05, Q-NE173 = (a)): o executor escreve DDL e backfill no `fiscal_api` por conexão PRÓPRIA — nasce no MESMO modo
     // estrito do pool (D-NE172), conferido ANTES de aplicar qualquer coisa: uma migration que encurta coluna ou grava dado fora do tamanho
     // FALHA ALTO (antes cortava calada — provado: 'abcdefgh' num VARCHAR(5) gravava 'abcde')
+    // D-NE174/D-NE175 (gate socrático LOW-1): o executor RECUSA como o pool — lê o modo HERDADO da sessão ANTES do SET da casa (que retiraria
+    // calado o proibido vindo só da sessão: `init_connect`, proxy) e o modo GLOBAL; proibido em qualquer dos dois = nada aplicado
+    const [inherited] = await conn.query<any[]>(`SELECT @@SESSION.sql_mode AS m`)
+    const inheritedBad = forbiddenSqlModesIn(String(inherited[0]?.m ?? ''))
+    if (inheritedBad.length) {
+      throw new Error(`O sql_mode HERDADO pela sessão do executor de migrations traz ${inheritedBad.join(' e ')} — a casa o recusa (D-NE174/D-NE175: `
+        + 'quebra o escape do driver nos parâmetros e o sentido das aspas); nada aplicado')
+    }
     await conn.query(STRICT_SESSION_SQL)
     // D-NE174: a mesma conferência do pool — estrito presente e nenhum modo que quebre o escape do driver; falhou = nada aplicado
     const [mode] = await conn.query<any[]>(`SELECT @@SESSION.sql_mode AS m, @@GLOBAL.sql_mode AS g`)

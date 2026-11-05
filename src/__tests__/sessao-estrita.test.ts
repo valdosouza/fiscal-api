@@ -229,7 +229,7 @@ describe('D-NE173 (Valdo 2026-11-05) — o executor de migrations abre a conexã
   it('sessão estrita: o executor soma o modo logo depois do UTC e segue (cria o banco, trava, aplica)', async () => {
     conn.sqlMode = 'NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
     await expect(runMigrations(cfg, [])).resolves.toEqual([])
-    expect(conn.log.slice(0, 3)).toEqual([`SET time_zone = '+00:00'`, STRICT_SESSION_SQL, 'SELECT @@SESSION.sql_mode AS m, @@GLOBAL.sql_mode AS g'])
+    expect(conn.log.slice(0, 4)).toEqual([`SET time_zone = '+00:00'`, 'SELECT @@SESSION.sql_mode AS m', STRICT_SESSION_SQL, 'SELECT @@SESSION.sql_mode AS m, @@GLOBAL.sql_mode AS g'])
     expect(conn.log.some(s => s.startsWith('CREATE DATABASE IF NOT EXISTS'))).toBe(true)
   })
   it('D-NE174/D-NE175: servidor com NO_BACKSLASH_ESCAPES no GLOBAL — o executor não migra (a sessão sairia limpa, o servidor é que é recusado)', async () => {
@@ -268,8 +268,9 @@ describe('D-NE173 (Valdo 2026-11-05) — o executor de migrations abre a conexã
   })
   it('D-NE174: servidor com NO_BACKSLASH_ESCAPES — o executor FALHA ALTO antes de criar o banco (nada aplicado)', async () => {
     conn.sqlMode = 'NO_BACKSLASH_ESCAPES,NO_ENGINE_SUBSTITUTION,STRICT_ALL_TABLES'
-    await expect(runMigrations(cfg, [])).rejects.toThrow(/do executor de migrations .* traz NO_BACKSLASH_ESCAPES herdado do servidor — a casa o recusa \(D-NE174/)
-    expect(conn.log.some(s => s.startsWith('CREATE DATABASE') || /GET_LOCK/.test(s))).toBe(false)
+    // gate socrático LOW-1: o modo HERDADO é lido ANTES do SET da casa (que o retiraria calado) — recusa como o pool, nada aplicado
+    await expect(runMigrations(cfg, [])).rejects.toThrow(/O sql_mode HERDADO pela sessão do executor de migrations traz NO_BACKSLASH_ESCAPES — a casa o recusa \(D-NE174\/D-NE175/)
+    expect(conn.log.some(s => s === STRICT_SESSION_SQL || s.startsWith('CREATE DATABASE') || /GET_LOCK/.test(s))).toBe(false)
   })
 })
 
