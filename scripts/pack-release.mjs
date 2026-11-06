@@ -45,6 +45,13 @@ function main() {
   const file = path.join(dest, `fiscal-api-${version}.tgz`)
   if (existsSync(file)) fail(`já existe ${file} — um pacote publicado nunca é regravado (versão nova = número novo)`)
 
+  // D-F229: a suíte do núcleo VERDE no commit da tag é condição do pacote (desde a D-F228 as cercas sobre o fonte do núcleo moram SÓ nela).
+  // Ela roda NESTA pasta (não na cópia de %TEMP%): vários testes do núcleo leem as pastas irmãs do workspace (nfse-api, setes-api) — numa
+  // cópia isolada não provariam nada. Por isso esta pasta tem de estar EXATAMENTE na tag e sem alteração; o `npm test` não compila nada.
+  if (git(repo, 'rev-parse', 'HEAD') !== commit) fail(`a suíte roda nesta pasta, que tem de estar NA tag ${tag} (git checkout ${tag} ou o ff do main antes)`)
+  if (git(repo, 'status', '--porcelain') !== '') fail('esta pasta tem alteração ou arquivo novo — a suíte tem de rodar sobre o commit da tag, limpo')
+  try { run('npm', ['test'], repo, ['ignore', 'ignore', 'inherit']) } catch { fail(`a suíte do núcleo FALHOU no commit da tag ${tag} — nada foi empacotado (D-F229)`) }
+
   const work = mkdtempSync(path.join(tmpdir(), `fiscal-api-${tag}-`))
   const copy = path.join(work, 'fiscal-api')
   const staging = path.join(work, 'pacote')

@@ -13,11 +13,11 @@ const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'pack-release-test-'))
 const git = (cwd: string, ...a: string[]) => execFileSync('git', a, { cwd, encoding: 'utf8' }).trim()
 
 /** Repositório "fiscal-api" mínimo com a tag `v<version>`; `prepare` opcional (para sujar a cópia). */
-function fakeCore(name: string, version: string, prepare?: string): string {
+function fakeCore(name: string, version: string, prepare?: string, test = 'node -e "0"'): string {
   const repo = path.join(tmp, name)
   fs.mkdirSync(path.join(repo, 'scripts'), { recursive: true })
   const pkg: Record<string, unknown> = { name: 'fiscal-api', version, private: true, files: ['index.js'] }
-  if (prepare) pkg.scripts = { prepare }
+  pkg.scripts = prepare ? { test, prepare } : { test }                  // D-F229: o script roda o `npm test` da pasta na tag
   fs.writeFileSync(path.join(repo, 'package.json'), JSON.stringify(pkg, null, 2) + '\n')
   fs.writeFileSync(path.join(repo, 'package-lock.json'), JSON.stringify({
     name: 'fiscal-api', version, lockfileVersion: 3, requires: true, packages: { '': { name: 'fiscal-api', version } },
@@ -87,6 +87,25 @@ describe('pack-release.mjs', () => {
     const r = pack(repo, 'v1.1.0-ne3.1', out)
     expect(r.status).toBe(0)
     expect(fs.existsSync(path.join(out, 'fiscal-api-1.1.0-ne3.1.tgz'))).toBe(true)
+  })
+
+  it('[D-F229] suíte do núcleo VERMELHA no commit da tag: recusa, nada empacotado, nada criado', () => {
+    const repo = fakeCore('vermelho', '1.0.0', undefined, 'node -e "process.exit(1)"')
+    const out = path.join(tmp, 'saida-vermelha')
+    const r = pack(repo, 'v1.0.0', out)
+    expect(r.status).toBe(1)
+    expect(r.stderr).toMatch(/suíte do núcleo FALHOU/)
+    expect(fs.existsSync(out)).toBe(false)
+  })
+
+  it('[D-F229] a pasta de onde o script roda tem de estar NA tag e limpa (a suíte roda nela, com as irmãs do workspace)', () => {
+    const repo = fakeCore('fora-da-tag', '1.0.0')
+    fs.writeFileSync(path.join(repo, 'novo.txt'), 'x\n')
+    expect(pack(repo, 'v1.0.0', path.join(tmp, 'saida-fora')).stderr).toMatch(/alteração ou arquivo novo/)
+    git(repo, 'add', '.')
+    git(repo, 'commit', '-q', '-m', 'andou depois da tag')
+    expect(pack(repo, 'v1.0.0', path.join(tmp, 'saida-fora')).stderr).toMatch(/tem de estar NA tag/)
+    expect(fs.existsSync(path.join(tmp, 'saida-fora'))).toBe(false)
   })
 
   it('recusa tag malformada e tag inexistente antes de criar qualquer coisa', () => {
