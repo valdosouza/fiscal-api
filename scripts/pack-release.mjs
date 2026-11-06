@@ -12,7 +12,7 @@
 // de novo e conferir o MESMO sha512 (o `npm pack` fixa a data dos arquivos em 1985-10-26).
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync, mkdirSync, existsSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs'
+import { readFileSync, mkdirSync, existsSync, mkdtempSync, rmSync, copyFileSync, constants as fsConstants } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -32,7 +32,8 @@ function main() {
   const [tag, out] = process.argv.slice(2)
   // D-F226: número de RASCUNHO por iteração de uma frente (`v1.1.0-ne3.1`, `-ne3.2`…) — cada tentativa tem arquivo NOVO (o cache do npm
   // entrega calado o conteúdo antigo de um nome repetido); a cerca dos consumidores recusa rascunho no `main` deles
-  if (!tag || !/^v\d+\.\d+\.\d+(-[0-9a-z]+(\.[0-9a-z]+)*)?$/.test(tag) || !out) fail('uso: node scripts/pack-release.mjs vX.Y.Z[-rascunho.N] <pasta-de-saída>')
+  // semver sem zero à esquerda; rascunho = <frente>.<n> (letra primeiro, iteração ≥ 1) — gate adversarial do delta, LOW 5
+  if (!tag || !/^v(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-z][0-9a-z]*\.[1-9]\d*)?$/.test(tag) || !out) fail('uso: node scripts/pack-release.mjs vX.Y.Z[-frente.N] <pasta-de-saída>')
 
   const repo = git(process.cwd(), 'rev-parse', '--show-toplevel')
   let commit
@@ -66,7 +67,7 @@ function main() {
     mkdirSync(staging)
     // empacota DENTRO da pasta temporária; a saída só recebe o arquivo depois de TODAS as conferências (gate adversarial M2 — o pacote
     // recusado ficava na saída com o nome canônico e a 2ª execução o tratava como "já publicado")
-    run('npm', ['pack', '--pack-destination', staging], copy, ['ignore', 'ignore', 'inherit'])
+    run('npm', ['pack', '--pack-destination', path.relative(copy, staging)], copy, ['ignore', 'ignore', 'inherit'])   // relativo: %TEMP% com espaço (LOW 8)
     if (git(copy, 'status', '--porcelain') !== '') fail('o build sujou a cópia da tag (arquivo gerado fora do .gitignore?) — investigar')
     const staged = path.join(staging, `fiscal-api-${version}.tgz`)
     if (!existsSync(staged)) fail(`o npm pack não gerou fiscal-api-${version}.tgz`)
@@ -74,7 +75,7 @@ function main() {
     const bytes = readFileSync(staged)
     mkdirSync(dest, { recursive: true })
     if (existsSync(file)) fail(`já existe ${file} — alguém gravou enquanto o pacote era gerado`)
-    copyFileSync(staged, file)
+    copyFileSync(staged, file, fsConstants.COPYFILE_EXCL)
     console.log(JSON.stringify({
       file,
       version,

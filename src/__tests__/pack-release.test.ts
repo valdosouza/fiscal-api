@@ -91,7 +91,7 @@ describe('pack-release.mjs', () => {
 
   it('recusa tag malformada e tag inexistente antes de criar qualquer coisa', () => {
     const repo = fakeCore('tags', '1.0.0')
-    for (const tag of ['1.0.0', 'v1.0', 'v1.0.0-', 'v1.0.0-RC', 'v1.0.0-a..1', 'v1.0.0 ', 'v1.0.0;calc']) expect(pack(repo, tag, path.join(tmp, 'x')).status).toBe(1)
+    for (const tag of ['1.0.0', 'v1.0', 'v1.0.0-', 'v1.0.0-RC', 'v1.0.0-a..1', 'v1.0.0 ', 'v1.0.0;calc', 'v1.0.0-ne3', 'v1.0.0-1', 'v01.0.0', 'v1.0.0-ne3.1.2', 'v1.0.0-ne3.0']) expect(pack(repo, tag, path.join(tmp, 'x')).status).toBe(1)
     expect(pack(repo, 'v9.9.9', path.join(tmp, 'x')).stderr).toMatch(/não existe/)
     expect(fs.existsSync(path.join(tmp, 'x'))).toBe(false)
   })
