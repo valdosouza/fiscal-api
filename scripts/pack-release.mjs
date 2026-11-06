@@ -12,7 +12,7 @@
 // de novo e conferir o MESMO sha512 (o `npm pack` fixa a data dos arquivos em 1985-10-26).
 import { execFileSync } from 'node:child_process'
 import { createHash } from 'node:crypto'
-import { readFileSync, mkdirSync, existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { readFileSync, mkdirSync, existsSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 
@@ -30,12 +30,15 @@ const git = (cwd, ...a) => run('git', a, cwd).trim()
 
 function main() {
   const [tag, out] = process.argv.slice(2)
-  if (!tag || !/^v\d+\.\d+\.\d+$/.test(tag) || !out) fail('uso: node scripts/pack-release.mjs vX.Y.Z <pasta-de-saída>')
+  // D-F226: número de RASCUNHO por iteração de uma frente (`v1.1.0-ne3.1`, `-ne3.2`…) — cada tentativa tem arquivo NOVO (o cache do npm
+  // entrega calado o conteúdo antigo de um nome repetido); a cerca dos consumidores recusa rascunho no `main` deles
+  if (!tag || !/^v\d+\.\d+\.\d+(-[0-9a-z]+(\.[0-9a-z]+)*)?$/.test(tag) || !out) fail('uso: node scripts/pack-release.mjs vX.Y.Z[-rascunho.N] <pasta-de-saída>')
 
   const repo = git(process.cwd(), 'rev-parse', '--show-toplevel')
   let commit
   try { commit = git(repo, 'rev-parse', '--verify', `refs/tags/${tag}^{commit}`) } catch { fail(`a tag ${tag} não existe neste clone`) }
 
+  // tudo o que pode recusar barato recusa ANTES de criar qualquer coisa (gate adversarial L3)
   const dest = path.resolve(out)
   const version = tag.slice(1)
   const file = path.join(dest, `fiscal-api-${version}.tgz`)
@@ -43,6 +46,16 @@ function main() {
 
   const work = mkdtempSync(path.join(tmpdir(), `fiscal-api-${tag}-`))
   const copy = path.join(work, 'fiscal-api')
+  const staging = path.join(work, 'pacote')
+  const cleanup = () => {
+    // só a cópia DESTE script — nunca `git worktree prune` global (podaria worktree alheia com a pasta fora do ar — gate adversarial L1)
+    try { git(repo, 'worktree', 'remove', '--force', copy) } catch { /* a remoção da pasta abaixo resolve; o registro órfão fica com o nome fiscal-api-vX… */ }
+    rmSync(work, { recursive: true, force: true })
+  }
+  // Ctrl+C/encerramento no meio do `npm ci` também limpa (kill forçado do processo NÃO roda nada: sobra a pasta em %TEMP% com o nome
+  // `fiscal-api-vX.Y.Z-*` e o registro da worktree — limpar com `git worktree remove --force <pasta>` — gate adversarial L2)
+  const onSignal = (sig) => { cleanup(); console.error(`[pack-release] INTERROMPIDO (${sig}) — nada foi gravado na saída`); process.exit(130) }
+  for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.once(sig, onSignal)
   try {
     git(repo, 'worktree', 'add', '--detach', copy, commit)
     const pkg = JSON.parse(readFileSync(path.join(copy, 'package.json'), 'utf8'))
@@ -50,11 +63,18 @@ function main() {
     if (pkg.version !== version) fail(`a tag ${tag} aponta para um package.json com a versão ${pkg.version}`)
 
     run('npm', ['ci', '--no-audit', '--no-fund'], copy, ['ignore', 'ignore', 'inherit'])
-    mkdirSync(dest, { recursive: true })
-    run('npm', ['pack', '--pack-destination', dest], copy, ['ignore', 'ignore', 'inherit'])
+    mkdirSync(staging)
+    // empacota DENTRO da pasta temporária; a saída só recebe o arquivo depois de TODAS as conferências (gate adversarial M2 — o pacote
+    // recusado ficava na saída com o nome canônico e a 2ª execução o tratava como "já publicado")
+    run('npm', ['pack', '--pack-destination', staging], copy, ['ignore', 'ignore', 'inherit'])
     if (git(copy, 'status', '--porcelain') !== '') fail('o build sujou a cópia da tag (arquivo gerado fora do .gitignore?) — investigar')
+    const staged = path.join(staging, `fiscal-api-${version}.tgz`)
+    if (!existsSync(staged)) fail(`o npm pack não gerou fiscal-api-${version}.tgz`)
 
-    const bytes = readFileSync(file)
+    const bytes = readFileSync(staged)
+    mkdirSync(dest, { recursive: true })
+    if (existsSync(file)) fail(`já existe ${file} — alguém gravou enquanto o pacote era gerado`)
+    copyFileSync(staged, file)
     console.log(JSON.stringify({
       file,
       version,
@@ -64,10 +84,8 @@ function main() {
       bytes: bytes.length,
     }, null, 2))
   } finally {
-    // a cópia não tem junção (o núcleo não depende de `file:`), então apagar a pasta não segue para fora dela
-    try { git(repo, 'worktree', 'remove', '--force', copy) } catch { /* a remoção abaixo resolve */ }
-    rmSync(work, { recursive: true, force: true })
-    try { git(repo, 'worktree', 'prune') } catch { /* nada */ }
+    for (const sig of ['SIGINT', 'SIGTERM', 'SIGHUP', 'SIGBREAK']) process.removeListener(sig, onSignal)
+    cleanup()
   }
 }
 

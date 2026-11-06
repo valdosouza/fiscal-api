@@ -129,9 +129,14 @@ describe('D-F105 (= Q-F111 (a)) — a cerca é da FAMÍLIA; no núcleo, só SQL'
     expect(header).toMatch(/D-F105/)
     expect(header).toMatch(/D-F106/)
     expect(header).toMatch(/ServiceVoiceWriteKind/)
+    // D-F228 (Valdo 2026-11-06, "Cada um no seu"): a cerca da voz S SOBRE O NÚCLEO (`sqlOnly`) mora AQUI — `cercas-portadas-dos-consumidores
+    // .test.ts`, bloco A —, com a tabela numa CONSTANTE e o S em qualquer aspa; a da nfse-api não varre mais a pasta irmã
+    const port = read(path.join(SRC_ROOT, '__tests__', 'cercas-portadas-dos-consumidores.test.ts'))
+    expect(port).toMatch(/const VOICE_TABLE = 'invoice_service_transmission_event'/)
+    expect(port).toMatch(/\$\{INSERT_HEAD\}\[\^;\]\*\$\{VOICE_TABLE\}\\b\[\^;\]\*\$\{S_LIT\}/)
     if (!fs.existsSync(FENCE)) return
     const fence = read(FENCE)
-    expect(fence).toMatch(/sqlOnly: path\.resolve\(f\)\.startsWith\(CORE_ROOT \+ path\.sep\)/)
+    expect(fence).not.toMatch(/CORE_ROOT/)                                     // a família não lê mais o fonte do núcleo
     expect(fence).toMatch(/const VOICE_TABLE = 'invoice_service_transmission_event'/)
     expect(fence).toMatch(/\$\{INSERT_HEAD\}\[\^;\]\*\$\{VOICE_TABLE\}\\b\[\^;\]\*\$\{S_LIT\}/)
     expect(fence).not.toMatch(/transmission_event\\b\[\^;\]\*'S'/)             // a regex antiga (só aspa simples, tabela fixa) não volta
