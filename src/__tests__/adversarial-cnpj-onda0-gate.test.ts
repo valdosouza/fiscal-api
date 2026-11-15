@@ -171,11 +171,12 @@ describe('FsFiscalStorage — CNPJ alfanumérico e nomes hostis (RESISTIU)', () 
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
   it.each([['../../x'], ['PC3D315K000193/..'], ['PC3D315K000193́'], ['ＰC3D315K000193'], ['PC3D315K000193\u0000'], [' PC3D315K000193']])(
     'CNPJ hostil %j recusado (nunca vira outra pasta)', bad => {
-      expect(() => st.save(bad, 'A-nfse.xml', '<a/>', when, 'P', 'UTC')).toThrow(/CNPJ inválido para o arquivo fiscal/)
+      expect(() => st.save({ cnpj: bad, kind: 'nfse', serie: 1, environment: 'P', zone: 'UTC' }, 'A-nfse.xml', '<a/>', when)).toThrow(/CNPJ inválido para o arquivo fiscal/)
     })
   it('nome de arquivo com separador/traversal recusado mesmo com CNPJ alfanumérico válido', () => {
-    for (const name of ['../x-nfse.xml', '..\\x-nfse.xml', 'a/b-nfse.xml']) expect(() => st.save(V, name, '<a/>', when, 'P', 'UTC')).toThrow(/Nome de arquivo fiscal inválido/)
-    expect(st.find(V, '../x-nfse.xml', [], 'P', 'UTC')).toBeNull()
+    const key = { cnpj: V, kind: 'nfse' as const, serie: 1, environment: 'P' as const, zone: 'UTC' }
+    for (const name of ['../x-nfse.xml', '..\\x-nfse.xml', 'a/b-nfse.xml']) expect(() => st.save(key, name, '<a/>', when)).toThrow(/Nome de arquivo fiscal inválido/)
+    expect(st.find(key, '../x-nfse.xml', [])).toBeNull()
   })
 })
 

@@ -13,7 +13,7 @@ import {
   CANCEL_EVENT_CODES, SUBSTITUTION_CANCEL_CODE, EX_OFFICIO_CANCEL_CODE, HUMAN_EFFECT_CANCEL_CODES,
 } from '../voice/families/service'
 import { ProductTokenVerifier, isAdmin, isSuper } from '../auth/product-jwt'
-import { FsFiscalStorage } from '../storage/fiscal-storage'
+import { FsFiscalStorage, FiscalFileKey, fiscalSerieFolder, fiscalStorageRootFromEnv } from '../storage/fiscal-storage'
 import { splitStatements } from '../db/migrations'
 import { erpWrites, erpWritesIn, NAMED_WRITE_EXCEPTIONS } from './fence'
 
@@ -126,33 +126,134 @@ describe('JWT do produto (D-F13) — RS256 só com a chave PÚBLICA', () => {
   })
 })
 
-describe('arquivo fiscal (FsFiscalStorage) — layout herdado', () => {
+describe('arquivo fiscal (FsFiscalStorage) — layout da D-F241: <cnpj>/[H/]<tipo>/<série>/<ano>/<mês>/<dia>', () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fiscal-storage-'))
   afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
   const st = new FsFiscalStorage(root)
+  const C = '12345678000199'
+  const key = (o: Partial<FiscalFileKey> = {}): FiscalFileKey => ({ cnpj: C, kind: 'nfse', serie: 1, environment: 'P', zone: 'America/Sao_Paulo', ...o })
 
-  it('produção em <cnpj>/<ano>/<mês>; homologação em <cnpj>/H/… (Q-N38a); mês na ZONA (Q-TZ7)', () => {
+  it('produção em <cnpj>/<tipo>/<série>/<ano>/<mês>/<dia>; homologação em <cnpj>/H/… (Q-N38a); dia na ZONA (Q-TZ7)', () => {
     const when = new Date('2026-10-01T02:30:00Z')                 // 30/09 23:30 em São Paulo
-    const p = st.save('12345678000199', 'X-nfse.xml', '<a/>', when, 'P', 'America/Sao_Paulo')
-    expect(p).toBe(path.join(root, '12345678000199', '2026', '09', 'X-nfse.xml'))
-    const h = st.save('12345678000199', 'Y-nfse.xml', '<b/>', when, 'H', 'UTC')
-    expect(h).toBe(path.join(root, '12345678000199', 'H', '2026', '10', 'Y-nfse.xml'))
-    expect(st.find('12345678000199', 'X-nfse.xml', ['2026-10-01 02:30:00'], 'P', 'America/Sao_Paulo')).toBe(p)
-    expect(st.find('12345678000199', 'Y-nfse.xml', [], 'H', 'UTC')).toBe(h)            // varredura
-    expect(st.find('12345678000199', 'Y-nfse.xml', [], 'P', 'UTC')).toBeNull()        // produção nunca olha dentro de H
-    expect(st.find('12345678000199', '../../etc', [], 'P', 'UTC')).toBeNull()
-    expect(() => st.save('12345678000199', '../x', '<c/>', when, 'P', 'UTC')).toThrow()
+    const p = st.save(key(), 'X-nfse.xml', '<a/>', when)
+    expect(p).toBe(path.join(root, C, 'nfse', '1', '2026', '09', '30', 'X-nfse.xml'))
+    const h = st.save(key({ environment: 'H', zone: 'UTC' }), 'Y-nfse.xml', '<b/>', when)
+    expect(h).toBe(path.join(root, C, 'H', 'nfse', '1', '2026', '10', '01', 'Y-nfse.xml'))
+    expect(st.find(key(), 'X-nfse.xml', ['2026-10-01 02:30:00'])).toBe(p)                       // pela dica
+    expect(st.find(key({ environment: 'H', zone: 'UTC' }), 'Y-nfse.xml', [])).toBe(h)            // varredura
+    expect(st.find(key({ zone: 'UTC' }), 'Y-nfse.xml', [])).toBeNull()                          // produção nunca olha dentro de H
+    expect(st.find(key({ environment: 'H' }), 'X-nfse.xml', [])).toBe(p)                         // homologação enxerga a produção
+    expect(st.find(key(), '../../etc', [])).toBeNull()
+    expect(() => st.save(key(), '../x', '<c/>', when)).toThrow()
     expect(st.read(p)).toBe('<a/>')
-    expect(st.probe()).toBe(true)
+  })
+  it('tipo e série separam as pastas; a série é a forma canônica (sem zeros à esquerda) e a busca sem série varre todas', () => {
+    const when = new Date('2026-11-15T15:00:00Z')
+    const a = st.save(key({ kind: 'nfe', serie: '001' }), 'A-nfe.xml', '<a/>', when)
+    const b = st.save(key({ kind: 'nfce', serie: 1 }), 'B-nfce.xml', '<b/>', when)
+    const c = st.save(key({ kind: 'nfe', serie: 0 }), 'C-nfe.xml', '<c/>', when)
+    expect(a).toBe(path.join(root, C, 'nfe', '1', '2026', '11', '15', 'A-nfe.xml'))
+    expect(b).toBe(path.join(root, C, 'nfce', '1', '2026', '11', '15', 'B-nfce.xml'))
+    expect(c).toBe(path.join(root, C, 'nfe', '0', '2026', '11', '15', 'C-nfe.xml'))
+    expect(st.find(key({ kind: 'nfe', serie: 1 }), 'A-nfe.xml', ['2026-11-15 15:00:00'])).toBe(a)
+    expect(st.find({ ...key({ kind: 'nfe' }), serie: null }, 'C-nfe.xml', [])).toBe(c)               // sem série: varre as séries do tipo
+    expect(st.find(key({ kind: 'nfse' }), 'A-nfe.xml', [])).toBeNull()                         // outro tipo, outra pasta
+    expect(st.find(key({ kind: 'nfe', serie: 2 }), 'A-nfe.xml', [])).toBeNull()                // outra série, outra pasta
+    for (const bad of ['', 'A', '1a', '-1', '123456', ' 1', '1.0'] as const) {
+      expect(() => st.save(key({ serie: bad }), 'D-nfse.xml', '<d/>', when)).toThrow(/Série inválida para o arquivo fiscal/)
+    }
+    for (const bad of [-1, 1.5, Number.NaN]) expect(() => fiscalSerieFolder(bad)).toThrow(/Série inválida/)
+    expect(() => st.save(key({ kind: 'cte' as never }), 'E.xml', '<e/>', when)).toThrow(/Tipo de documento inválido/)
+    expect(() => st.save(key({ environment: 'X' as never }), 'E.xml', '<e/>', when)).toThrow(/Ambiente inválido/)
+    expect(fiscalSerieFolder('00000')).toBe('0')
+    expect(fiscalSerieFolder(99999)).toBe('99999')
   })
   it('D-CJ2: a pasta é a FORMA CANÔNICA do CNPJ — alfanumérico como está; máscara/minúscula/curto recusados (nunca mutilados)', () => {
     const when = new Date('2026-10-01T12:00:00Z')
-    expect(st.save('PC3D315K000193', 'A-nfse.xml', '<a/>', when, 'P', 'UTC')).toBe(path.join(root, 'PC3D315K000193', '2026', '10', 'A-nfse.xml'))
-    expect(st.find('PC3D315K000193', 'A-nfse.xml', [], 'P', 'UTC')).toBe(path.join(root, 'PC3D315K000193', '2026', '10', 'A-nfse.xml'))
-    // antes: '12.345.678/0001-99' gravava em 12345678000199; 'PC3D315K000193' em '3315000193' → lançava; agora nenhum caractere some
+    const K = key({ cnpj: 'PC3D315K000193', zone: 'UTC' })
+    const where = path.join(root, 'PC3D315K000193', 'nfse', '1', '2026', '10', '01', 'A-nfse.xml')
+    expect(st.save(K, 'A-nfse.xml', '<a/>', when)).toBe(where)
+    expect(st.find(K, 'A-nfse.xml', [])).toBe(where)
     for (const bad of ['12.345.678/0001-99', 'pc3d315k000193', '3315000193', 'PC3D315K00019Z', '']) {
-      expect(() => st.save(bad, 'B-nfse.xml', '<b/>', when, 'P', 'UTC')).toThrow(/CNPJ inválido para o arquivo fiscal/)
+      expect(() => st.save(key({ cnpj: bad }), 'B-nfse.xml', '<b/>', when)).toThrow(/CNPJ inválido para o arquivo fiscal/)
     }
+  })
+  it('probe grava, lê e apaga de verdade (sem deixar sonda); raiz que não grava = false', () => {
+    expect(st.probe()).toBe(true)
+    expect(fs.readdirSync(root).filter(n => n.startsWith('.probe-'))).toEqual([])
+    const blocked = path.join(root, 'arquivo-no-lugar-da-pasta')
+    fs.writeFileSync(blocked, 'x')
+    expect(new FsFiscalStorage(path.join(blocked, 'raiz')).probe()).toBe(false)
+  })
+  it('a raiz é sempre absoluta; em produção STORAGE_PATH é obrigatório e absoluto (P-DEP-2)', () => {
+    expect(() => new FsFiscalStorage('storage')).toThrow(/absoluta/)
+    const abs = path.resolve(root, 'xml')
+    expect(fiscalStorageRootFromEnv({ NODE_ENV: 'production', STORAGE_PATH: abs }, '/app')).toBe(path.normalize(abs))
+    expect(() => fiscalStorageRootFromEnv({ NODE_ENV: 'production' }, '/app')).toThrow(/STORAGE_PATH ausente em produção/)
+    expect(() => fiscalStorageRootFromEnv({ NODE_ENV: 'production', STORAGE_PATH: '  ' }, '/app')).toThrow(/ausente/)
+    expect(() => fiscalStorageRootFromEnv({ NODE_ENV: 'production', STORAGE_PATH: 'storage' }, '/app')).toThrow(/relativo em produção/)
+    expect(fiscalStorageRootFromEnv({ NODE_ENV: 'development' }, root)).toBe(path.join(root, 'storage'))
+    expect(fiscalStorageRootFromEnv({ STORAGE_PATH: 'xml' }, root)).toBe(path.join(root, 'xml'))
+  })
+})
+
+describe('arquivo fiscal — achados dos gates (socrático 0,72 · adversarial 0,78)', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'fiscal-storage-gate-'))
+  afterAll(() => fs.rmSync(root, { recursive: true, force: true }))
+  const st = new FsFiscalStorage(root)
+  const C = '12345678000199'
+  const key = (o: Partial<FiscalFileKey> = {}): FiscalFileKey => ({ cnpj: C, kind: 'nfse', serie: 1, environment: 'P', zone: 'America/Sao_Paulo', ...o })
+  const when = new Date('2026-10-01T02:30:00Z')                   // 30/09 em São Paulo, 01/10 em UTC
+
+  it('ADV M1: raiz ausente (volume desmontado) — probe false SEM criar a pasta, e o save recusa', () => {
+    const missing = path.join(root, 'nao-montado')
+    const off = new FsFiscalStorage(missing)
+    expect(off.probe()).toBe(false)
+    expect(fs.existsSync(missing)).toBe(false)
+    expect(() => off.save(key(), 'A-nfse.xml', '<a/>', when)).toThrow(/Raiz do arquivo fiscal não existe/)
+    expect(fs.existsSync(missing)).toBe(false)
+  })
+  it('ADV M2: "." e ".." nunca são nome de arquivo; pasta com nome de arquivo não é "achada"', () => {
+    for (const n of ['.', '..', '...']) {
+      expect(() => st.save(key(), n, '<a/>', when)).toThrow(/Nome de arquivo fiscal inválido/)
+      expect(st.find(key(), n, ['2026-10-01 02:30:00'])).toBeNull()
+    }
+    fs.mkdirSync(path.join(root, C, 'nfse', '1', '2026', '09', '30', 'D-nfse.xml'), { recursive: true })
+    expect(st.find(key(), 'D-nfse.xml', ['2026-10-01 02:30:00'])).toBeNull()
+    expect(st.find(key(), 'D-nfse.xml', [])).toBeNull()
+  })
+  it('ADV LOW4/LOW5: ambiente e zona inválidos são erro também na busca (um comportamento só)', () => {
+    expect(() => st.find(key({ environment: 'h' as never }), 'A-nfse.xml', [])).toThrow(/Ambiente inválido/)
+    expect(() => st.find(key({ zone: 'Lua/Base' }), 'A-nfse.xml', [])).toThrow(/Zona inválida/)
+    expect(() => st.find(key({ zone: 'Lua/Base' }), 'A-nfse.xml', ['2026-10-01 02:30:00'])).toThrow(/Zona inválida/)
+    expect(() => st.save(key({ zone: 'Lua/Base' }), 'A-nfse.xml', '<a/>', when)).toThrow(/Zona inválida/)
+  })
+  it('ADV LOW6: dica como Date e como ISO com fuso acha pelo dia certo; dica ilegível cai na varredura', () => {
+    const p = st.save(key(), 'E-nfse.xml', '<e/>', when)
+    expect(st.find(key(), 'E-nfse.xml', [when])).toBe(p)
+    expect(st.find(key(), 'E-nfse.xml', ['2026-09-30T23:30:00-03:00'])).toBe(p)
+    expect(st.find(key(), 'E-nfse.xml', ['2026-10-01T02:30:00Z'])).toBe(p)
+    expect(st.find(key(), 'E-nfse.xml', ['lixo', new Date(Number.NaN), null])).toBe(p)
+  })
+  it('SOC 6: zona do estabelecimento ≠ padrão cai na data da hora oficial; série nula acha pela dica; H cai para P com série nula', () => {
+    // gravado no dia de São Paulo (30/09); procurado com a zona UTC (01/10) — acha pela 2ª tentativa (zona padrão)
+    const p = st.save(key(), 'F-nfse.xml', '<f/>', when)
+    expect(st.find(key({ zone: 'UTC' }), 'F-nfse.xml', ['2026-10-01 02:30:00'])).toBe(p)
+    expect(st.find({ ...key(), serie: null }, 'F-nfse.xml', ['2026-10-01 02:30:00'])).toBe(p)
+    expect(st.find({ ...key({ environment: 'H' }), serie: undefined }, 'F-nfse.xml', [])).toBe(p)
+  })
+  it('a varredura vai do mais novo ao mais antigo; NODE_ENV com caixa ou espaço ainda é produção', () => {
+    const old = st.save(key(), 'G-nfse.xml', '<velho/>', new Date('2024-01-10T12:00:00Z'))
+    const recent = st.save(key(), 'G-nfse.xml', '<novo/>', new Date('2026-11-10T12:00:00Z'))
+    expect(old).not.toBe(recent)
+    expect(st.find(key(), 'G-nfse.xml', [])).toBe(recent)
+    for (const NODE_ENV of ['Production', ' production ', 'PRODUCTION']) {
+      expect(() => fiscalStorageRootFromEnv({ NODE_ENV, STORAGE_PATH: 'storage' }, root)).toThrow(/relativo em produção/)
+    }
+  })
+  it('sonda e temporário com nome aleatório: probes seguidos não colidem e não deixam rastro', () => {
+    for (let i = 0; i < 20; i++) expect(st.probe()).toBe(true)
+    expect(fs.readdirSync(root).filter(n => n.endsWith('.tmp'))).toEqual([])
   })
 })
 
