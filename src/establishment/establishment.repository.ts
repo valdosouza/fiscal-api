@@ -337,14 +337,18 @@ const toIso = (v: unknown): string | null => {
  * lê o A1 ATUAL, nunca o snapshot — gate adversarial R2: a reserva que esperava a trava da habilitação
  * acordava e assinava com o A1 que o DELETE já tinha apagado (leitura consistente = snapshot antigo).
  */
-export async function getCertificate(q: Queryable, institutionId: number, locking = false): Promise<CertificateRow | null> {
+export async function getCertificate(
+  q: Queryable, institutionId: number, locking: boolean | 'update' = false,
+): Promise<CertificateRow | null> {
+  // 'update' = FOR UPDATE: quem vai REGRAVAR a própria linha (rotação) trava exclusivo já na leitura — nunca promove S → X
+  const lock = locking === 'update' ? ' FOR UPDATE' : locking ? ' LOCK IN SHARE MODE' : ''
   const [rows] = await q.query(
     `SELECT tb_institution_id AS institutionId, cnpj, certificate_pem AS certificatePem,
             private_key_cipher AS cipher, private_key_iv AS iv, private_key_tag AS tag, cipher_key_version AS version,
             subject, issued_by AS issuedBy, not_before AS notBefore, not_after AS notAfter,
             fingerprint256, tb_user_id AS userId
        FROM tb_establishment_certificate
-      WHERE tb_institution_id = ? AND deleted = 'N'${locking ? ' LOCK IN SHARE MODE' : ''}`,
+      WHERE tb_institution_id = ? AND deleted = 'N'${lock}`,
     [institutionId])
   const r = rows[0]
   if (!r) return null
@@ -377,6 +381,60 @@ export async function saveCertificate(
        deleted = 'N', updated_at = NOW()`,
     [row.institutionId, row.cnpj, row.certificatePem, row.sealedKey.cipher, row.sealedKey.iv, row.sealedKey.tag,
      row.sealedKey.version, row.subject, row.issuedBy, dt(row.notBefore), dt(row.notAfter), row.fingerprint256, row.userId])
+}
+
+/**
+ * DEPLOY.E3.P1.T2 (D-F16 — rotação): estabelecimentos com A1 VIVO cifrado por versão de chave-mestra DIFERENTE de [version].
+ * Leitura comum (sem trava): cada um é regravado depois na sua própria transação, com a linha travada.
+ */
+export async function certificatesOutsideKeyVersion(q: Queryable, version: number): Promise<number[]> {
+  const [rows] = await q.query(
+    `SELECT tb_institution_id AS id FROM tb_establishment_certificate
+      WHERE deleted = 'N' AND cipher_key_version IS NOT NULL AND cipher_key_version <> ?
+      ORDER BY tb_institution_id`, [version])
+  return (rows as any[]).map(r => Number(r.id)).filter(n => Number.isInteger(n) && n > 0)
+}
+
+/**
+ * D-F243: até [perVersion] A1 vivos por versão de chave-mestra em uso (os de menor institution), JÁ com a cifra — UMA instrução só,
+ * então a versão listada e a cifra devolvida são da mesma leitura (nada de "a linha mudou de versão entre a lista e a releitura").
+ * Janela (ROW_NUMBER) — MariaDB ≥ 10.2.
+ */
+export async function sampleCertificatesPerKeyVersion(
+  q: Queryable, perVersion = 3,
+): Promise<Array<{ version: number; institutionId: number; sealed: SealedSecret }>> {
+  const [rows] = await q.query(
+    `SELECT v, id, cipher, iv, tag FROM (
+       SELECT cipher_key_version AS v, tb_institution_id AS id,
+              private_key_cipher AS cipher, private_key_iv AS iv, private_key_tag AS tag,
+              ROW_NUMBER() OVER (PARTITION BY cipher_key_version ORDER BY tb_institution_id) AS rn
+         FROM tb_establishment_certificate
+        WHERE deleted = 'N' AND cipher_key_version IS NOT NULL
+     ) amostra
+     WHERE rn <= ?
+     ORDER BY v, id`, [perVersion])
+  return (rows as any[])
+    .filter(r => Number.isInteger(Number(r.v)) && Number(r.v) > 0 && Number(r.id) > 0)
+    .map(r => ({
+      version: Number(r.v), institutionId: Number(r.id),
+      sealed: { cipher: Buffer.from(r.cipher ?? []), iv: Buffer.from(r.iv ?? []), tag: Buffer.from(r.tag ?? []), version: Number(r.v) },
+    }))
+}
+
+/**
+ * Regrava SÓ a cifra da chave privada (rotação): a linha tem que estar viva e ainda na versão [fromVersion] que quem chama abriu —
+ * se outro processo trocou o A1 no meio, nada é gravado (0 linhas). Certificado, metadados, `tb_user_id` e `updated_at` ficam como
+ * estão: trocar a chave-mestra não é trocar o A1.
+ */
+export async function rewrapCertificateKey(
+  conn: PoolConnection, institutionId: number, fromVersion: number, sealed: SealedSecret,
+): Promise<boolean> {
+  const [r] = await conn.query<any>(
+    `UPDATE tb_establishment_certificate
+        SET private_key_cipher = ?, private_key_iv = ?, private_key_tag = ?, cipher_key_version = ?
+      WHERE tb_institution_id = ? AND deleted = 'N' AND cipher_key_version = ?`,
+    [sealed.cipher, sealed.iv, sealed.tag, sealed.version, institutionId, fromVersion])
+  return Number(r?.affectedRows ?? 0) === 1
 }
 
 /** Excluir o A1: segredos e certificado viram NULL e a linha fica 'S' — chave excluída não fica guardada. */

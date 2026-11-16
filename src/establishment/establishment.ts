@@ -1,13 +1,14 @@
 import { Pool, PoolConnection } from 'mysql2/promise'
 import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
-import { Queryable, withTransaction } from '../db/tx'
-import { MasterKeyRing } from '../secret/cipher'
+import { Queryable, withTransaction, isLockWaitTimeout, isDeadlock } from '../db/tx'
+import { logger } from '../log/logger'
+import { MasterKeyRing, SealedSecret } from '../secret/cipher'
 import { CertificateInfo, ExpectedCnpj, certificateInfo, pkcs12ToPem, validateIssuerPair, validatePrivateKeyPem } from '../secret/certificate'
 import {
   IssuerModel, IssuerEnvironment, IssuerRow, CertificateRow,
   getIssuer, getCertificate, saveCertificate, issuerRowsState, assertCertificateWritable,
-  issuerModelStillInErp, establishmentStillInErp,
+  issuerModelStillInErp, establishmentStillInErp, certificatesOutsideKeyVersion, rewrapCertificateKey, sampleCertificatesPerKeyVersion,
 } from './establishment.repository'
 import { IssuerAuthority, authorityOf } from './issuer-models'
 
@@ -182,6 +183,163 @@ export async function storedKeyVersions(q: Queryable): Promise<number[]> {
     `SELECT DISTINCT cipher_key_version AS v FROM tb_establishment_certificate
       WHERE deleted = 'N' AND cipher_key_version IS NOT NULL`)
   return (rows as any[]).filter(r => r.v != null).map(r => Number(r.v)).filter(v => Number.isInteger(v) && v > 0)
+}
+
+export interface KeyRotationReport {
+  /** versão da chave-mestra que cifra agora (a MAIOR do anel) */
+  currentVersion: number
+  /** estabelecimentos regravados com a versão atual (de → para) */
+  rewrapped: Array<{ institutionId: number; from: number }>
+  /**
+   * A1 NÃO regravados, intocados: versão ausente do anel (FISCAL_MASTER_KEY_UNAVAILABLE), chave errada (FISCAL_CERT_INVALID),
+   * linha disputada (RESOURCE_BUSY — rodar de novo) ou o novo selo não conferiu (KEY_ROTATION_RESEAL_MISMATCH)
+   */
+  failed: Array<{ institutionId: number; from: number | null; code: string }>
+  /** linha trocada ou apagada entre a lista e a trava — nada a fazer nela */
+  skipped: number[]
+}
+
+/** Erro de infraestrutura no meio da rotação (pool, conexão): leva o relatório do que JÁ foi commitado. */
+export class KeyRotationAborted extends Error {
+  /** [inDoubt] = o estabelecimento em curso quando caiu: se caiu no commit, pode ter sido regravado ou não (rodar de novo resolve) */
+  constructor(readonly report: KeyRotationReport, readonly causeError: unknown, readonly inDoubt: number) {
+    super(`Rotação da chave-mestra interrompida no A1 ${inDoubt} depois de ${report.rewrapped.length} regravado(s) — rodar de novo (idempotente)`)
+  }
+}
+
+const RESEAL_MISMATCH = 'KEY_ROTATION_RESEAL_MISMATCH'
+class ResealMismatch extends Error {}
+
+/**
+ * DEPLOY.E3.P1.T2 (D-F16 — "reabre com a antiga, regrava com a nova"): todo A1 vivo cifrado por versão de chave-mestra
+ * diferente da ATUAL (a maior do anel) é aberto com a versão dele e regravado com a atual, UM estabelecimento por transação:
+ *  - a linha do certificado é lida com FOR UPDATE (exclusivo já na leitura; a trava é só dela — quem abre o emissor trava a
+ *    habilitação e depois o A1, nunca o contrário, e a rotação não pede outra trava segurando esta: não há ciclo);
+ *  - o novo selo é conferido (abre com a AAD da linha) ANTES do UPDATE, que só grava se a linha ainda está na versão aberta;
+ *  - A1 que não abre fica INTOCADO e vai para [failed] (nunca regravar o que não se leu); os outros seguem — também quando
+ *    UMA linha cai em contenção (1205/1213) ou no selo que não confere; só erro de infraestrutura para a rodada, e leva o
+ *    relatório do que já foi commitado (`KeyRotationAborted`);
+ *  - a chave decifrada vive só dentro da volta e é zerada no fim. Nada do segredo vai para log nem para o relatório.
+ * Idempotente: rodar de novo com o mesmo anel não acha nada a regravar.
+ *
+ * ORDEM DA OPERAÇÃO (runbook — o anel é de cada processo, e a função não o vê nos outros):
+ *  1. publicar o anel {antiga, nova} em TODOS os processos que usam o cofre (nfse-api, nfe-api) e reiniciá-los — antes disso, um
+ *     processo só com a antiga não abriria o A1 regravado;
+ *  2. rodar a rotação; 3. conferir `failed` vazio, `storedKeyVersions` = [nova] e `verifyStoredKeys` ok;
+ *  4. só então tirar a antiga do anel em todos os processos — e guardar a NOVA fora do servidor (é o backup do A1).
+ */
+export async function rotateCertificateKeys(deps: EstablishmentDeps): Promise<KeyRotationReport> {
+  const current = deps.keyring.currentVersion
+  if (current === null) {
+    throw new HttpError(503, 'Chave-mestra do cofre indisponível (nenhuma chave configurada) — configure FISCAL_MASTER_KEYS',
+      undefined, ErrorCodes.FISCAL_MASTER_KEY_UNAVAILABLE)
+  }
+  const report: KeyRotationReport = { currentVersion: current, rewrapped: [], failed: [], skipped: [] }
+  for (const institutionId of await certificatesOutsideKeyVersion(deps.pool, current)) {
+    const aad = certificateAad(institutionId)
+    // o resultado só entra no relatório DEPOIS do commit (commit que falha não pode virar "regravado")
+    type Outcome = { kind: 'rewrapped' | 'failed' | 'skipped'; from?: number; code?: string }
+    let out: Outcome
+    try {
+      out = await withTransaction<Outcome>(deps.pool, 'rotacionar chave-mestra do A1', { institutionId }, async conn => {
+        const row = await getCertificate(conn, institutionId, 'update')
+        const sealed = row?.sealedKey
+        if (!sealed || sealed.version === current) return { kind: 'skipped' }
+        if (!deps.keyring.hasVersion(sealed.version)) {
+          return { kind: 'failed', from: sealed.version, code: ErrorCodes.FISCAL_MASTER_KEY_UNAVAILABLE }
+        }
+        let plain: Buffer | null = null
+        try {
+          try { plain = deps.keyring.open(sealed, aad) } catch {
+            return { kind: 'failed', from: sealed.version, code: ErrorCodes.FISCAL_CERT_INVALID }
+          }
+          const resealed = deps.keyring.seal(plain, aad)
+          let check: Buffer
+          try { check = deps.keyring.open(resealed, aad) } catch { throw new ResealMismatch() }
+          const same = check.equals(plain)
+          check.fill(0)
+          if (!same) throw new ResealMismatch()
+          if (await rewrapCertificateKey(conn, institutionId, sealed.version, resealed)) return { kind: 'rewrapped', from: sealed.version }
+          // sob FOR UPDATE a linha não pode ter mudado: 0 linhas aqui é anomalia — registrada (só o id), nada gravado
+          logger.warn('Rotação da chave-mestra: UPDATE do A1 achou 0 linhas sob FOR UPDATE', { institutionId })
+          return { kind: 'skipped' }
+        } finally {
+          plain?.fill(0)
+        }
+      })
+    } catch (err) {
+      if (err instanceof ResealMismatch) out = { kind: 'failed', code: RESEAL_MISMATCH }
+      else if (isLockWaitTimeout(err) || isDeadlock(err)) out = { kind: 'failed', code: ErrorCodes.RESOURCE_BUSY }
+      else throw new KeyRotationAborted(report, err, institutionId)
+    }
+    if (out.kind === 'rewrapped') report.rewrapped.push({ institutionId, from: out.from! })
+    else if (out.kind === 'failed') report.failed.push({ institutionId, from: out.from ?? null, code: out.code! })
+    else report.skipped.push(institutionId)
+  }
+  return report
+}
+
+export interface StoredKeyCheck {
+  /** toda versão em uso abre ALGUM dos A1 de amostra (sem A1 guardado = ok: não há o que provar) */
+  ok: boolean
+  /** alguma amostra não abriu numa versão que outra amostra provou: a chave está certa, mas há A1 ilegível — alarme, não queda */
+  degraded: boolean
+  /** por versão: ok, o código quando nenhuma amostra abriu, e quantas amostras não abriram */
+  versions: Array<{ version: number; ok: boolean; code?: string; unreadable: number }>
+}
+
+/** Quantos A1 por versão o health tenta abrir antes de dizer que a versão não abre. */
+export const STORED_KEY_SAMPLES_PER_VERSION = 3
+
+/**
+ * DEPLOY.E3.P1.T1 (D-F243 — Valdo, 2026-11-16): a prova de que a chave do SERVIDOR é a que cifrou os A1 de cada versão em uso. O
+ * `selfTest` do anel cifra e decifra um vetor que ele mesmo criou — passa com qualquer chave de 32 bytes; `storedKeyVersions` só confere
+ * o número. Aqui, por versão, abre os A1 de amostra (os de menor institution, até [STORED_KEY_SAMPLES_PER_VERSION], numa leitura só)
+ * em ordem até UM abrir, e zera cada um na hora:
+ *  - chave errada no servidor → o GCM recusa TODAS as amostras → versão não ok (FISCAL_CERT_INVALID) → `ok` falso;
+ *  - UMA linha ilegível (corrompida, restaurada de outro lugar) com outra que abre → versão ok, `degraded` verdadeiro — o estabelecimento
+ *    dela já recebe 409 próprio no `openIssuer`; ela não derruba o serviço de todos;
+ *  - `ok` prova a CHAVE da versão, não que todo A1 abra.
+ * Leitura comum (sem trava). Nada do segredo sai daqui — só versão, ok, código e contagem. Quem expõe (health público) decide o que
+ * mostrar e com que frequência roda (D-F243: a adoção é da nfse-api).
+ */
+export async function verifyStoredKeys(
+  deps: EstablishmentDeps, perVersion = STORED_KEY_SAMPLES_PER_VERSION,
+): Promise<StoredKeyCheck> {
+  // agrupa por versão numa LISTA (a leitura já vem ordenada por versão, id) — sem Map/Set em memória (regra 3, cerca D-F10)
+  const groups: Array<{ version: number; samples: Array<{ institutionId: number; sealed: SealedSecret }> }> = []
+  for (const s of await sampleCertificatesPerKeyVersion(deps.pool, perVersion)) {
+    const last = groups[groups.length - 1]
+    if (last && last.version === s.version) last.samples.push(s)
+    else groups.push({ version: s.version, samples: [s] })
+  }
+  const out: StoredKeyCheck = { ok: true, degraded: false, versions: [] }
+  for (const { version, samples } of groups) {
+    if (!deps.keyring.hasVersion(version)) {
+      out.versions.push({ version, ok: false, code: ErrorCodes.FISCAL_MASTER_KEY_UNAVAILABLE, unreadable: samples.length })
+      continue
+    }
+    let unreadable = 0
+    let opened = false
+    for (const { institutionId, sealed } of samples) {
+      let plain: Buffer | null = null
+      try {
+        plain = deps.keyring.open(sealed, certificateAad(institutionId))
+        opened = true
+        break
+      } catch {
+        unreadable++
+      } finally {
+        plain?.fill(0)
+      }
+    }
+    out.versions.push(opened
+      ? { version, ok: true, unreadable }
+      : { version, ok: false, code: ErrorCodes.FISCAL_CERT_INVALID, unreadable })
+  }
+  out.ok = out.versions.every(v => v.ok)
+  out.degraded = out.versions.some(v => v.ok && v.unreadable > 0)
+  return out
 }
 
 export type { IssuerModel, IssuerEnvironment, IssuerRow }
