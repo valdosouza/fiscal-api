@@ -70,6 +70,11 @@ export * from './erp/invoice-tx'
 // `fiscal-api/reading` até o 1º leitor (o setes-api ao cunhar número — NE-6, junto do GRANT da view)
 export * from './numbering/withdrawn-ranges'
 
+// VALORES DE IBS/CBS DO FISCO na NFS-e (fase IBS/CBS — D-IB124…D-IB126): dado do fisco gravado uma vez, NÃO é voz — peça da família de
+// serviço, fora do catálogo da voz e de `fiscal-api/reading` até o 1º leitor (a conferência dos títulos no setes-api — D-IB125, junto do
+// GRANT da view); a nfse-api (dona da view, migration 008) confere a view no boot por ela
+export * from './voice/families/service-authority-ibscbs'
+
 // fonte de fatos Gestão 2027 — base (D-F10/D-F32)
 export * as erp from './erp/facts'
 

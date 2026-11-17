@@ -15,6 +15,8 @@
 // T1: o CHECK de model e environment é aplicado (as sondas do boot — D-F45/D-NE84/D-F120); as views respondem com o GRANT mínimo; a
 //     leitura travante (FOR UPDATE da nota — D-F27/D-F31 — e a COMPARTILHADA da view de vida) funciona com SÓ SELECT e trava de verdade;
 //     o servidor é primário único (não é réplica, não é Galera, read_only desligado, todas as conexões no MESMO servidor — D-F9).
+// IBS.E1.P1 (fase IBS/CBS): sonda SEM tabela — `CAST(<DECIMAL(17,2)> AS CHAR)` chega pelo pool da casa como texto decimal canônico (a
+//     suposição do leitor dos valores do fisco); roda sozinha com `-t "IBS.E1.P1"`, sem criar nada.
 import fs from 'fs'
 import crypto from 'crypto'
 import mysql, { Connection, Pool } from 'mysql2/promise'
@@ -22,6 +24,8 @@ import { runMigrations, CORE_MIGRATIONS_DIR, CORE_MIGRATIONS_PROJECT } from '../
 import { createFiscalPool, assertSessionInvariants, FiscalDbConfig } from '../db/pool'
 import { assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced } from '../establishment/establishment.repository'
 import { assertSessionViewReadable } from '../access/access'
+import { mapServiceAuthorityIbscbs } from '../voice/families/service-authority-ibscbs'
+import { invoiceRef } from '../ref/invoice-ref'
 
 const LIVE = process.env.FISCAL_ENGINE_LIVE === '1'
 const d = LIVE ? describe : describe.skip
@@ -100,6 +104,33 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     out.push(JSON.stringify(ck))
     return out.join('\n')
   }
+
+  // ---------------------------------------------------------------- IBS.E1.P1 (sonda SEM tabela nem view — só expressão)
+  // O leitor dos valores do fisco (`voice/families/service-authority-ibscbs.ts`) supõe que `CAST(<DECIMAL(17,2)> AS CHAR)` chega pelo pool
+  // da casa (`decimalNumbers: true`) como TEXTO decimal canônico — 2 casas, sem zero à esquerda, charset não binário (senão viria Buffer).
+  // Aqui se prova a suposição no motor, com a FORMA do SELECT publicado e o mapa estrito da peça; a leitura pela view REAL é da família
+  // (`nfse-api:IBS.E4.P1`). Roda sozinha com `-t "IBS.E1.P1"`: não cria banco, tabela, view nem usuário.
+  describe('IBS.E1.P1 — o texto de um DECIMAL(17,2) pelo pool da casa', () => {
+    it('CAST(… AS CHAR) chega como texto decimal canônico e passa pelo mapa estrito; SEM o CAST o pool entrega número (e perde o centavo no topo)', async () => {
+      const pool = createFiscalPool({ ...owner, database: 'information_schema', connectionLimit: 2 }); pools.push(pool)
+      const asked = { ref: invoiceRef(1, 8014, 0), lifeEvent: 3 }
+      const seen: Record<string, unknown> = {}
+      for (const [given, text] of [['0', '0.00'], ['0.01', '0.01'], ['0.09', '0.09'], ['10', '10.00'], ['1234567.8', '1234567.80'], ['999999999999999.99', '999999999999999.99']]) {
+        const [rows] = await pool.query<any[]>(
+          `SELECT 1 AS institutionId, 8014 AS invoiceId, 0 AS terminal, 2 AS attempt, 3 AS lifeEvent,
+                  CAST(CAST(? AS DECIMAL(17,2)) AS CHAR) AS totalInvoiceValue, CAST(CAST(? AS DECIMAL(17,2)) AS CHAR) AS ibsTotalValue,
+                  CAST(CAST(? AS DECIMAL(17,2)) AS CHAR) AS cbsValue, CAST(? AS DECIMAL(17,2)) AS semCast`, [given, given, given, given])
+        expect(rows).toHaveLength(1)
+        expect([given, typeof rows[0].totalInvoiceValue, rows[0].totalInvoiceValue]).toEqual([given, 'string', text])
+        const { semCast, ...row } = rows[0]
+        expect(mapServiceAuthorityIbscbs(row, asked)).toMatchObject({ totalInvoiceValue: text, ibsTotalValue: text, cbsValue: text, attempt: 2, lifeEvent: 3 })
+        expect([given, typeof semCast]).toEqual([given, 'number'])            // o motivo do CAST: sem ele o valor já chegou número
+        seen[given] = { comCast: rows[0].totalInvoiceValue, semCast }
+      }
+      expect(String((seen['999999999999999.99'] as any).semCast)).not.toBe('999999999999999.99')   // DECIMAL(17,2) não cabe em número do JS
+      report.decimalAsText = seen
+    })
+  })
 
   // ---------------------------------------------------------------- T2
   describe('T2 — as migrations 001–005 aplicam e re-executam', () => {
