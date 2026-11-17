@@ -178,7 +178,7 @@ describe('vocabulário e superfície', () => {
     expect(Object.keys(surface).sort()).toEqual([
       'ACCESS_VIEWS', 'INTERFACE_KEY_FORM', 'PRIVILEGE_NAMES', 'accessRows', 'accessVerdict', 'assertSessionViewReadable', 'grantedKeys',
       'iatAsUtcDatetime',
-      'isPrivilegeName', 'liveIdentity', 'reachableKeys', 'sessionOf',
+      'isPrivilegeName', 'licensedKeys', 'liveIdentity', 'reachableKeys', 'sessionOf',
     ])
   })
 })

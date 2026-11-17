@@ -45,10 +45,10 @@ describe('F2AR4-SOC-07/ADV-09 — CORS da D-F146 no núcleo', () => {
     }
   })
   it('assertCorsOrigins: vazia recusa; um item ruim recusa nomeando o motivo; boa devolve a lista', () => {
-    expect(() => assertCorsOrigins([])).toThrow(/vazia.*D-F146/)
-    expect(() => assertCorsOrigins(['http://localhost:5051', '*'])).toThrow(/\* \(curinga/)
-    expect(() => assertCorsOrigins(['HTTP://LOCALHOST:5051'])).toThrow(/forma canônica/)
-    expect(assertCorsOrigins(['http://localhost:5051', 'https://app.setes.com.br'])).toBe('http://localhost:5051, https://app.setes.com.br')
+    expect(() => assertCorsOrigins([], 'development')).toThrow(/vazia.*D-F146/)
+    expect(() => assertCorsOrigins(['http://localhost:5051', '*'], 'development')).toThrow(/\* \(curinga/)
+    expect(() => assertCorsOrigins(['HTTP://LOCALHOST:5051'], 'development')).toThrow(/forma canônica/)
+    expect(assertCorsOrigins(['http://localhost:5051', 'https://app.setes.com.br'], 'development')).toBe('http://localhost:5051, https://app.setes.com.br')
   })
   it('corsFor recusa na MONTAGEM o curinga e a origem torta (a nfe-api não precisa lembrar); a lista boa responde só à origem exata', () => {
     expect(() => corsFor(['*'])).toThrow(/D-F146/)

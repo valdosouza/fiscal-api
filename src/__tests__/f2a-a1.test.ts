@@ -234,6 +234,37 @@ describe('D-F122 (= Q-F132 (a)) — ninguém desliga o CHECK na sessão', () => 
     const code = fs.readFileSync(file, 'utf8')
     return file.endsWith('.sql') ? FORBIDDEN.test(code.replace(/\/\*[\s\S]*?\*\//g, '').replace(/--[^\n]*/g, '')) : tsTexts(code).some(s => FORBIDDEN.test(s))
   }
+  /**
+   * D-F246 (Valdo, 2026-11-17, "Exceção nomeada aqui" — prompt_apis_fiscais_isoladas.md §23.19): lista FECHADA, pelo caminho EXATO relativo
+   * ao workspace. A prova C8 do setes-api desliga o CHECK DE PROPÓSITO para provar que a conferência do script 75 falha (e o religa logo
+   * depois). A exceção não apodrece: o arquivo listado TEM de existir e TEM de usar a variável — se a prova mudar, a exceção sai junto.
+   */
+  const D_F246_EXCEPTIONS: readonly string[] = ['setes-api/scripts/prove-institution-user-invite.ts']
+  const unexpectedOffenders = (names: readonly string[]): string[] => names.filter(n => !D_F246_EXCEPTIONS.includes(n))
+  const staleExceptions = (files: readonly string[]): string[] => D_F246_EXCEPTIONS.filter(ex => {
+    const f = files.find(x => relWorkspace(x) === ex)
+    if (!f || !offends(f)) return true
+    // endurecida pelo gate adversarial: a prova desliga o CHECK UMA vez e o religa UMA vez — um 2º desligar (ou o religar retirado) apodrece
+    const texts = tsTexts(fs.readFileSync(f, 'utf8'))
+    const count = (v: string) => texts.filter(t => new RegExp(`check_constraint_checks\\s*=\\s*${v}\\b`, 'i').test(t)).length
+    return count('0') !== 1 || count('1') !== 1 || texts.filter(t => FORBIDDEN.test(t)).length !== 2
+  })
+  it('D-F246: a exceção é pelo caminho exato e apodrece alto (arquivo listado ausente ou sem a variável = falha)', () => {
+    expect(unexpectedOffenders(['setes-api/scripts/prove-institution-user-invite.ts'])).toEqual([])
+    expect(unexpectedOffenders(['nfse-api/scripts/prove-institution-user-invite.ts', 'setes-api/src/prove-institution-user-invite.ts',
+      'setes-api/scripts/prove-institution-user-invite.tsx'])).toHaveLength(3)
+    expect(staleExceptions([])).toEqual([...D_F246_EXCEPTIONS])
+    const tmp = path.join(require('os').tmpdir(), `df246-${process.pid}`)
+    fs.mkdirSync(tmp, { recursive: true })
+    try {
+      const clean = path.join(tmp, 'prove-institution-user-invite.ts')
+      fs.writeFileSync(clean, '// sem a variável')
+      expect(staleExceptions([clean])).toEqual([...D_F246_EXCEPTIONS])   // mesmo nome fora do setes-api não satisfaz a exceção
+      const twice = path.join(tmp, 'twice.ts')
+      fs.writeFileSync(twice, "await c.query('SET SESSION check_constraint_checks = 0'); await c.query('SET SESSION check_constraint_checks = 0')")
+      expect(offends(twice)).toBe(true)
+    } finally { fs.rmSync(tmp, { recursive: true, force: true }) }
+  })
   it('a cerca não é cega (pega o SET em string e em migration) e o workspace (núcleo, nfse-api src/scripts, setes-api src/scripts, nfe-api) não usa a variável', () => {
     const tmp = path.join(require('os').tmpdir(), `df122-${process.pid}`)
     fs.mkdirSync(tmp, { recursive: true })
@@ -249,6 +280,7 @@ describe('D-F122 (= Q-F132 (a)) — ninguém desliga o CHECK na sessão', () => 
     if (fs.existsSync(nfe)) roots.push(nfe)                                       // a nfe-api ainda não tem código (D-F20)
     const files = roots.flatMap(walk)
     expect(files.length).toBeGreaterThan(200)
-    expect(files.filter(offends).map(relWorkspace)).toEqual([])
+    expect(staleExceptions(files)).toEqual([])                                  // D-F246: a exceção ainda é real
+    expect(unexpectedOffenders(files.filter(offends).map(relWorkspace))).toEqual([])
   })
 })

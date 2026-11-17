@@ -184,6 +184,43 @@ export async function reachableKeys(q: Queryable, who: AccessWho, keys: readonly
   return wanted.filter(k => got.includes(k))                 // ordem de quem pediu; só chaves pedidas (nunca o que a view trouxer a mais)
 }
 
+/** O estabelecimento de quem pergunta a LICENÇA sem usuário (o worker do rodízio — D-F239). */
+export interface LicenseWho {
+  institutionId: number
+  schemaName:    string
+}
+
+/**
+ * Das [keys], os ramos que o ESTABELECIMENTO contratou — SEM usuário (D-F240, Valdo 2026-11-15, "Leitor novo no núcleo" —
+ * prompt_apis_fiscais_isoladas.md §23.15): o worker do rodízio da nfse-api (D-F239) não tem perfil, então o escopo é a licença. A regra é
+ * a do RAMO DE LICENÇA da `vw_user_reach` (migration 075 do setes-api): interface viva NÃO delegável do catálogo × a linha VIVA de
+ * `<schema>.tb_institution_has_interface`. Sem os ramos do super e da delegável (são do usuário).
+ *
+ * D-F247 (Valdo, 2026-11-17, "Sim, na mesma leitura" — §23.19): na MESMA leitura o estabelecimento tem de estar VIVO e ser deste schema
+ * (`setes_central.tb_institution` ativa, não excluída) — com usuário a `vw_user_link` já exige isso; sem ele o filtro sumiria e o worker
+ * consultaria o fisco por um estabelecimento inativado. Inativo ou schema trocado = lista vazia.
+ *
+ * GRANT de quem chama: SELECT na `setes_central.tb_institution`, na `setes_central.vw_interface_catalog` e no schema do cliente.
+ */
+export async function licensedKeys(q: Queryable, who: LicenseWho, keys: readonly string[]): Promise<string[]> {
+  const s = assertSchema(who.schemaName)
+  if (!Number.isSafeInteger(who.institutionId) || who.institutionId <= 0) {
+    throw new Error(`licensedKeys: institutionId inválido: ${String(who.institutionId)}`)
+  }
+  const wanted = keysOf(keys)
+  if (wanted.length === 0) return []
+  const [rows] = await q.query(
+    `SELECT c.interface_key AS k
+       FROM setes_central.tb_institution i
+       JOIN setes_central.${ACCESS_VIEWS.interfaceCatalog} c ON c.delegable = 'N'
+       JOIN \`${s}\`.tb_institution_has_interface ihi
+         ON ihi.tb_institution_id = i.id AND ihi.tb_interface_id = c.tb_interface_id AND ihi.active = 'S' AND ihi.deleted = 'N'
+      WHERE i.id = ? AND i.schema_name = ? AND i.active = 'S' AND i.deleted = 'N' AND c.interface_key IN (?)`,
+    [who.institutionId, s, wanted])
+  const got = (Array.isArray(rows) ? rows : []).map((r: any) => String(r.k))
+  return wanted.filter(k => got.includes(k))                 // ordem de quem pediu; só chaves pedidas
+}
+
 /** Das [keys], as em que o usuário exerce o verbo [privilege] (a passada do rodízio escolhe os ramos — D-F46/D-PV40). */
 export async function grantedKeys(
   q: Queryable, who: AccessWho, keys: readonly string[], privilege: PrivilegeName,

@@ -4,6 +4,7 @@ import { HttpError } from '../errors/http-error'
 import { ErrorCodes, ErrorCatalog } from '../errors/error-codes'
 import { contentionToHttpError } from '../db/tx'
 import { logger } from '../log/logger'
+import { isProductionEnv } from '../util/environment'
 
 /**
  * Borda HTTP comum às APIs fiscais. Envelope de erro IGUAL ao do setes-api
@@ -93,17 +94,46 @@ export function corsOriginProblem(origin: string): string | null {
   return null
 }
 
+/** Host da própria máquina: `localhost`, qualquer `*.localhost` (o navegador resolve `app.localhost` para a máquina — RFC 6761), todo o
+ *  laço IPv4 `127.0.0.0/8` e `0.0.0.0` (gate adversarial do DEPLOY.E1.P4). O `new URL` já normalizou o IPv4 (`127.1` → `127.0.0.1`). */
+function isLocalHost(hostname: string): boolean {
+  return LOCAL_HOSTS.has(hostname) || hostname.endsWith('.localhost') || /^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(hostname)
+    || hostname === '0.0.0.0'
+}
+
+/**
+ * Por que [origin] não serve como origem do app em PRODUÇÃO (null = serve). D-F236 (Valdo, 2026-11-15, "No núcleo" —
+ * prompt_apis_fiscais_isoladas.md §23.13): em produção só `https://` e nada de localhost — a produção nunca sobe com a origem do dev.
+ * Vale DEPOIS de `corsOriginProblem` (a forma canônica é conferida lá).
+ */
+function productionCorsOriginProblem(origin: string): string | null {
+  const u = new URL(origin)
+  if (isLocalHost(u.hostname)) return 'localhost em produção (é a origem do dev — D-F236)'
+  if (u.protocol !== 'https:') return 'http:// em produção — só https:// (D-F236)'
+  return null
+}
+
 /**
  * D-F146: a LISTA de origens do app web (o navegador chama a API fiscal DIRETO — D-F4). O boot RECUSA lista vazia (o app cairia em
  * "Failed to fetch" sem diagnóstico) e qualquer item que não seja uma origem canônica (`corsOriginProblem`). Devolve a lista para o log.
+ *
+ * D-F236: [nodeEnv] é o `process.env.NODE_ENV` de quem chama — OBRIGATÓRIO (nenhum consumidor esquece de dizer o ambiente). Em produção
+ * (o critério único do núcleo, `isProductionEnv`) recusa também `http://` e localhost (`127.0.0.1` e `*.localhost` contam); fora dela,
+ * igual à D-F146.
  */
-export function assertCorsOrigins(origins: readonly string[]): string {
+export function assertCorsOrigins(origins: readonly string[], nodeEnv: string | undefined): string {
   if (!origins.length) {
     throw new Error('CORS_ORIGINS vazia — declare a(s) origem(ns) do app web (dev: http://localhost:5051; produção: a origem do Plesk) — D-F146')
   }
   const bad = origins.map(o => [o, corsOriginProblem(o)] as const).filter(([, p]) => p)
   if (bad.length) {
     throw new Error(`CORS_ORIGINS com valor que não é uma ORIGEM canônica: ${bad.map(([o, p]) => `${o} (${p})`).join('; ')} — D-F146`)
+  }
+  if (isProductionEnv(nodeEnv)) {
+    const badProd = origins.map(o => [o, productionCorsOriginProblem(o)] as const).filter(([, p]) => p)
+    if (badProd.length) {
+      throw new Error(`CORS_ORIGINS em produção com origem que não serve: ${badProd.map(([o, p]) => `${o} (${p})`).join('; ')} — D-F236`)
+    }
   }
   return origins.join(', ')
 }

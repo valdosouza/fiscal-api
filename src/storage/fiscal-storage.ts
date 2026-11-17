@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto'
 import path from 'path'
 import { DEFAULT_TIME_ZONE, isValidTimeZone, todayIn } from '../time/zone'
 import { CNPJ_FORM } from '../federal-id/federal-id'
+import { isProductionEnv } from '../util/environment'
 
 /**
  * ARQUIVO FISCAL (XML dito ao fisco e devolvido por ele) atrás de uma interface com backend trocável (D-F16). Em produção o backend
@@ -90,7 +91,7 @@ function assertEnvironment(environment: string): asserts environment is FiscalFi
  */
 export function fiscalStorageRootFromEnv(env: NodeJS.ProcessEnv = process.env, cwd: string = process.cwd()): string {
   const raw = env.STORAGE_PATH?.trim()
-  if ((env.NODE_ENV ?? '').trim().toLowerCase() === 'production') {
+  if (isProductionEnv(env.NODE_ENV)) {
     if (!raw) throw new Error('STORAGE_PATH ausente em produção — o XML fiscal iria para a pasta de execução (P-DEP-2: disco do servidor)')
     if (!path.isAbsolute(raw)) throw new Error(`STORAGE_PATH relativo em produção (${raw}) — use o caminho absoluto do disco do servidor (P-DEP-2)`)
     return path.normalize(raw)
