@@ -4,12 +4,14 @@
 // NÃO abre); rotação por versão; chave-mestra ausente = 503 próprio; o PKCS#12 abre na chamada e só o
 // par válido do e-CNPJ do PRÓPRIO emitente passa; openIssuer falha na ORDEM e decifra só na chamada.
 import { randomBytes } from 'crypto'
+import forge from 'node-forge'
 import { MasterKeyRing } from '../secret/cipher'
-import { pkcs12ToPem, validateIssuerPair, cnpjFromSubject, cpfFromSubject } from '../secret/certificate'
+import { pkcs12ToPem, validateIssuerPair, cnpjFromSubject, cpfFromSubject, certificateInfo, ICP_OID_PF_HOLDER, ICP_OID_PJ_HOLDER } from '../secret/certificate'
 import { storeCertificate, openIssuer, certificateStatus, certificateAad, isIssuerEnabled, authorityOf, storedKeyVersions, anyEmissionStillInErp } from '../establishment/establishment'
 import { clearCertificate } from '../emitter/emitter'   // apagar o A1 é ato do EMITTER (D-NE9 — parte 2 da NE-1a)
 import { acquireRefreshLease, releaseRefreshLease, nextDpsNumber, lockIssuerRows, ISSUER_MODELS, assertIssuerModelDomainEnforced } from '../establishment/establishment.repository'
 import { makePfx } from './helpers'
+import { OPENSSL_LEGACY_ECNPJ_PEM, OPENSSL_SES_PEM } from './certificados-openssl.fixture'
 
 // D-CJ2: CNPJ com DV VÁLIDO — a conferência do A1 lê o CNPJ do ERP pela peça da inscrição federal (forma + DV), não pelo comprimento
 const CNPJ = '12345678000195'
@@ -67,10 +69,10 @@ describe('certificado A1 — PKCS#12 → par PEM validado', () => {
     const info = validateIssuerPair(pair.certPem, pair.keyPem, CNPJ)
     expect(info.cnpj).toBe(CNPJ)
     expect(() => validateIssuerPair(pair.certPem, pair.keyPem, '98765432000198')).toThrow(expect.objectContaining({ statusCode: 409, code: 'FISCAL_CERT_INVALID' }))
-    const cpf = pkcs12ToPem(makePfx({ cn: 'FULANO:12345678901', password: PASSWORD }).pfx, PASSWORD)
+    const cpf = pkcs12ToPem(makePfx({ cn: 'FULANO:12345678909', password: PASSWORD }).pfx, PASSWORD)
     expect(() => validateIssuerPair(cpf.certPem, cpf.keyPem, CNPJ)).toThrow(/e-CPF/)
     const plain = pkcs12ToPem(makePfx({ cn: 'SEM PADRAO', password: PASSWORD }).pfx, PASSWORD)
-    expect(() => validateIssuerPair(plain.certPem, plain.keyPem, CNPJ)).toThrow(/sem CNPJ no CN/)
+    expect(() => validateIssuerPair(plain.certPem, plain.keyPem, CNPJ)).toThrow(/sem a inscrição do titular/)
     expect(cnpjFromSubject(`CN=X:${CNPJ}, O=Y`)).toBe(CNPJ)
     expect(cpfFromSubject('CN=X:12345678901')).toBe('12345678901')
   })
@@ -101,6 +103,108 @@ describe('certificado A1 — PKCS#12 → par PEM validado', () => {
     expect(validateIssuerPair(pair.certPem, pair.keyPem, { state: 'valid', id: { kind: 'cnpj', value: CNPJ } }).cnpj).toBe(CNPJ)
     // CNPJ alfanumérico VÁLIDO no ERP: conferido como está (o CN do A1 de teste é numérico → outro CNPJ, 409 — nunca "sem CNPJ")
     expect(() => validateIssuerPair(pair.certPem, pair.keyPem, 'PC3D315K000193')).toThrow(expect.objectContaining({ statusCode: 409, code: 'FISCAL_CERT_INVALID' }))
+  })
+})
+
+// ---------------------------------------------------------------------------
+// CNPJ.E4.P1 — titular por CONSENSO das fontes (D-CJ6 + D-CJ33): otherName 2.16.76.1.3.3 × serialNumber × CN legado
+// ---------------------------------------------------------------------------
+describe('titular do certificado por consenso das fontes (D-CJ6/D-CJ33)', () => {
+  const ALFA = 'PC3D315K000193'                         // CNPJ alfanumérico com DV certo (vetor da peça federal-id)
+  const OTHER = '98765432000198'
+  const PF_CONTENT = '01011980' + '12345678909' + '0'.repeat(36)
+  // otherNames do e-CNPJ do perfil ANTIGO que NÃO são o titular (vistos no A1 real de 2026-10-05: .2 nome e .4 dados do responsável, .7 CEI)
+  const RESPONSAVEL = [
+    { oid: '2.16.76.1.3.2', value: 'FULANO DE TAL' },
+    { oid: '2.16.76.1.3.4', value: '01011980' + '12345678909' + '0'.repeat(26) },
+    { oid: '2.16.76.1.3.7', value: '000000000000' },
+  ]
+  const pairOf = (o: Parameters<typeof makePfx>[0]) => pkcs12ToPem(makePfx(o).pfx, o.password)
+  const accept = (o: Parameters<typeof makePfx>[0], expected: string) => { const p = pairOf(o); return validateIssuerPair(p.certPem, p.keyPem, expected) }
+  const reject = (o: Parameters<typeof makePfx>[0], expected: string, msg: RegExp) => {
+    const p = pairOf(o)
+    let err: any
+    try { validateIssuerPair(p.certPem, p.keyPem, expected) } catch (e) { err = e }
+    expect(err).toMatchObject({ statusCode: 409, code: 'FISCAL_CERT_INVALID' })
+    expect(err.message).toMatch(msg)
+    return err
+  }
+
+  it('perfil ANTIGO (CN "RAZÃO:CNPJ" + OID .3.3, com responsável e CEI presentes) → uma inscrição, duas fontes; o CPF do responsável nunca é o titular', () => {
+    const info = accept({ cn: `SETES:${CNPJ}`, password: PASSWORD, otherNames: [...RESPONSAVEL, { oid: ICP_OID_PJ_HOLDER, value: CNPJ }] }, CNPJ)
+    expect(info.cnpj).toBe(CNPJ)
+    expect(info.holder).toEqual({ state: 'found', id: { kind: 'cnpj', value: CNPJ }, sources: ['cn', 'otherName-pj'] })
+  })
+
+  it('perfil SE-S (CN = só a razão social + OID .3.3 + serialNumber canônico) → aceito, também com CNPJ alfanumérico', () => {
+    for (const cnpj of [CNPJ, ALFA]) {
+      const info = accept({ cn: 'SETES SISTEMAS LTDA', password: PASSWORD, serialNumber: cnpj, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: cnpj }] }, cnpj)
+      expect(info.cnpj).toBe(cnpj)
+      expect(info.holder).toMatchObject({ state: 'found', sources: ['serialNumber', 'otherName-pj'] })
+    }
+  })
+
+  it('uma fonte só vale: só o OID .3.3; só o serialNumber com a máscara oficial; só o CN legado alfanumérico', () => {
+    expect(accept({ cn: 'RAZAO', password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: ALFA }] }, ALFA).cnpj).toBe(ALFA)
+    expect(accept({ cn: 'RAZAO', password: PASSWORD, serialNumber: '12.345.678/0001-95' }, CNPJ).cnpj).toBe(CNPJ)
+    expect(accept({ cn: `SETES:${ALFA}`, password: PASSWORD }, ALFA).cnpj).toBe(ALFA)
+  })
+
+  it('duas fontes divergentes → 409 "certificado incoerente" que diz quem disse o quê (OID × CN; serialNumber × OID)', () => {
+    const a = reject({ cn: `SETES:${CNPJ}`, password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: OTHER }] }, CNPJ, /incoerente/)
+    expect(a.message).toContain(OTHER)
+    expect(a.message).toContain(CNPJ)
+    reject({ cn: 'RAZAO', password: PASSWORD, serialNumber: CNPJ, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: OTHER }] }, CNPJ, /incoerente/)
+    // mesmo que UMA das fontes bata com o estabelecimento: contraditório nunca passa ("a primeira que casa vence" deixaria)
+    reject({ cn: `SETES:${OTHER}`, password: PASSWORD, serialNumber: CNPJ }, CNPJ, /incoerente/)
+  })
+
+  it('titular PF e PJ no mesmo certificado → incoerente, e o CPF não aparece na mensagem', () => {
+    const err = reject({ cn: 'X', password: PASSWORD, otherNames: [{ oid: ICP_OID_PF_HOLDER, value: PF_CONTENT }, { oid: ICP_OID_PJ_HOLDER, value: CNPJ }] }, CNPJ, /incoerente/)
+    expect(err.message).not.toContain('12345678909')
+    expect(err.message).toContain('um CPF')
+  })
+
+  it('nenhuma fonte → 409 "sem a inscrição do titular"', () => {
+    reject({ cn: 'SETES SISTEMAS LTDA', password: PASSWORD, otherNames: RESPONSAVEL }, CNPJ, /sem a inscrição do titular/)
+  })
+
+  it('e-CPF pelo OID .3.1, pelo serialNumber de 11 dígitos ou pelo CN "NOME:CPF" → 409 e-CPF', () => {
+    reject({ cn: 'FULANO', password: PASSWORD, otherNames: [{ oid: ICP_OID_PF_HOLDER, value: PF_CONTENT }] }, CNPJ, /e-CPF/)
+    reject({ cn: 'FULANO', password: PASSWORD, serialNumber: '12345678909' }, CNPJ, /e-CPF/)
+    reject({ cn: 'FULANO:12345678909', password: PASSWORD }, CNPJ, /e-CPF/)
+  })
+
+  it('D-CJ33: campo presente em formato que não sabemos ler → 409 "não reconhece o formato" (nunca aceito por suposição, nunca "sem titular")', () => {
+    const cases: Array<[Parameters<typeof makePfx>[0], RegExp]> = [
+      [{ cn: `SETES:${CNPJ}`, password: PASSWORD, serialNumber: `TINBR-${CNPJ}` }, /serialNumber/],          // prefixo (ETSI) — não suposto
+      [{ cn: `SETES:${CNPJ}`, password: PASSWORD, serialNumber: '12 345 678 0001 95' }, /serialNumber/],      // máscara que não é a oficial
+      [{ cn: `SETES:${CNPJ}`, password: PASSWORD, serialNumber: '12345678000199' }, /serialNumber/],          // DV errado
+      [{ cn: `SETES:${CNPJ}`, password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: ` ${CNPJ}` }] }, /2\.16\.76\.1\.3\.3/],
+      [{ cn: `SETES:${CNPJ}`, password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: '12.345.678/0001-95' }] }, /2\.16\.76\.1\.3\.3/],
+      [{ cn: 'FULANO', password: PASSWORD, otherNames: [{ oid: ICP_OID_PF_HOLDER, value: '0101' }] }, /2\.16\.76\.1\.3\.1/],
+      [{ cn: 'SETES:12345678000199', password: PASSWORD }, /CN/],                                              // CN legado com DV errado
+    ]
+    for (const [opts, field] of cases) {
+      const err = reject(opts, CNPJ, /não reconhece o formato/)
+      expect(err.message).toMatch(field)
+      expect(err.message).not.toMatch(/sem a inscrição/)
+    }
+  })
+
+  it('o OID .3.3 em outro tipo de string (UTF8String, OCTET STRING, IA5String) é lido igual; byte de controle é formato desconhecido', () => {
+    const T = forge.asn1.Type
+    for (const type of [T.UTF8, T.OCTETSTRING, T.IA5STRING]) {
+      expect(accept({ cn: 'RAZAO', password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: CNPJ, type }] }, CNPJ).cnpj).toBe(CNPJ)
+    }
+    reject({ cn: 'RAZAO', password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: CNPJ + '\u0000', type: T.OCTETSTRING }] }, CNPJ, /não reconhece o formato/)
+  })
+
+  it('certificateInfo NUNCA lança por titular incoerente (o cofre lê o certificado guardado): cnpj null e o estado no holder', () => {
+    const p = pairOf({ cn: `SETES:${CNPJ}`, password: PASSWORD, serialNumber: OTHER })
+    const info = certificateInfo(p.certPem)
+    expect(info.cnpj).toBeNull()
+    expect(info.holder.state).toBe('conflict')
   })
 })
 
@@ -391,5 +495,83 @@ describe('VIRADA da emissão como FATO na habilitação (D-F39 — migration 003
     // D-F57 (= Q-F64 (a)): só a 55 virada no fiscal_api + SE no ERP → AINDA do ERP (antes: "há linha" escondia a SE)
     expect(await anyEmissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'tem'), 'setes_setes', 1)).toBe(true)
     expect(await anyEmissionStillInErp(mk({ n: 1, r: 0, s: 0 }, 'nao'), 'setes_setes', 1)).toBe(false)
+  })
+})
+
+// Gates de 2026-11-18 (socrático 0,80 · adversarial 0,82, nenhum HIGH): MEDIUM e LOW corrigidos, cada um com o seu teste
+describe('titular por consenso — correções dos gates (CNPJ.E4.P1)', () => {
+  const OTHER = '98765432000198'
+  const pairOf = (o: Parameters<typeof makePfx>[0]) => pkcs12ToPem(makePfx(o).pfx, o.password)
+  const holderOf = (o: Parameters<typeof makePfx>[0]) => certificateInfo(pairOf(o).certPem).holder
+  const T = forge.asn1.Type
+
+  it('[MEDIUM, os dois gates] certificado do OPENSSL (não do forge): perfil antigo com CN acentuado + responsável/CEI, e SE-S com serialNumber', () => {
+    expect(certificateInfo(OPENSSL_LEGACY_ECNPJ_PEM).holder).toEqual({ state: 'found', id: { kind: 'cnpj', value: CNPJ }, sources: ['cn', 'otherName-pj'] })
+    expect(certificateInfo(OPENSSL_SES_PEM).holder).toEqual({ state: 'found', id: { kind: 'cnpj', value: 'PC3D315K000193' }, sources: ['serialNumber', 'otherName-pj'] })
+    expect(certificateInfo(OPENSSL_SES_PEM).cnpj).toBe('PC3D315K000193')
+  })
+
+  it('[MEDIUM] CN com acento em UTF8String conta como fonte: sozinho vale; divergente do OID dá incoerente (antes saía da conta e escondia)', () => {
+    const cn = (cnpj: string) => ({ cn: `EMPRESA SÃO JOÃO:${cnpj}`, password: PASSWORD })
+    expect(holderOf(cn(CNPJ))).toMatchObject({ state: 'found', sources: ['cn'] })
+    expect(holderOf({ ...cn(OTHER), otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: CNPJ }] }).state).toBe('conflict')
+  })
+
+  it('[MEDIUM] CN que não decodifica mas termina numa inscrição → não suportado (nunca "sem fonte")', () => {
+    // T61String com byte de controle antes da inscrição: não decodifica como texto, os bytes terminam em ":<CNPJ>"
+    const p = makePfx({ cn: 'X', password: PASSWORD })
+    const cert = forge.pki.certificateFromPem(p.certPem)
+    const subj = cert.subject.attributes.map(a => a.shortName === 'CN' ? { ...a, value: `X\u0001:${CNPJ}` } : a)
+    const keys = forge.pki.rsa.generateKeyPair(1024)
+    cert.publicKey = keys.publicKey; cert.setSubject(subj as forge.pki.CertificateField[]); cert.sign(keys.privateKey, forge.md.sha256.create())
+    expect(certificateInfo(forge.pki.certificateToPem(cert)).holder).toEqual({ state: 'unsupported', source: 'cn' })
+  })
+
+  it('[LOW, adversarial] SubjectAltName fora da forma (otherName primitivo, tipo que não é OID) → DER que não fecha, nunca pulado', () => {
+    const { asn1 } = forge
+    const build = (san: forge.asn1.Asn1) => {
+      const keys = forge.pki.rsa.generateKeyPair(1024)
+      const c = forge.pki.createCertificate()
+      c.publicKey = keys.publicKey; c.serialNumber = '01'
+      c.validity.notBefore = new Date(Date.now() - 86_400_000); c.validity.notAfter = new Date(Date.now() + 86_400_000)
+      c.setSubject([{ name: 'commonName', value: `S:${CNPJ}` }]); c.setIssuer([{ name: 'commonName', value: 'AC' }])
+      c.setExtensions([{ id: '2.5.29.17', value: san }]); c.sign(keys.privateKey, forge.md.sha256.create())
+      return certificateInfo(forge.pki.certificateToPem(c)).holder
+    }
+    const seq = (items: forge.asn1.Asn1[]) => asn1.create(asn1.Class.UNIVERSAL, T.SEQUENCE, true, items)
+    expect(build(seq([asn1.create(asn1.Class.CONTEXT_SPECIFIC, 0, false, 'x')]))).toEqual({ state: 'unsupported', source: 'der' })
+    expect(build(seq([asn1.create(asn1.Class.CONTEXT_SPECIFIC, 0, true, [asn1.create(asn1.Class.UNIVERSAL, T.PRINTABLESTRING, false, 'x')])])))
+      .toEqual({ state: 'unsupported', source: 'der' })
+    expect(build(asn1.create(asn1.Class.UNIVERSAL, T.OCTETSTRING, false, 'abc'))).toEqual({ state: 'unsupported', source: 'der' })
+  })
+
+  it('[LOW, socrático] casos que faltavam: BMPString, dois serialNumber divergentes, outro CNPJ só pelo OID ou só pelo serialNumber, CPF mascarado', () => {
+    expect(holderOf({ cn: 'R', password: PASSWORD, otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: Buffer.from(CNPJ, 'utf16le').swap16().toString('binary'), type: T.BMPSTRING }] }))
+      .toMatchObject({ state: 'found', id: { value: CNPJ } })
+    const two = makePfx({ cn: 'R', password: PASSWORD, serialNumber: CNPJ })
+    const c = forge.pki.certificateFromPem(two.certPem)
+    const keys = forge.pki.rsa.generateKeyPair(1024)
+    c.publicKey = keys.publicKey
+    c.setSubject([...c.subject.attributes, { type: '2.5.4.5', value: OTHER, valueTagClass: T.PRINTABLESTRING } as unknown as forge.pki.CertificateField] as forge.pki.CertificateField[])
+    c.sign(keys.privateKey, forge.md.sha256.create())
+    expect(certificateInfo(forge.pki.certificateToPem(c)).holder.state).toBe('conflict')
+    for (const o of [{ otherNames: [{ oid: ICP_OID_PJ_HOLDER, value: OTHER }] }, { serialNumber: OTHER }]) {
+      const p = pairOf({ cn: 'R', password: PASSWORD, ...o })
+      expect(() => validateIssuerPair(p.certPem, p.keyPem, CNPJ)).toThrow(new RegExp(`Certificado do CNPJ ${OTHER}`))
+    }
+    expect(holderOf({ cn: 'R', password: PASSWORD, serialNumber: '123.456.789-09' })).toEqual({ state: 'unsupported', source: 'serialNumber' })
+  })
+
+  it('[LOW, socrático] e-CPF com acento no órgão expedidor do .3.1 segue "e-CPF" (só as 19 primeiras posições são lidas)', () => {
+    const p = pairOf({ cn: 'FULANO', password: PASSWORD, otherNames: [{ oid: ICP_OID_PF_HOLDER, value: forge.util.encodeUtf8('01011980' + '12345678909' + '0'.repeat(26) + 'SSPÃOSP'), type: T.UTF8 }] })
+    expect(() => validateIssuerPair(p.certPem, p.keyPem, CNPJ)).toThrow(/e-CPF/)
+  })
+
+  it('[LOW, socrático] dois CPFs diferentes em conflito: legível ("um CPF (1)" × "(2)") sem mostrar nenhum', () => {
+    const p = pairOf({ cn: 'FULANO:52998224725', password: PASSWORD, serialNumber: '12345678909' })
+    let err: any
+    try { validateIssuerPair(p.certPem, p.keyPem, CNPJ) } catch (e) { err = e }
+    expect(err.message).toMatch(/um CPF \(1\).*um CPF \(2\)/)
+    expect(err.message).not.toMatch(/52998224725|12345678909/)
   })
 })
