@@ -15,6 +15,10 @@ export * from './time/zone'
 // inscrição federal (CPF/CNPJ alfanumérico — D-CJ2): peça pura, também no subpath `fiscal-api/federal-id`
 export * from './federal-id/federal-id'
 
+// opção de apuração do IBS/CBS do Simples (D-IB128/D-IB129): regra de leitura e contrato da view — peça pura, também no subpath
+// `fiscal-api/ibscbs-assessment`
+export * from './ibscbs-assessment/ibscbs-assessment'
+
 // banco
 export * from './db/pool'
 export * from './db/tx'
@@ -74,6 +78,10 @@ export * from './numbering/withdrawn-ranges'
 // serviço, fora do catálogo da voz e de `fiscal-api/reading` até o 1º leitor (a conferência dos títulos no setes-api — D-IB125, junto do
 // GRANT da view); a nfse-api (dona da view, migration 008) confere a view no boot por ela
 export * from './voice/families/service-authority-ibscbs'
+
+// OPÇÃO DE APURAÇÃO DO IBS/CBS do estabelecimento (fase IBS/CBS — D-IB127…D-IB129): leitor da view `vw_establishment_ibscbs_assessment`
+// do schema do cliente (nasce em setes-api:IBS.E6.P7), fora de `fiscal-api/reading` (molde da D-IB125); a regra é a da peça pura
+export * from './erp/establishment-ibscbs-assessment'
 
 // fonte de fatos Gestão 2027 — base (D-F10/D-F32)
 export * as erp from './erp/facts'

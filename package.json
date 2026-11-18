@@ -1,6 +1,6 @@
 {
   "name": "fiscal-api",
-  "version": "2.0.0",
+  "version": "2.1.0",
   "private": true,
   "description": "Núcleo comum das APIs fiscais do Gestão 2027 (biblioteca — D-F17): mTLS, XMLDSig, A1 cifrado, habilitação e emitente, voz do fisco (leitura publicada por família, escritor genérico sob a trava da nota, política em peças — os roteiros são da família), fonte de fatos base, migrations do banco fiscal_api",
   "main": "dist/index.js",
@@ -26,6 +26,10 @@
       "types": "./dist/access.d.ts",
       "default": "./dist/access.js"
     },
+    "./ibscbs-assessment": {
+      "types": "./dist/ibscbs-assessment.d.ts",
+      "default": "./dist/ibscbs-assessment.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -41,6 +45,9 @@
       ],
       "access": [
         "dist/access.d.ts"
+      ],
+      "ibscbs-assessment": [
+        "dist/ibscbs-assessment.d.ts"
       ]
     }
   },

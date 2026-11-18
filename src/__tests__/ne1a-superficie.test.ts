@@ -12,6 +12,15 @@ const SRC = path.resolve(__dirname, '..')
 const WORKSPACE = path.resolve(SRC, '..', '..')
 const read = (f: string) => fs.readFileSync(f, 'utf8')
 
+/**
+ * O predicado da cerca da F2a: o spec `<arquivo>: <módulo>` de um import do setes-api é permitido? `fiscal-api/reading` e as peças puras
+ * `fiscal-api/federal-id` (D-CJ2) e `fiscal-api/ibscbs-assessment` (D-IB129 — a regra da opção de apuração e o contrato da view, também
+ * no teste DDL do setes-api) em qualquer arquivo; `fiscal-api/access` só no adaptador `@shared/access` (D-AU6). O barrel e os outros
+ * subpaths, nunca.
+ */
+const f2aSpecAllowed = (s: string): boolean => s.endsWith(': fiscal-api/reading') || s.endsWith(': fiscal-api/federal-id')
+  || s.endsWith(': fiscal-api/ibscbs-assessment') || /(?:^|[\\/])src[\\/]shared[\\/]access[\\/]index\.ts: fiscal-api\/access$/.test(s)
+
 /** O lado de ESCRITA do núcleo — nada disto pode sair pela superfície de leitura. */
 const WRITE_SIDE = [
   'defineVoiceFamily', 'withInvoiceTx', 'assertInvoiceTx', 'recordVoiceOnce', 'recordKindOnce', 'reserveCancelRequest', 'releaseCancelRequest',
@@ -69,7 +78,10 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // D-NE121 (NE-1b, 2026-10-17): o 3º subpath é a base de PDF — fora do índice principal e do `reading` (cerca `pdf-cerca.test.ts`)
     // D-AU6 (costura A1 da auth-api, 2026-10-31): o 4º subpath é o LEITOR do veredito de acesso `fiscal-api/access` (pilha de views — nada de
     // escrita; vira `auth-api/access` na A2)
-    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './access', './federal-id', './package.json', './pdf', './reading'])
+    // D-IB128/D-IB129 (fase IBS/CBS, 2026-11-18): o 5º subpath é a opção de apuração do IBS/CBS — peça PURA (regra de leitura + contrato da view)
+    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './access', './federal-id', './ibscbs-assessment', './package.json', './pdf', './reading'])
+    expect(pkg.exports['./ibscbs-assessment']).toEqual({ types: './dist/ibscbs-assessment.d.ts', default: './dist/ibscbs-assessment.js' })
+    expect(pkg.typesVersions['*']['ibscbs-assessment']).toEqual(['dist/ibscbs-assessment.d.ts'])
     expect(pkg.exports['./access']).toEqual({ types: './dist/access.d.ts', default: './dist/access.js' })
     expect(pkg.typesVersions['*'].access).toEqual(['dist/access.d.ts'])
     expect(pkg.exports['./reading']).toEqual({ types: './dist/reading.d.ts', default: './dist/reading.js' })
@@ -91,7 +103,18 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // por linha com OU sem \r — num checkout do Windows (core.autocrlf) o fonte vem em CRLF (achado na janela D-NE123)
     expect(read(path.join(SRC, 'pdf.ts')).split(/\r?\n/)[0]).toBe('/// <reference types="pdfkit" preserve="true" />')
   })
-  it('CERCA da F2a: o setes-api só importa `fiscal-api/reading`, `fiscal-api/federal-id` (D-CJ2 — peça pura) e, só no adaptador, `fiscal-api/access` (D-AU6)', () => {
+  it('o predicado da cerca da F2a, com specs sintéticos: reading, federal-id e ibscbs-assessment em qualquer arquivo; access só no adaptador', () => {
+    const ok = ['src/x/y.ts: fiscal-api/reading', 'src/x/y.ts: fiscal-api/federal-id', 'src/shared/ibscbs-assessment/index.ts: fiscal-api/ibscbs-assessment',
+      'src/__tests__/ibscbs-assessment-view-ddl.test.ts: fiscal-api/ibscbs-assessment', 'src/shared/access/index.ts: fiscal-api/access',
+      'src\\shared\\access\\index.ts: fiscal-api/access']
+    const refused = ['src/x/y.ts: fiscal-api', 'src/x/y.ts: fiscal-api/pdf', 'src/x/y.ts: fiscal-api/access', 'src/x/y.ts: fiscal-api/ibscbs-assessment/x',
+      'src/x/y.ts: fiscal-api/dist/ibscbs-assessment', 'src/shared/ibscbs-assessment/index.ts: fiscal-api',
+      // gate adversarial de 2026-11-18 (L5): o adaptador é o `src/shared/access/index.ts`, não qualquer `…shared/access/index.ts`
+      'src/modules/notshared/access/index.ts: fiscal-api/access', 'src/x/myshared/access/index.ts: fiscal-api/access']
+    for (const s of ok) expect([s, f2aSpecAllowed(s)]).toEqual([s, true])
+    for (const s of refused) expect([s, f2aSpecAllowed(s)]).toEqual([s, false])
+  })
+  it('CERCA da F2a: o setes-api só importa `fiscal-api/reading`, `fiscal-api/federal-id` (D-CJ2 — peça pura), `fiscal-api/ibscbs-assessment` (D-IB129 — peça pura) e, só no adaptador, `fiscal-api/access` (D-AU6)', () => {
     const root = setesApiPath('src')                                        // D-F117: a worktree da F2a (ou a árvore viva) — tem de existir
     const walk = (dir: string): string[] => fs.readdirSync(dir, { withFileTypes: true }).flatMap(d =>
       d.isDirectory() ? (d.name === 'node_modules' ? [] : walk(path.join(dir, d.name))) : /\.(?:ts|js)$/.test(d.name) ? [path.join(dir, d.name)] : [])
@@ -110,7 +133,6 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       visit(sf)
     }
     // D-AU6: `fiscal-api/access` só no ADAPTADOR do setes-api (`@shared/access` — um leitor do veredito lá)
-    expect(specs.filter(s => !s.endsWith(': fiscal-api/reading') && !s.endsWith(': fiscal-api/federal-id')
-      && !/shared[\\/]access[\\/]index\.ts: fiscal-api\/access$/.test(s))).toEqual([])
+    expect(specs.filter(s => !f2aSpecAllowed(s))).toEqual([])
   })
 })
