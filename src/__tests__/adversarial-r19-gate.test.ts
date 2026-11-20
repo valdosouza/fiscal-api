@@ -206,7 +206,11 @@ describe('RESISTIU — D-F98: a causa do ambíguo é da lista FECHADA, do produt
     const sites = ambiguousSites([SRC_ROOT], path.resolve(SRC_ROOT, '..'))
     expect(sites.filter(s => s.kind === 'DESCONHECIDO')).toEqual([])
     const producers = sites.filter(s => s.kind === 'produtor')
-    expect(producers).toEqual([{ file: 'src/transport/https-json.ts', kind: 'produtor', tagged: true, cause: 'rota-nao-atendida' }])
+    // FAMILIA.E5.P1.T1 (D-NE93/D-NE164): o teto de 2 MB é o 2º produtor — `responseTooLargeAmbiguous`, causa `envelope-ilegivel` (já da lista)
+    expect(producers).toEqual([
+      { file: 'src/transport/https-json.ts', kind: 'produtor', tagged: true, cause: 'envelope-ilegivel' },
+      { file: 'src/transport/https-json.ts', kind: 'produtor', tagged: true, cause: 'rota-nao-atendida' },
+    ])
     for (const p of producers) expect(AMBIGUOUS_CAUSES as readonly string[]).toContain(p.cause)
   })
   it('resistiu: 405/406/415 pelo transporte REAL → 502 marcado `rota-nao-atendida` (a marca sobrevive ao `throw`, inclusive num catch que relança o MESMO erro)', async () => {

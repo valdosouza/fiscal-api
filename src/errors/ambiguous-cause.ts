@@ -8,7 +8,7 @@
  * ⚠️ ESPELHO: `setes-api/src/shared/tax-authority/ambiguous-cause.ts` (o caminho de produção até a F2a) — mudar os dois juntos.
  */
 export const AMBIGUOUS_CAUSES = [
-  'envelope-ilegivel',        // 2xx sem o envelope cravado (sem a NFS-e, sem JSON legível)
+  'envelope-ilegivel',        // 2xx sem o envelope cravado (sem a NFS-e, sem JSON legível); ou corpo acima do teto de 2 MB (D-NE93)
   'rota-nao-atendida',        // 405/406/415: o fisco não atende a rota/método/formato — contrato do adaptador
   'nfse-ilegivel',            // a NFS-e veio, mas o leitor não a lê
   'nfse-sem-chave',           // NFS-e sem a chave de acesso de 50 dígitos

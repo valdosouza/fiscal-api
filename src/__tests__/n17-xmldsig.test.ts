@@ -8,6 +8,10 @@ import path from 'path'
 import forge from 'node-forge'
 import { SignedXml } from 'xml-crypto'
 import { signXml, verifyXml, firstCertificatePem } from '../transport/xmldsig'
+import { parseXml, elementsOf, attrOf, XmlNode } from '../xml/reader'
+
+/** FAMILIA.E5.P1.T2 (D-NE183/D-NE194): "verificou" = o `verifyXml` devolveu o trecho do elemento pedido. */
+const ok = (x: string, c: Buffer | string, element = 'infDPS'): boolean => verifyXml(x, c, { element }) !== null
 
 function legacy_verifyXml(signedXml: string, certPem: Buffer | string): boolean {
   try {
@@ -38,7 +42,19 @@ const walkXml = (dir: string): string[] => (!fs.existsSync(dir) ? [] : fs.readdi
 /** O certificado do 1º KeyInfo do documento, em PEM (o corpus real: quem assinou). */
 const keyInfoPem = (xml: string): string | null => {
   const b64 = /<X509Certificate>([^<]+)<\/X509Certificate>/.exec(xml)?.[1]
-  return b64 ? `-----BEGIN CERTIFICATE-----\n${b64.replace(/\s+/g, '').match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n` : null
+  return b64 ? toPem(b64) : null
+}
+const toPem = (b64: string): string => `-----BEGIN CERTIFICATE-----\n${b64.replace(/\s+/g, '').match(/.{1,64}/g)!.join('\n')}\n-----END CERTIFICATE-----\n`
+/** CADA assinatura do documento: o nome local do elemento que a Reference aponta e o certificado do KeyInfo DAQUELA Signature. */
+const signaturesOf = (xml: string): { element: string; id: string; pem: string }[] => {
+  const DS = 'http://www.w3.org/2000/09/xmldsig#'
+  const all = elementsOf(parseXml(xml))
+  const desc = (n: XmlNode, name: string) => elementsOf(n).filter(e => e.localName === name && e.namespaceURI === DS)
+  return all.filter(e => e.localName === 'Signature' && e.namespaceURI === DS).map(sig => {
+    const id = (attrOf(desc(sig, 'Reference')[0], 'URI') ?? '').slice(1)
+    const el = all.find(e => attrOf(e, 'Id') === id)!
+    return { element: el.localName ?? '', id, pem: toPem(desc(sig, 'X509Certificate')[0].childNodes[0].nodeValue ?? '') }
+  })
 }
 
 describe('N17 — verifyXml pelo leitor × o recorte publicado (oráculo)', () => {
@@ -52,7 +68,7 @@ describe('N17 — verifyXml pelo leitor × o recorte publicado (oráculo)', () =
         [`adulterada ${algorithm}`, signed.replace('<nDPS>1</nDPS>', '<nDPS>2</nDPS>'), a.cert])
     }
     cases.push(['sem assinatura', XML, a.cert])
-    const got = cases.map(([l, x, c]) => [l, verifyXml(x, c), legacy_verifyXml(x, c)])
+    const got = cases.map(([l, x, c]) => [l, ok(x, c), legacy_verifyXml(x, c)])
     expect(got.map(([l, n, o]) => [l, n === o])).toEqual(cases.map(([l]) => [l, true]))
     expect(got.filter(([l]) => String(l).startsWith('assinada')).map(([, n]) => n)).toEqual([true, true])
   })
@@ -64,8 +80,16 @@ describe('N17 — verifyXml pelo leitor × o recorte publicado (oráculo)', () =
       const xml = fs.readFileSync(f, 'utf8')
       const pem = keyInfoPem(xml)
       if (!pem) continue
-      // as assinaturas reais VERIFICAM (não só empatam com o oráculo)
-      expect([path.basename(f).replace(/\d{20,}/, '<k>'), verifyXml(xml, pem), legacy_verifyXml(xml, pem)]).toEqual([path.basename(f).replace(/\d{20,}/, '<k>'), true, true])
+      const name = path.basename(f).replace(/\d{20,}/, '<k>')
+      // o oráculo só vê a 1ª assinatura: empata com o `verifyXml` pelo elemento DELA (a do emitente no DPS dentro da NFS-e/evento)
+      const sigs = signaturesOf(xml)
+      expect([name, ok(xml, pem, sigs[0].element), legacy_verifyXml(xml, pem)]).toEqual([name, true, true])
+      // FAMILIA.E5.P1.T2: TODA assinatura verifica pelo elemento dela, com o certificado dela — inclusive a do fisco (ADN, `exc-c14n#WithComments`,
+      // D-NE195), que o oráculo não alcança — e o trecho devolvido é o do elemento (o `Id` confere e o trecho começa por ele)
+      for (const s of sigs) {
+        const part = verifyXml(xml, s.pem, { element: s.element })
+        expect([name, s.element, part?.id, part?.xml.startsWith(`<${s.element}`)]).toEqual([name, s.element, s.id, true])
+      }
       compared++
     }
     expect(compared).toBeGreaterThanOrEqual(8)
@@ -73,8 +97,8 @@ describe('N17 — verifyXml pelo leitor × o recorte publicado (oráculo)', () =
   it('[DECIDIDO — D-NE72] o estranho: documento ilegível para o leitor estrito dá false (o recorte ainda podia achar a assinatura); a Signature que só HERDA o namespace segue sem verificação nos dois', () => {
     const signed = signXml(XML, { referenceId: 'DPS1', cert: a.cert, key: a.key, algorithm: 'sha1' })
     const trailing = signed + 'lixo'
-    expect([verifyXml(trailing, a.cert), legacy_verifyXml(trailing, a.cert)]).toEqual([false, true])
+    expect([ok(trailing, a.cert), legacy_verifyXml(trailing, a.cert)]).toEqual([false, true])
     const inherited = signed.replace('<Signature xmlns="http://www.w3.org/2000/09/xmldsig#">', '<Signature>').replace('<DPS xmlns="http://www.sped.fazenda.gov.br/nfse"', '<DPS xmlns="http://www.w3.org/2000/09/xmldsig#"')
-    expect([verifyXml(inherited, a.cert), legacy_verifyXml(inherited, a.cert)]).toEqual([false, false])
+    expect([ok(inherited, a.cert), legacy_verifyXml(inherited, a.cert)]).toEqual([false, false])
   })
 })

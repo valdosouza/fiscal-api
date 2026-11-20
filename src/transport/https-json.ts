@@ -19,6 +19,7 @@ import { logger } from '../log/logger'
  *  - 404                    → 404 FISCAL_NFSE_NOT_FOUND
  *  - 4xx demais             → 422 FISCAL_DPS_REJECTED com os E0xxx do fisco em fields[]
  *  - 2xx ilegível           → cabe ao adaptador (502 FISCAL_AUTHORITY_UNKNOWN_RESPONSE)
+ *  - corpo > 2 MB           → 502 FISCAL_AUTHORITY_UNKNOWN_RESPONSE, causa `envelope-ilegivel`, em QUALQUER status (D-NE93/D-NE164)
  */
 
 export interface HttpsCall {
@@ -45,6 +46,34 @@ export interface HttpsResult {
 
 /** Fisco é mais lento que banco: validação + geração síncrona da NFS-e. */
 export const DEFAULT_TIMEOUT_MS = 30_000
+
+/**
+ * D-NE93/D-NE164 (FAMILIA.E5.P1.T1): teto do corpo da resposta do fisco no transporte COMUM — as duas famílias. Limita o BUFFER (também
+ * de corpo não-XML: HTML do gateway, JSON do ADN); o custo do DOM é o `MAX_XML_BYTES` (1 MB) do leitor — camadas, não contradição
+ * (§16.2-5 do prompt da NF-e). CONHECIMENTO NEGATIVO: não subir o leitor para 2 MB "para alinhar". Exatamente 2 MB passa.
+ */
+export const MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+/**
+ * Corpo acima do `MAX_RESPONSE_BYTES`: a resposta CHEGOU (o pedido pode ter surtido efeito no fisco) e não se lê — nunca credencial, nunca
+ * indisponível: ambíguo (`responseTooLargeAmbiguous`). `code` interno do transporte (como os do Node), fora do catálogo da borda.
+ */
+export class ResponseTooLargeError extends Error {
+  readonly code = 'FISCAL_RESPONSE_TOO_LARGE'
+  readonly afterHandshake = true
+  constructor(
+    /** Status HTTP que o fisco respondeu junto do corpo grande. */
+    public readonly authorityStatus: number,
+  ) {
+    super(`Resposta do fisco acima do teto de ${MAX_RESPONSE_BYTES} bytes`)
+    this.name = 'ResponseTooLargeError'
+  }
+}
+
+/** Pelo `code` também (gate adversarial LOW-3): o erro de OUTRA cópia do pacote, ou de um transporte injetado, não pode virar 503. */
+export function isResponseTooLarge(err: unknown): err is ResponseTooLargeError {
+  return err instanceof ResponseTooLargeError || (!!err && typeof err === 'object' && (err as any).code === 'FISCAL_RESPONSE_TOO_LARGE')
+}
 
 export class AuthorityHttpError extends HttpError {
   constructor(
@@ -81,12 +110,31 @@ export function httpsRequest(call: HttpsCall): Promise<HttpsResult> {
       ...(call.ca !== undefined ? { ca: call.ca } : {}),              // D-NE57: só quando dito — ausente = loja padrão do Node
       timeout: call.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     }, res => {
+      const status = res.statusCode ?? 0
+      // D-NE93/D-NE164: corpo acima do teto = recusa, e a conexão cai (nada mais se junta em memória)
+      const tooLarge = () => {
+        reject(new ResponseTooLargeError(status))
+        res.destroy()
+        req.destroy()
+      }
+      // o cabeçalho só vale quando há corpo (HEAD, 204 e 304 declaram o tamanho de um corpo que não vem — gates L5/LOW-4)
+      const hasBody = call.method !== 'HEAD' && status !== 204 && status !== 304
+      const declared = Number(res.headers['content-length'])
+      if (hasBody && Number.isFinite(declared) && declared > MAX_RESPONSE_BYTES) { tooLarge(); return }
       const chunks: Buffer[] = []
-      res.on('data', c => chunks.push(c))
+      let size = 0
+      let over = false
+      res.on('data', (c: Buffer) => {
+        if (over) return
+        size += c.length
+        if (size > MAX_RESPONSE_BYTES) { over = true; tooLarge(); return }
+        chunks.push(c)
+      })
       res.on('error', fail(reject))                             // reset no meio do corpo: nunca pendente
-      res.on('end', () => resolve({
-        status: res.statusCode ?? 0, headers: res.headers, text: Buffer.concat(chunks).toString('utf8'),
-      }))
+      res.on('end', () => {
+        if (over) return
+        resolve({ status, headers: res.headers, text: Buffer.concat(chunks).toString('utf8') })
+      })
     })
     // gate adversarial (HIGH, 2026-09-30): conexão REAPROVEITADA (keep-alive do agente) não emite
     // 'secureConnect' — o handshake já foi feito numa requisição anterior; sem isto um erro TLS
@@ -190,6 +238,20 @@ export function rejectionsMessage(items: { code: string; message: string }[], fa
   return (s || fallback).slice(0, 255)
 }
 
+/**
+ * D-NE93/D-NE164 (FAMILIA.E5.P1.T1): a resposta acima do teto vira o AMBÍGUO que já existe — 502 FISCAL_AUTHORITY_UNKNOWN_RESPONSE com a
+ * causa `envelope-ilegivel` (D-F98), em qualquer status (a D-NE93 não distingue), corpo VAZIO (nunca guardar o corpo do fisco). O
+ * `authorityJson` (NFS-e) a usa; a NF-e, que fala SOAP sobre o `httpsRequest` cru (D-NE184), reusa a mesma peça.
+ */
+export function responseTooLargeAmbiguous(err: ResponseTooLargeError, label: string): AuthorityHttpError {
+  // `label` é texto FIXO da operação ('transmitir', 'consultar'…) — nunca chave, Id ou URL (vai ao log e à mensagem)
+  let status = 0                                                // erro de outra origem (reconhecido pelo `code`): só status HTTP válido
+  try { const s = Number(err.authorityStatus); if (Number.isInteger(s) && s >= 100 && s <= 599) status = s } catch { /* fica 0 */ }
+  logger.warn('Resposta do fisco acima do teto do transporte', { label, status, maxBytes: MAX_RESPONSE_BYTES })
+  return tagAmbiguous(new AuthorityHttpError(502, `Resposta do fisco acima de 2 MB (${label}) — não lida; a situação será consultada`,
+    ErrorCodes.FISCAL_AUTHORITY_UNKNOWN_RESPONSE, status, ''), 'envelope-ilegivel')   // D-F98
+}
+
 export interface AuthorityCallOptions {
   /** Nome do campo em fields[] quando o fisco rejeita ('dps' | 'event' …). */
   rejectField?: string
@@ -205,6 +267,8 @@ export async function authorityJson<T = any>(call: HttpsCall, label: string, opt
   try {
     res = await transport.request(call)
   } catch (err: any) {
+    // D-NE93/D-NE164: acima do teto a resposta chegou e não se lê — ambíguo, antes de qualquer outro ramo
+    if (isResponseTooLarge(err)) throw responseTooLargeAmbiguous(err, label)
     if (isLocalCredentialError(err)) {
       logger.warn('Par PEM do emissor recusado LOCALMENTE (antes do fisco)', { label, code: err?.code, err: err?.message })
       throw new AuthorityHttpError(409, 'Certificado/chave do emissor no cofre não abrem (par inconsistente ou ilegível) — envie o .pfx novamente',

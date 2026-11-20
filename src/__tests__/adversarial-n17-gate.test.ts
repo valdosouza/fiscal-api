@@ -168,14 +168,16 @@ describe('(d) verifyXml', () => {
   const XML = '<?xml version="1.0" encoding="UTF-8"?><DPS xmlns="http://www.sped.fazenda.gov.br/nfse" versao="1.01"><infDPS Id="DPS1"><nDPS>1</nDPS><xDesc>a &amp; b</xDesc></infDPS></DPS>'
   const signed = signXml(XML, { referenceId: 'DPS1', cert: a.cert, key: a.key, algorithm: 'sha1' })
   const sigBlock = signed.slice(signed.indexOf('<Signature'), signed.indexOf('</Signature>') + '</Signature>'.length)
-  const both = (x: unknown, c: Buffer = a.cert) => [verifyXml(x as string, c), legacy_verifyXml(x as string, c)]
+  // FAMILIA.E5.P1.T2 (D-NE183/D-NE194): o `verifyXml` devolve o trecho do elemento pedido ou nada — aqui "verificou" = trecho devolvido
+  const ok = (x: unknown, c: Buffer | string = a.cert): boolean => verifyXml(x as string, c, { element: 'infDPS' }) !== null
+  const both = (x: unknown, c: Buffer = a.cert) => [ok(x, c), legacy_verifyXml(x as string, c)]
 
   it('resistiu: NUNCA lança — vazio, não-string, DOCTYPE, CDATA depois da raiz (o @xmldom lança cru — o try segura), 30 000 níveis (RangeError), lixo depois da raiz, certificado ilegível', () => {
     const weird: unknown[] = ['', '   ', null, undefined, 42, {}, '<!DOCTYPE DPS>' + signed.replace(/^<\?xml[^>]*>/, ''), signed + '<![CDATA[x]]>', deep(30000), signed + 'lixo']
-    for (const w of weird) expect(() => verifyXml(w as string, a.cert)).not.toThrow()
-    expect(weird.map(w => verifyXml(w as string, a.cert))).toEqual(weird.map(() => false))
-    expect(verifyXml(signed, 'não é PEM')).toBe(false)
-    expect(verifyXml(signed, a.cert)).toBe(true)
+    for (const w of weird) expect(() => verifyXml(w as string, a.cert, { element: 'infDPS' })).not.toThrow()
+    expect(weird.map(w => ok(w))).toEqual(weird.map(() => false))
+    expect(ok(signed, 'não é PEM')).toBe(false)
+    expect(ok(signed)).toBe(true)
   })
   it('resistiu: adulteração DENTRO do elemento assinado, Signature com prefixo (`ds:`), duas Signatures com a 1ª adulterada → false (igual ao recorte)', () => {
     expect(both(signed.replace('<nDPS>1</nDPS>', '<nDPS>2</nDPS>'))).toEqual([false, false])
