@@ -7,10 +7,11 @@ import { SCHEMA_RE } from '../db/schema'
 import { logger as defaultLogger, Logger } from '../log/logger'
 
 /**
- * Autenticação pelo LOGIN DO PRODUTO (D-F13): o setes-api assina o JWT em RS256; as APIs fiscais
- * só têm a(s) chave(s) PÚBLICA(S) — conseguem verificar, nunca forjar. Rotação por `kid` (cada
+ * Autenticação pelo LOGIN DO PRODUTO (D-F13): o setes-api (e, desde a A2, a auth-api com chave e `kid` próprios — D-AU16) assina o JWT
+ * em RS256; as APIs fiscais só têm a(s) chave(s) PÚBLICA(S) — conseguem verificar, nunca forjar. Rotação por `kid` (cada
  * chave pública com seu id; `kid` e `exp` OBRIGATÓRIOS desde a D-F165 — como no setes-api). HS256 é recusado por construção
- * (`algorithms: ['RS256']`). Payload = o mesmo do setes-api (PADROES_BANCO §7).
+ * (`algorithms: ['RS256']`). Identidade = a do setes-api (PADROES_BANCO §7) SEM o `role`: o do token é ignorado e o perfil vem da sessão
+ * viva (D-AU3/D-AU19).
  */
 
 export interface InstitutionPayload {
@@ -23,6 +24,10 @@ export interface InstitutionPayload {
 /** Institution da Setes (decisão 14 da Fase 2 — hard coded igual ao setes-api). */
 export const SETES_INSTITUTION_ID = 1
 
+/*
+ * D-AU3/D-AU19 (ACESSO.E2.P2): `isSuper`/`isAdmin` respondem sobre o PERFIL VIVO — o `role` que o `access.liveIdentity` põe no payload. O
+ * verificador nunca copia o `role` do token (devolve `''`), então sobre a identidade crua do token a resposta é sempre `false`.
+ */
 export function isSuper(p?: InstitutionPayload | null): boolean {
   return p?.institutionId === SETES_INSTITUTION_ID && p?.role === 'super'
 }
@@ -170,7 +175,7 @@ export class ProductTokenVerifier {
       keys.set('default', fs.readFileSync(env.JWT_PUBLIC_KEY_PATH, 'utf8'))
       first = 'default'
     }
-    if (!first) throw new Error('Configure JWT_PUBLIC_KEYS ou JWT_PUBLIC_KEY_PATH (chave pública RS256 do setes-api — D-F13)')
+    if (!first) throw new Error('Configure JWT_PUBLIC_KEYS ou JWT_PUBLIC_KEY_PATH (chaves públicas RS256 do setes-api e da auth-api — D-F13/D-AU16)')
     return new ProductTokenVerifier(keys, first)
   }
 
@@ -214,14 +219,20 @@ export class ProductTokenVerifier {
     }
     // D-F165: validade OBRIGATÓRIA — token sem `exp` (só quem tem a chave privada forja) nunca vale para sempre (molde do setes-api)
     if (!Number.isFinite(payload?.exp)) throw new ProductAuthError('Token sem validade (exp)', 'invalid', safeKid(kid))
-    const ok = payload && Number.isInteger(payload.institutionId) && payload.institutionId > 0
-      && Number.isInteger(payload.userId) && payload.userId >= 0
-      && typeof payload.role === 'string' && payload.role.length > 0
+    // D-AU3/D-AU19 (ACESSO.E2.P2): a identidade é `institutionId` + `userId` + `schemaName` — o `role` NÃO faz parte dela. O token da
+    // auth-api vem sem ele; o do setes-api ainda o traz até a janela da A2 — "tolerado e IGNORADO": nunca é lido nem copiado
+    // Sem o `role`, o token de SELEÇÃO deixaria de ter o 2º discriminador: `scope` presente = não é token final (gate adversarial da
+    // ACESSO.E2.P2, L1 — o mesmo `scope === undefined` do setes-api e da auth-api: dois leitores, uma resposta); ids SEGUROS (L2, idem)
+    const ok = payload && Number.isSafeInteger(payload.institutionId) && payload.institutionId > 0
+      && Number.isSafeInteger(payload.userId) && payload.userId >= 0
+      && payload.scope === undefined
       && typeof payload.schemaName === 'string' && SCHEMA_RE.test(payload.schemaName)
     if (!ok) throw new ProductAuthError('Token sem a identidade da institution (token de seleção não serve aqui)', 'no_identity', safeKid(kid))
     if (!Number.isSafeInteger(payload.iat) || payload.iat <= 0) throw new ProductAuthError('Token sem o instante de emissão (iat)', 'invalid', safeKid(kid))
     return {
-      payload: { institutionId: payload.institutionId, userId: payload.userId, role: payload.role, schemaName: payload.schemaName },
+      // `role: ''` = perfil AINDA NÃO LIDO: só a sessão viva (`access.liveIdentity`, o [check] do `productAuth`) o preenche; sobre este
+      // payload cru `isAdmin`/`isSuper` respondem `false` (token sem sessão viva nunca é admin). O campo sai do tipo na A3 (D-AU13)
+      payload: { institutionId: payload.institutionId, userId: payload.userId, role: '', schemaName: payload.schemaName },
       iat: payload.iat,
     }
   }
@@ -242,7 +253,7 @@ const defaultAuthReject = authRejectLog()
  * fatos garante que o `schemaName` do token é o da institution (defesa em profundidade). [onReject] = o log da CLASSE de cada 401
  * (D-F157; nunca o token); um 401 do [check] é "identity_mismatch". O log nunca derruba a resposta.
  * Costura A1 da auth-api (D-UC9/D-AU3, 2026-10-31): o [check] pode DEVOLVER a identidade a usar — a SESSÃO viva (`access.sessionOf`)
- * devolve o payload com o PERFIL VIVO no lugar do `role` do token (até a A2 o token ainda o leva, mas ninguém confia nele); ele recebe
+ * devolve o payload com o PERFIL VIVO no `role` (o verificador o entrega VAZIO — o `role` do token, se vier, é ignorado: D-AU19); ele recebe
  * o `iat` do token (D-EA7: troca de senha revoga o token anterior).
  */
 export function productAuth(verifier: ProductTokenVerifier, check?: (p: InstitutionPayload, iat: number) => Promise<void | InstitutionPayload>,

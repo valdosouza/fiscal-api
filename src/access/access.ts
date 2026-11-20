@@ -76,8 +76,8 @@ export function iatAsUtcDatetime(iat: number): string {
 
 /**
  * A SESSÃO viva (D-UC9 + D-AU3): o vínculo do usuário com o estabelecimento DO TOKEN, com o schema do token, está vivo (credencial,
- * vínculo e estabelecimento ativos)? Devolve o PERFIL VIVO — quem autentica sobrescreve o `role` do token com ele até a A2 (o token
- * ainda leva `role`, mas ninguém confia nele). `null` = a sessão não vale mais (401 SESSION_REVOKED em quem chama).
+ * vínculo e estabelecimento ativos)? Devolve o PERFIL VIVO — o ÚNICO perfil que vale: o verificador do núcleo entrega o `role` vazio e o
+ * do token, se vier, é ignorado (D-AU3/D-AU19). `null` = a sessão não vale mais (401 SESSION_REVOKED em quem chama).
  *
  * D-EA7 (Valdo 2026-10-31): na MESMA leitura, o token emitido ANTES de a senha atual ser definida (`iat < password_set_at`) não vale —
  * trocar a senha derruba as sessões anteriores. `iat = T` VALE (o token reemitido na mesma resposta e o 1º login logo depois da criação);

@@ -102,10 +102,13 @@ describe('JWT do produto (D-F13) — RS256 só com a chave PÚBLICA', () => {
   const verifier = ProductTokenVerifier.of({ k1: pubPem })
   const claims = { institutionId: 1, userId: 7, role: 'admin', schemaName: 'setes_setes' }
 
-  it('token RS256 válido → payload; papel admin/super pela mesma regra do setes-api', () => {
+  it('token RS256 válido → identidade com o `role` VAZIO (o do token é ignorado — D-AU19); admin/super só do perfil vivo', () => {
     const p = verifier.verify(jwt.sign(claims, privPem, { algorithm: 'RS256', keyid: 'k1', expiresIn: '1h' }))
-    expect(p).toEqual(claims)
-    expect(isAdmin(p)).toBe(true)
+    expect(p).toEqual({ ...claims, role: '' })
+    expect(isAdmin(p)).toBe(false)              // o 'admin' do token não concede nada (ACESSO.E2.P2)
+    expect(isSuper(p)).toBe(false)
+    // o perfil VIVO (o que `access.liveIdentity` põe no `role`) segue a mesma regra do setes-api
+    expect(isAdmin({ ...p, role: 'admin' })).toBe(true)
     expect(isSuper({ ...p, role: 'super' })).toBe(true)
     expect(isSuper({ ...p, institutionId: 2, role: 'super' })).toBe(false)
   })
