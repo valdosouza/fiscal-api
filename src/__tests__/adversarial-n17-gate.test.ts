@@ -242,6 +242,8 @@ describe('[N17-09] pontos cegos da cerca', () => {
     const files = [...walk(path.join(WORKSPACE, 'fiscal-api', 'src')), ...walk(path.join(WORKSPACE, 'nfse-api', 'src')), ...walk(path.join(WORKSPACE, 'nfse-api', 'scripts'))]
     expect(files.length).toBeGreaterThan(30)
     const hits = files.filter(f => BLIND.test(fs.readFileSync(f, 'utf8'))).map(f => path.relative(WORKSPACE, f).replace(/\\/g, '/'))
-    expect(hits).toEqual([])
+    // exceção NOMEADA (a mesma da cerca `n17-xml-reader.test.ts`): o `semear` da carga da nfse-api troca o marcador `<SENHA_FISCAL_API>`
+    // do SQL por `split` — texto, não XML; ferramenta de carga, fora do `dist` (FAMILIA.E5.P1.T4, Valdo 2026-11-20)
+    expect(hits.filter(h => h !== 'nfse-api/scripts/carga/semear.ts')).toEqual([])
   })
 })

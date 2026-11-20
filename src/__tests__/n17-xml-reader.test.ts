@@ -89,8 +89,16 @@ describe('CERCA do N17 — nenhuma leitura de XML por RECORTE em produção (nú
     visit(sf)
     return out
   }
-  /** Exceção NOMEADA: o saneamento do HTML de gateway nas mensagens de erro (texto para pessoa — nunca valor fiscal). */
-  const ALLOWED: Record<string, number> = { 'fiscal-api/src/transport/https-json.ts': 1 }
+  /**
+   * Exceções NOMEADAS: o saneamento do HTML de gateway nas mensagens de erro (texto para pessoa — nunca valor fiscal); e as duas da
+   * ferramenta de CARGA da nfse-api (DEPLOY.E3.P1 — não é produção, nunca entra no `dist`): o fisco FALSO lê o Id do DPS do pedido que ele
+   * mesmo recebe, e o `semear` troca o marcador `<SENHA_FISCAL_API>` do SQL de GRANT (texto, não XML). FAMILIA.E5.P1.T4, Valdo 2026-11-20.
+   */
+  const ALLOWED: Record<string, number> = {
+    'fiscal-api/src/transport/https-json.ts': 1,
+    'nfse-api/scripts/carga/fisco-falso.ts': 1,
+    'nfse-api/scripts/carga/semear.ts': 1,
+  }
   it('a cerca não é cega (inclusive às formas que o gate do delta mostrou), não acusa o que não é recorte, e o código real só tem a exceção nomeada', () => {
     const caught = [
       'const m = xml.match(/<infDPS\\b[^>]*\\sId="([^"]*)"/)', 'const r = new RegExp(`<${name}>`)',
