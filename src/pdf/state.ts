@@ -25,7 +25,8 @@ export interface IsolateOptions {
    * `sheetStart` e a passada não herdam o fim do conteúdo. Não zera lineCap/lineJoin/miterLimit nem RECORTE — LIMITE CONHECIDO (gate socrático
    * do delta, achado 5): o operador de recorte do PDF não se desfaz; dentro de `save()` ele morre no `restore()` (e `save()` aberto na abertura de
    * folha ou no fim do conteúdo é erro de uso — D-NE134 / gate L3), mas um `clip()` da família FORA de `save()` vale até o fim da folha e recorta
-   * também o que a passada escreve nela ("Folha n/N"). A base não tem como desfazê-lo — a família recorta só dentro de `save()`/`restore()`.
+   * também o que a passada escreve nela ("Folha n/N"). A base não tem como desfazê-lo — a família recorta só dentro de `save()`/`restore()`
+   * (D-NE142 — regra (e) da cerca da família do DANFE, `src/__tests__/pdf-family-fence.ts`; PDF.E2.P1).
    */
   readonly neutral?: boolean
   /** Quem roda (para a mensagem de erro de uso). */

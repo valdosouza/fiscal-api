@@ -6,7 +6,8 @@
  * Texto fora do WinAnsi (emoji, setas, letras de outros alfabetos…) vira `?` pelo `toWinAnsi` — substituição VISÍVEL (nunca some calado) e
  * CONTADA para quem chama registrar. D-NE126 (Valdo 2026-10-17): a GARANTIA é de construção — a família escreve SÓ por `writeText` (que
  * sempre passa pelo `toWinAnsi`); `doc.text` direto com caractere fora do WinAnsi CORROMPE a linha no pdfkit (gate adversarial A4) e fica
- * fora da garantia — a cerca que o proíbe na família nasce com o DANFE (NE-5). D-NE129: a MEDIDA também tem porta (`measureText`, mesma
+ * fora da garantia — a cerca que o proíbe na família é a `src/__tests__/pdf-family-fence.ts` (PDF.E2.P1; roda sobre o DANFE por cópia na
+ * suíte da nfe-api). D-NE129: a MEDIDA também tem porta (`measureText`, mesma
  * normalização) — medir o texto cru e escrever o convertido daria alturas diferentes. Papéis e portas só em documento da base (D-NE127); o
  * papel vale pelo registro DA BASE (re-gate D14), nunca pelo do pdfkit.
  */
@@ -216,6 +217,83 @@ const snapshotOptions = (opts: unknown): Readonly<Record<string, unknown>> =>
   Object.freeze({ ...((opts && typeof opts === 'object') ? opts as Record<string, unknown> : {}) })
 
 /**
+ * A CADEIA ABERTA do pdfkit (texto encadeado com `continued: true`) — UMA forma só de lê-la (PDF.E2.P1; socrático L4 do gate R13: o
+ * `writeText` a escrevia de 5 formas, ora pelo `_wrapper`, ora pelo `_textOptions`). No pdfkit 0.20.2 os dois nascem e morrem JUNTOS (o `_text`
+ * com `width` põe ou zera os dois — e a porta só encadeia com `width`: a F-L5 e a D-NE136 recusam os outros ramos; o `isolated` guarda e devolve
+ * os dois). Um sem o outro é estado que nenhuma API do pdfkit cria (só mexer no `_wrapper`/`_textOptions` por fora): recusa legível, nunca TypeError.
+ */
+interface OpenChain {
+  /** O `x` de onde a cadeia começou (o fechamento devolve o `x` a ele — D-NE152). */
+  readonly startX: number
+  /** As opções da cadeia (valem onde o trecho seguinte não diz — o `_initOptions` do pdfkit). */
+  readonly options: Readonly<Record<string, unknown>>
+}
+type ChainState = { _wrapper?: { startX: number } | null; _textOptions?: Record<string, unknown> | null }
+
+function openChain(doc: PDFKit.PDFDocument): OpenChain | null {
+  const d = doc as unknown as ChainState
+  if (!d._wrapper && !d._textOptions) return null
+  if (!d._wrapper || !d._textOptions) {
+    throw new Error('base de PDF: o texto encadeado do pdfkit ficou partido (estado interno do pdfkit mexido fora da base — PDF.E2.P1)')
+  }
+  return { startX: d._wrapper.startX, options: d._textOptions }
+}
+
+function closeChain(doc: PDFKit.PDFDocument): void {
+  const d = doc as unknown as ChainState
+  d._wrapper = null
+  d._textOptions = null
+}
+
+/**
+ * Gate final F-L5: sem `width` e sem cadeia aberta, a largura é a que sobra a partir de `x` até a margem direita — sem largura útil o pdfkit
+ * escreveria com largura 0, linhas empilhadas no mesmo `y`. (A linha única tem `lineBreak: false` e não passa pela conferência.)
+ */
+function assertUsableWidth(doc: PDFKit.PDFDocument, textOptions: Readonly<Record<string, unknown>>, x0: number): void {
+  if (textOptions.lineBreak !== false && textOptions.width === undefined && doc.page.width - x0 - doc.page.margins.right <= 0) {
+    throw new RangeError('fontes da base: não há largura útil a partir de x (além da margem direita) — informe width')
+  }
+}
+
+/**
+ * O TEXTO VAZIO fora da linha única, num despacho só (PDF.E2.P1; socrático L4 do gate R13: o despacho estava partido antes e depois da
+ * fonte). Nunca chama o pdfkit:
+ * - com `continued: true` (D-NE153): com a cadeia aberta, ela segue IGUAL (nada muda no documento — nem a fonte); sem cadeia, erro de uso;
+ * - sem `continued` e com a cadeia aberta (D-NE152): a base FECHA a cadeia — o que o `_line` do pdfkit faria com o último trecho (avança o `y`
+ *   da linha encadeada) e o fim do quebrador (devolve o `x` do início), sem a conferência de entrada que abriria folha no pé;
+ * - sem `continued` e sem cadeia (D-NE147): mede 0 e não escreve nada — o pdfkit abriria folha VAZIA no pé (a conferência de entrada exige uma
+ *   linha); a posição fica como o pdfkit a deixaria (`x`/`y` informados, sem avançar).
+ * A ordem das recusas segue a de antes (gate R13, socrático: a D-NE136 vence a D-NE153, e a D-NE153 vence a F-L5).
+ */
+function writeEmpty(doc: PDFKit.PDFDocument, font: StandardFont, chain: OpenChain | null, textOptions: Readonly<Record<string, unknown>>,
+  at: { readonly x?: number; readonly y?: number; readonly sizePt?: number }): { readonly replaced: number } {
+  if (textOptions.continued === true) {
+    if (!chain) {
+      throw new RangeError('fontes da base: trecho vazio com continued sem cadeia aberta — abra a cadeia com o 1º trecho que tem texto (D-NE153)')
+    }
+    return Object.freeze({ replaced: 0 })
+  }
+  const x0 = at.x ?? doc.x
+  if (!chain) assertUsableWidth(doc, textOptions, x0)
+  useStandardFont(doc, font)                              // a fonte do registro DA BASE (re-gate S1/R7-L1), conferida AQUI (F-L2/R9-L1)
+  if (at.sizePt !== undefined) doc.fontSize(at.sizePt)
+  if (chain) {
+    const options: Record<string, unknown> = { ...chain.options }
+    for (const [k, v] of Object.entries(textOptions)) if (v !== undefined) options[k] = v    // como o `_initOptions`: o fechamento vale sobre a cadeia
+    if (at.y !== undefined) doc.y = at.y
+    const lineGap = (options.lineGap as number) || (doc as unknown as { _lineGap?: number })._lineGap || 0
+    doc.y += doc.currentLineHeight(true) + lineGap                                       // na ORDEM do pdfkit (`_line`, depois o `lastLine`):
+    doc.y += (options.paragraphGap as number) || 0                                          // somar de uma vez erra 1 ulp (gate R12-L1)
+    doc.x = chain.startX
+    closeChain(doc)
+  } else {
+    doc.x = x0
+    if (at.y !== undefined) doc.y = at.y
+  }
+  return Object.freeze({ replaced: 0 })
+}
+
+/**
  * A ÚNICA porta de texto da família (D-NE126): papel REGISTRADO NA BASE + `toWinAnsi` sempre. Posição (`x`/`y`) e corpo (`sizePt`) opcionais —
  * só `y` usa o `x` corrente (re-gate D2: no pdfkit 0.20.2 o `x` ausente virava o objeto de OPÇÕES e as verdadeiras eram jogadas fora); as demais
  * opções pela lista fechada `TextLayoutOptions`. Devolve quantos caracteres viraram `?`.
@@ -229,7 +307,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
   assertSize(sizePt)
   const textOptions = layoutOptions(all, ['x', 'y', 'sizePt']) as Record<string, unknown>
   const t = toWinAnsi(typeof text === 'string' ? text : String(text ?? ''))
-  const d = doc as unknown as { _wrapper?: unknown; _textOptions?: unknown }
+  const chain = openChain(doc)
   if (textOptions.lineBreak === false) {
     if (t.text.includes('\n')) {
       // D-NE146 (Valdo 2026-10-18 — gate R10-L3): sem quebrador o pdfkit escreve as linhas uma DEPOIS da outra na MESMA linha de base
@@ -238,18 +316,12 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     if (textOptions.continued === true) {                                           // D-NE143: `false` (o padrão) passa
       throw new RangeError('fontes da base: "continued" não combina com lineBreak: false — junte trechos com x pelo advance do measureText ou continued com width (D-NE136)')
     }
-    if (d._wrapper || d._textOptions) {
+    if (chain) {
       throw new RangeError('fontes da base: há texto encadeado aberto — feche-o antes (último trecho sem continued) para escrever uma linha única (D-NE135)')
     }
   }
-  if (t.text === '' && textOptions.continued === true) {
-    // D-NE153: o vazio que CONTINUA não soma nada — com a cadeia aberta ela segue igual (nada muda no documento); sem cadeia, erro de uso
-    if (!d._wrapper) {
-      throw new RangeError('fontes da base: trecho vazio com continued sem cadeia aberta — abra a cadeia com o 1º trecho que tem texto (D-NE153)')
-    }
-    return Object.freeze({ replaced: 0 })
-  }
   const singleLine = textOptions.lineBreak === false && textOptions.width !== undefined
+  if (t.text === '' && !singleLine) return writeEmpty(doc, font, chain, textOptions, { x, y, sizePt })
   const lineText = singleLine ? trimTrailingSpaces(t.text) : t.text                // D-NE137: espaços do FIM não contam na linha única
   let lineWidth = 0
   if (singleLine) {
@@ -264,11 +336,7 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     }
   }
   const x0 = x ?? doc.x
-  if (!singleLine && textOptions.lineBreak !== false && textOptions.width === undefined && !d._textOptions
-    && doc.page.width - x0 - doc.page.margins.right <= 0) {
-    // gate final F-L5: sem largura útil a partir de x (além da margem direita) o pdfkit escreveria com largura 0, linhas empilhadas no mesmo y
-    throw new RangeError('fontes da base: não há largura útil a partir de x (além da margem direita) — informe width')
-  }
+  if (!chain) assertUsableWidth(doc, textOptions, x0)
   useStandardFont(doc, font)                              // a fonte do registro DA BASE (re-gate S1/R7-L1), conferida AQUI (F-L2/R9-L1)
   if (sizePt !== undefined) doc.fontSize(sizePt)
   if (singleLine) {
@@ -279,26 +347,9 @@ export function writeText(doc: PDFKit.PDFDocument, role: string, text: string, o
     if (textOptions.underline !== undefined) line.underline = textOptions.underline
     if (textOptions.strike !== undefined) line.strike = textOptions.strike
     doc.text(lineText, x0 + dx, y ?? doc.y, line)
-  } else if (t.text === '' && textOptions.continued !== true && d._wrapper) {
-    // D-NE152: o fechamento da cadeia pelo vazio, feito pela base — o que o `_line` do pdfkit faria com o último trecho (avança o `y` da linha
-    // encadeada) e o fim do quebrador (devolve o `x` do início), sem a conferência de entrada que abriria folha no pé
-    const chain: Record<string, unknown> = { ...((d._textOptions ?? {}) as Record<string, unknown>) }
-    for (const [k, v] of Object.entries(textOptions)) if (v !== undefined) chain[k] = v      // como o `_initOptions`: o fechamento vale sobre a cadeia
-    if (y !== undefined) doc.y = y
-    const lineGap = (chain.lineGap as number) || (doc as unknown as { _lineGap?: number })._lineGap || 0
-    doc.y += doc.currentLineHeight(true) + lineGap                                       // na ORDEM do pdfkit (`_line`, depois o `lastLine`):
-    doc.y += (chain.paragraphGap as number) || 0                                            // somar de uma vez erra 1 ulp (gate R12-L1)
-    doc.x = (d._wrapper as { startX: number }).startX
-    d._wrapper = null
-    d._textOptions = null
-  } else if (t.text === '' && textOptions.continued !== true && !d._wrapper && !d._textOptions) {
-    // D-NE147 (Valdo 2026-10-18 — gate R10-L1): o vazio mede 0 e não escreve nada — o pdfkit abriria folha VAZIA no pé (a conferência de entrada
-    // exige uma linha); a posição fica como o pdfkit a deixaria (x/y informados, sem avançar). Cadeia aberta: o vazio a FECHA pela base (D-NE152, ramo acima)
-    doc.x = x0
-    if (y !== undefined) doc.y = y
   } else {
     // D-NE140: a 1ª linha posta onde a medida diz que cabe não abre folha pelo arredondamento do pdfkit (fora do encadeado aberto e sem quebra)
-    const fit = textOptions.lineBreak === false || textOptions.height !== undefined || d._wrapper ? null : fitFloat32(doc, y ?? doc.y)
+    const fit = textOptions.lineBreak === false || textOptions.height !== undefined || chain ? null : fitFloat32(doc, y ?? doc.y)
     if (fit !== null) doc.text(t.text, x0, fit, textOptions)
     else if (x !== undefined || y !== undefined) doc.text(t.text, x0, y ?? doc.y, textOptions)
     else doc.text(t.text, textOptions)
