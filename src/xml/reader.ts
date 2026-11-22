@@ -79,6 +79,8 @@ const PREDEFINED = readonlySet(['amp', 'lt', 'gt', 'quot', 'apos'])
 /** Char do XML 1.0: #x9 | #xA | #xD | [#x20-#xD7FF] | [#xE000-#xFFFD] | [#x10000-#x10FFFF]. */
 const validChar = (cp: number) => cp === 0x9 || cp === 0xA || cp === 0xD || (cp >= 0x20 && cp <= 0xD7FF)
   || (cp >= 0xE000 && cp <= 0xFFFD) || (cp >= 0x10000 && cp <= 0x10FFFF)
+/** O MESMO `Char` do XML 1.0 para o ESCRITOR (`xml/writer.ts` — D-NE214): uma regra só, a que o leitor aplica. */
+export const isXmlChar = (cp: number): boolean => validChar(cp)
 /** Caractere CRU fora do Char do XML 1.0 (controle, NUL, U+FFFE/FFFF, surrogate solto). */
 const RAW_INVALID = /[\u0000-\u0008\u000B\u000C\u000E-\u001F￾￿]|[\uD800-\uDBFF](?![\uDC00-\uDFFF])|(?<![\uD800-\uDBFF])[\uDC00-\uDFFF]/
 const XML_SPACE = /^[ \t\r\n]*$/

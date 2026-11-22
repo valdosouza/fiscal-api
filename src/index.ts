@@ -48,6 +48,8 @@ export * from './transport/https-json'
 export * from './transport/xmldsig'
 // leitura de XML do fisco por PARSER (N17 — D-NE72; parte 2 da NE-1a, passo 7)
 export * from './xml/reader'
+// ESCRITOR de XML (D-NE214 — FAMILIA.E5.P4.T1): aditivo, simétrico ao leitor; sem subpath (o ERP não escreve XML)
+export * from './xml/writer'
 
 // arquivo fiscal (XML)
 export * from './storage/fiscal-storage'
