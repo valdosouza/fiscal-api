@@ -63,8 +63,8 @@ describe('NE-1b — cercas da base de PDF', () => {
     expect(pdfkit.filter(f => !f.startsWith('pdf/'))).toEqual([])
   })
 
-  it('quem não desenha PDF não carrega a base: o grafo de `index.ts`, `reading.ts`, `federal-id.ts` e `ibscbs-assessment.ts` nunca chega em `pdf.ts`/`pdf/` nem nas libs', () => {
-    for (const entry of ['index.ts', 'reading.ts', 'federal-id.ts', 'ibscbs-assessment.ts']) {
+  it('quem não desenha PDF não carrega a base: o grafo de `index.ts`, `reading.ts`, `federal-id.ts`, `ibscbs-assessment.ts` e `merchandise-total.ts` nunca chega em `pdf.ts`/`pdf/` nem nas libs', () => {
+    for (const entry of ['index.ts', 'reading.ts', 'federal-id.ts', 'ibscbs-assessment.ts', 'merchandise-total.ts']) {
       const seen = new Set<string>()
       const stack = [path.join(SRC, entry)]
       const external = new Set<string>()

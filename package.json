@@ -30,6 +30,10 @@
       "types": "./dist/ibscbs-assessment.d.ts",
       "default": "./dist/ibscbs-assessment.js"
     },
+    "./merchandise-total": {
+      "types": "./dist/merchandise-total.d.ts",
+      "default": "./dist/merchandise-total.js"
+    },
     "./package.json": "./package.json"
   },
   "typesVersions": {
@@ -48,6 +52,9 @@
       ],
       "ibscbs-assessment": [
         "dist/ibscbs-assessment.d.ts"
+      ],
+      "merchandise-total": [
+        "dist/merchandise-total.d.ts"
       ]
     }
   },

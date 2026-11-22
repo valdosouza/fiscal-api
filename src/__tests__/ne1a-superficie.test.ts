@@ -15,11 +15,11 @@ const read = (f: string) => fs.readFileSync(f, 'utf8')
 /**
  * O predicado da cerca da F2a: o spec `<arquivo>: <módulo>` de um import do setes-api é permitido? `fiscal-api/reading` e as peças puras
  * `fiscal-api/federal-id` (D-CJ2) e `fiscal-api/ibscbs-assessment` (D-IB129 — a regra da opção de apuração e o contrato da view, também
- * no teste DDL do setes-api) em qualquer arquivo; `fiscal-api/access` só no adaptador `@shared/access` (D-AU6). O barrel e os outros
+ * no teste DDL do setes-api) e `fiscal-api/merchandise-total` (D-NE215 — a fórmula do vNF que o ERP usa para cunhar) em qualquer arquivo; `fiscal-api/access` só no adaptador `@shared/access` (D-AU6). O barrel e os outros
  * subpaths, nunca.
  */
 const f2aSpecAllowed = (s: string): boolean => s.endsWith(': fiscal-api/reading') || s.endsWith(': fiscal-api/federal-id')
-  || s.endsWith(': fiscal-api/ibscbs-assessment') || /(?:^|[\\/])src[\\/]shared[\\/]access[\\/]index\.ts: fiscal-api\/access$/.test(s)
+  || s.endsWith(': fiscal-api/ibscbs-assessment') || s.endsWith(': fiscal-api/merchandise-total') || /(?:^|[\\/])src[\\/]shared[\\/]access[\\/]index\.ts: fiscal-api\/access$/.test(s)
 
 /** O lado de ESCRITA do núcleo — nada disto pode sair pela superfície de leitura. */
 const WRITE_SIDE = [
@@ -79,7 +79,10 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // D-AU6 (costura A1 da auth-api, 2026-10-31): o 4º subpath é o LEITOR do veredito de acesso `fiscal-api/access` (pilha de views — nada de
     // escrita; vira `auth-api/access` na A2)
     // D-IB128/D-IB129 (fase IBS/CBS, 2026-11-18): o 5º subpath é a opção de apuração do IBS/CBS — peça PURA (regra de leitura + contrato da view)
-    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './access', './federal-id', './ibscbs-assessment', './package.json', './pdf', './reading'])
+    // D-NE215 (NE-4, 2026-11-22 — FAMILIA.E5.P4.T2): o 6º subpath é a fórmula do vNF — peça PURA, lida pelo ERP (cunha) e pela nfe-api (confere)
+    expect(Object.keys(pkg.exports).sort()).toEqual(['.', './access', './federal-id', './ibscbs-assessment', './merchandise-total', './package.json', './pdf', './reading'])
+    expect(pkg.exports['./merchandise-total']).toEqual({ types: './dist/merchandise-total.d.ts', default: './dist/merchandise-total.js' })
+    expect(pkg.typesVersions['*']['merchandise-total']).toEqual(['dist/merchandise-total.d.ts'])
     expect(pkg.exports['./ibscbs-assessment']).toEqual({ types: './dist/ibscbs-assessment.d.ts', default: './dist/ibscbs-assessment.js' })
     expect(pkg.typesVersions['*']['ibscbs-assessment']).toEqual(['dist/ibscbs-assessment.d.ts'])
     expect(pkg.exports['./access']).toEqual({ types: './dist/access.d.ts', default: './dist/access.js' })
@@ -106,8 +109,9 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
   it('o predicado da cerca da F2a, com specs sintéticos: reading, federal-id e ibscbs-assessment em qualquer arquivo; access só no adaptador', () => {
     const ok = ['src/x/y.ts: fiscal-api/reading', 'src/x/y.ts: fiscal-api/federal-id', 'src/shared/ibscbs-assessment/index.ts: fiscal-api/ibscbs-assessment',
       'src/__tests__/ibscbs-assessment-view-ddl.test.ts: fiscal-api/ibscbs-assessment', 'src/shared/access/index.ts: fiscal-api/access',
+      'src/shared/merchandise-total/index.ts: fiscal-api/merchandise-total',
       'src\\shared\\access\\index.ts: fiscal-api/access']
-    const refused = ['src/x/y.ts: fiscal-api', 'src/x/y.ts: fiscal-api/pdf', 'src/x/y.ts: fiscal-api/access', 'src/x/y.ts: fiscal-api/ibscbs-assessment/x',
+    const refused = ['src/x/y.ts: fiscal-api', 'src/x/y.ts: fiscal-api/pdf', 'src/x/y.ts: fiscal-api/access', 'src/x/y.ts: fiscal-api/ibscbs-assessment/x', 'src/x/y.ts: fiscal-api/merchandise-total/merchandise-total',
       'src/x/y.ts: fiscal-api/dist/ibscbs-assessment', 'src/shared/ibscbs-assessment/index.ts: fiscal-api',
       // gate adversarial de 2026-11-18 (L5): o adaptador é o `src/shared/access/index.ts`, não qualquer `…shared/access/index.ts`
       'src/modules/notshared/access/index.ts: fiscal-api/access', 'src/x/myshared/access/index.ts: fiscal-api/access']

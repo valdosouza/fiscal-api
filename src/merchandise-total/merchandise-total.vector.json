@@ -1,0 +1,21 @@
+{
+  "sobre": "Vetor da fórmula do vNF (W16-10, RF-NFE-28) — fiscal-api:FAMILIA.E5.P4.T2. Valores em CENTAVOS inteiros; campo ausente = 0; newVehicleSale ausente = false. Os mesmos casos, em texto decimal, estão na cópia neutra do Vault (projetos/fiscal-api/SUBJECT/VETORES_TESTE/nfe-totais.json). Fonte: NT 2023.004 v1.20 §4.5; D-NE225 para a desoneração.",
+  "dataDoFato": "2026-11-22",
+  "formula": "NT2023.004",
+  "casos": [
+    { "id": "VNF-001", "descricao": "Operação comum com desconto, ST, FCP-ST, frete, seguro, outras e IPI",
+      "entrada": { "vProd": 10000, "vDesc": 1000, "vST": 500, "vFCPST": 100, "vFrete": 200, "vSeg": 50, "vOutro": 30, "vIPI": 400 }, "vNF": 10280 },
+    { "id": "VNF-002", "descricao": "Desoneração mista: item 1 indDeduzDeson=1 (1200), item 2 indDeduzDeson=0 (300) — só o marcado sai (D-NE225)",
+      "entrada": { "vProd": 10000, "vICMSDesonDeducted": 1200 }, "vNF": 8800 },
+    { "id": "VNF-003", "descricao": "Veículo novo (tpOp=2): vST, vFCPST e vIPIDevol fora",
+      "entrada": { "newVehicleSale": true, "vProd": 10000, "vST": 500, "vFCPST": 100, "vIPI": 400, "vIPIDevol": 200 }, "vNF": 10400 },
+    { "id": "VNF-004a", "descricao": "PIS-ST e COFINS-ST com indSoma=1",
+      "entrada": { "vProd": 10000, "vPISSTSummed": 165, "vCOFINSSTSummed": 760 }, "vNF": 10925 },
+    { "id": "VNF-004b", "descricao": "O mesmo sem indSoma (quem chama passa zero)",
+      "entrada": { "vProd": 10000 }, "vNF": 10000 },
+    { "id": "VNF-005", "descricao": "ICMS monofásico retido",
+      "entrada": { "vProd": 10000, "vICMSMonoReten": 700 }, "vNF": 10700 },
+    { "id": "VNF-006", "descricao": "Nota conjugada: produto com ICMS e serviço com ISSQN",
+      "entrada": { "vProd": 10000, "vServ": 3000 }, "vNF": 13000 }
+  ]
+}

@@ -19,6 +19,9 @@ export * from './federal-id/federal-id'
 // `fiscal-api/ibscbs-assessment`
 export * from './ibscbs-assessment/ibscbs-assessment'
 
+// FÓRMULA DO vNF (W16-10 datada pelo fato — D-NE215, FAMILIA.E5.P4.T2): peça PURA, também no subpath `fiscal-api/merchandise-total`
+export * from './merchandise-total/merchandise-total'
+
 // banco
 export * from './db/pool'
 export * from './db/tx'
