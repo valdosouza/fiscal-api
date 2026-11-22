@@ -42,6 +42,9 @@ export * from './secret/certificate'
 export * from './establishment/issuer-models'
 export * from './establishment/establishment.repository'
 export * from './establishment/establishment'
+// a LEITURA PUBLICADA da habilitação por modelo (FAMILIA.E5.P3 — D-NE170): a view da 007 que o ERP lê ao cunhar o nNF; o leitor está também
+// em `fiscal-api/reading`, e o SQL cru (`issuerViewSelect`/`issuerViewQuery`) só aqui
+export * from './establishment/issuer-view'
 // o EMITTER: habilitação + A1 + transmissões vivas de TODAS as famílias (D-NE9 — parte 2 da NE-1a)
 export * from './emitter/emitter'
 

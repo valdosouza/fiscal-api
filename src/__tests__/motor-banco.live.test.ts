@@ -10,13 +10,15 @@
 // sobras com esse prefixo). O usuário descartável tem o GRANT no FORMATO do serviço (nfse-api ops/grants.sql): ALL no banco fiscal, SÓ
 // SELECT no "ERP" (`setes\_%`), SÓ SELECT na view da "central" (`setes_central.vw_user_link`).
 //
-// T2: as migrations 001–006 aplicam, a 2ª corrida não aplica nada, e apagado o registro em `_migrations` elas RE-EXECUTAM sem erro e o
+// T2: as migrations 001–007 aplicam, a 2ª corrida não aplica nada, e apagado o registro em `_migrations` elas RE-EXECUTAM sem erro e o
 //     schema sai igual (D-F123); o banco e as tabelas nascem utf8mb4 mesmo com o padrão utf8mb3 do servidor (§23.12).
 // T1: o CHECK de model e environment é aplicado (as sondas do boot — D-F45/D-NE84/D-F120); as views respondem com o GRANT mínimo; a
 //     leitura travante (FOR UPDATE da nota — D-F27/D-F31 — e a COMPARTILHADA da view de vida) funciona com SÓ SELECT e trava de verdade;
 //     o servidor é primário único (não é réplica, não é Galera, read_only desligado, todas as conexões no MESMO servidor — D-F9).
 // FAMILIA.E5.P4.T4: a 006 (configuração fiscal por UF) — sondas dos CHECKs binários, semente, FK composta do dono, 1062 da PK, o boot que
 //     recusa sem o CSRT exigido e passa com uma credencial FICTÍCIA, e o script de cadastro (D-NE226) — tudo pelo usuário no FORMATO do serviço.
+// FAMILIA.E5.P3.T1: a view da habilitação (007 — D-NE170) é FUNDÍVEL (ALGORITHM ≠ TEMPTABLE; EXPLAIN pela PK = const sobre PRIMARY, sem
+//     DERIVED) e EQUIVALENTE à tabela (as linhas vivas, as quatro colunas), lida pelo usuário no FORMATO do serviço com o leitor publicado.
 // IBS.E1.P1 (fase IBS/CBS): sonda SEM tabela — `CAST(<DECIMAL(17,2)> AS CHAR)` chega pelo pool da casa como texto decimal canônico (a
 //     suposição do leitor dos valores do fisco); roda sozinha com `-t "IBS.E1.P1"`, sem criar nada.
 import fs from 'fs'
@@ -26,6 +28,7 @@ import { runMigrations, CORE_MIGRATIONS_DIR, CORE_MIGRATIONS_PROJECT } from '../
 import { createFiscalPool, assertSessionInvariants, FiscalDbConfig } from '../db/pool'
 import { assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced } from '../establishment/establishment.repository'
 import { assertSessionViewReadable } from '../access/access'
+import { ISSUER_VIEW, issuerViewQuery, readIssuerView, assertIssuerViewReadable } from '../establishment/issuer-view'
 import { mapServiceAuthorityIbscbs } from '../voice/families/service-authority-ibscbs'
 import { invoiceRef } from '../ref/invoice-ref'
 import {
@@ -114,6 +117,9 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
         out.push(JSON.stringify(seed.map(r => Object.values(r).map(String)).sort()))
       }
     }
+    // FAMILIA.E5.P3: a view da 007 entra no retrato (CREATE OR REPLACE reaplica igual)
+    const [view] = await root.query<any[]>(`SELECT VIEW_DEFINITION AS d, ALGORITHM AS a FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`, [DB])
+    out.push(JSON.stringify(view))
     const [ck] = await root.query<any[]>(`SELECT CONSTRAINT_NAME AS n, CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
       WHERE CONSTRAINT_SCHEMA = ? ORDER BY CONSTRAINT_NAME`, [DB])
     out.push(JSON.stringify(ck))
@@ -148,7 +154,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   })
 
   // ---------------------------------------------------------------- T2
-  describe('T2 — as migrations 001–006 aplicam e re-executam', () => {
+  describe('T2 — as migrations 001–007 aplicam e re-executam', () => {
     let first = ''
 
     it('aplicam todas, na ordem, num banco novo (o executor confere a sessão estrita e o modo global antes)', async () => {
@@ -156,6 +162,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(applied).toEqual([
         'fiscal-api/001_core_baseline', 'fiscal-api/002_issuer_refresh_lease', 'fiscal-api/003_issuer_cutover',
         'fiscal-api/004_issuer_model_domain', 'fiscal-api/005_issuer_domains_binary', 'fiscal-api/006_fiscal_code',
+        'fiscal-api/007_issuer_view',
       ])
       first = await schemaSnapshot()
       // 005: sai o CHECK _ci da 004, ficam os dois binários de nome próprio
@@ -169,10 +176,10 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])).toEqual([])
     })
 
-    it('apagado o registro, as 001–006 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
+    it('apagado o registro, as 001–007 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
       await root.query(`DELETE FROM \`${DB}\`.\`_migrations\` WHERE project = ?`, [CORE_MIGRATIONS_PROJECT])
       const again = await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])
-      expect(again).toHaveLength(6)
+      expect(again).toHaveLength(7)
       expect(await schemaSnapshot()).toBe(first)
       report.migrationsReexecuted = again.length
     })
@@ -182,7 +189,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
         FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = ?`, [DB])
       expect(db[0]).toEqual({ cs: 'utf8mb4', co: 'utf8mb4_unicode_ci' })
       const [tabs] = await root.query<any[]>(`SELECT TABLE_NAME AS t, TABLE_COLLATION AS co FROM information_schema.TABLES
-        WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`, [DB])
+        WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`, [DB])
       expect(tabs.map(r => String(r.t)).sort()).toEqual(['_migrations', 'tb_establishment_certificate', 'tb_establishment_fiscal_credential',
         'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_provider_fiscal_credential'])
       for (const r of tabs) expect(r.co).toBe('utf8mb4_unicode_ci')
@@ -424,6 +431,63 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     it('a linha do script está no banco (e sai pela leitura do núcleo); limpeza', async () => {
       expect((await providerFiscalCredentialOf(pool, { state: 'PR', model: '55', environment: 'P', type: 'CSRT', at: new Date() }))?.codeId).toBe('02')
       await pool.query(`DELETE FROM tb_provider_fiscal_credential WHERE code_value = ?`, [FAKE])
+    })
+  })
+
+  // ---------------------------------------------------------------- FAMILIA.E5.P3.T1
+  describe('FAMILIA.E5.P3.T1 — a view da habilitação (007) é fundível e equivale à tabela', () => {
+    let pool: Pool
+    // linhas semeadas: os três modelos, H e P, virada NULL (réplica) e preenchida, e uma APAGADA (some da view)
+    const SEED: [institution: number, model: string, environment: string, cutoverAt: string | null, deleted: string][] = [
+      [9101, 'SE', 'P', '2026-10-04 12:00:00', 'N'], [9101, '55', 'H', '2026-11-22 03:00:00', 'N'], [9101, '65', 'P', null, 'N'],
+      [9102, '55', 'P', '2026-11-01 00:00:00', 'N'], [9102, 'SE', 'H', null, 'S'],
+    ]
+    beforeAll(async () => {
+      pool = createFiscalPool(probeCfg); pools.push(pool)
+      for (const [i, m, e, c, del] of SEED) {
+        await root.query(`INSERT INTO \`${DB}\`.tb_establishment_issuer (tb_institution_id, model, environment, cutover_at, deleted, created_at)
+          VALUES (?, ?, ?, ?, ?, '2026-11-22 00:00:00')`, [i, m, e, c, del])
+      }
+    })
+    afterAll(async () => {
+      await root.query(`DELETE FROM \`${DB}\`.tb_establishment_issuer WHERE tb_institution_id IN (9101, 9102)`)
+    })
+
+    it('a view existe e o motor a FUNDE (ALGORITHM ≠ TEMPTABLE); o usuário do serviço a lê pelo boot', async () => {
+      const [v] = await root.query<any[]>(`SELECT ALGORITHM AS a, SECURITY_TYPE AS s FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
+        [DB, ISSUER_VIEW])
+      expect(v).toHaveLength(1)
+      expect(['UNDEFINED', 'MERGE']).toContain(String(v[0].a))
+      await assertIssuerViewReadable(pool, DB)
+      report.issuerViewAlgorithm = v[0].a
+    })
+
+    it('EXPLAIN da leitura publicada numa PK VIVA: const sobre PRIMARY, sem tabela derivada (a view foi fundida)', async () => {
+      const { sql, params } = issuerViewQuery(DB, { institutionId: 9101, model: '55' })
+      const [plan] = await pool.query<any[]>(`EXPLAIN ${sql}`, params)
+      expect(plan.map(r => String(r.select_type))).not.toContain('DERIVED')
+      expect(plan.map(r => String(r.table)).some(t => t.startsWith('<derived'))).toBe(false)
+      expect(plan).toHaveLength(1)
+      expect([plan[0].type, plan[0].key]).toEqual(['const', 'PRIMARY'])
+      report.issuerViewExplain = plan.map(r => ({ select_type: r.select_type, table: r.table, type: r.type, key: r.key }))
+    })
+
+    it('EQUIVALE à tabela: o conjunto da view = as linhas vivas da tabela (as quatro colunas); o leitor devolve cada PK certa e null na apagada', async () => {
+      const cols = `tb_institution_id AS institutionId, model, environment, DATE_FORMAT(cutover_at, '%Y-%m-%d %H:%i:%s') AS cutoverAt`
+      const [fromView] = await root.query<any[]>(`SELECT ${cols} FROM \`${DB}\`.${ISSUER_VIEW} ORDER BY tb_institution_id, model`)
+      const [fromTable] = await root.query<any[]>(`SELECT ${cols} FROM \`${DB}\`.tb_establishment_issuer WHERE deleted = 'N' ORDER BY tb_institution_id, model`)
+      expect(fromView).toEqual(fromTable)
+      expect(fromView.filter(r => [9101, 9102].includes(Number(r.institutionId)))).toHaveLength(4)
+      // nenhuma coluna interna escapa pela view
+      const [vcols] = await root.query<any[]>(`SELECT COLUMN_NAME AS c FROM information_schema.COLUMNS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? ORDER BY ORDINAL_POSITION`,
+        [DB, ISSUER_VIEW])
+      expect(vcols.map(r => String(r.c))).toEqual(['tb_institution_id', 'model', 'environment', 'cutover_at'])
+      for (const [i, m, e, c, del] of SEED) {
+        const got = await readIssuerView(pool, DB, { institutionId: i, model: m as any })
+        expect([i, m, got]).toEqual([i, m, del === 'S' ? null : { institutionId: i, model: m, environment: e, cutoverAt: c }])
+      }
+      expect(await readIssuerView(pool, DB, { institutionId: 9103, model: '55' })).toBeNull()      // sem linha = não habilitado
+      report.issuerViewEquivalent = fromView.length
     })
   })
 })
