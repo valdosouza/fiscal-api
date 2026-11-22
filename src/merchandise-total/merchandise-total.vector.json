@@ -16,6 +16,8 @@
     { "id": "VNF-005", "descricao": "ICMS monofásico retido",
       "entrada": { "vProd": 10000, "vICMSMonoReten": 700 }, "vNF": 10700 },
     { "id": "VNF-006", "descricao": "Nota conjugada: produto com ICMS e serviço com ISSQN",
-      "entrada": { "vProd": 10000, "vServ": 3000 }, "vNF": 13000 }
+      "entrada": { "vProd": 10000, "vServ": 3000 }, "vNF": 13000 },
+    { "id": "VNF-007", "descricao": "Importação com II e IPI (CFOP 3xxx: o fisco não confere a W16 — a peça calcula igual; ERP e nfe-api usam a mesma)",
+      "entrada": { "vProd": 10000, "vII": 1200, "vIPI": 600, "vOutro": 150 }, "vNF": 11950 }
   ]
 }

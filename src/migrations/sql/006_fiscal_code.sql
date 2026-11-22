@@ -25,7 +25,9 @@
 --
 -- DOMÍNIOS FECHADOS = CHECK BINÁRIO de nome próprio (molde da 005 — D-NE84/D-F120), também nas colunas de FK de domínio (`tb_fiscal_code_type_id`,
 -- `owner`): a tabela é utf8mb4_unicode_ci e a FK compara pela colação — sem o CHECK binário, 'csrt' e 'Provider' passariam pela FK. O boot sonda
--- cada um (`assertFiscalCodeDomainsEnforced`). Sem valor "ambos" (H/P, 55/65): são duas linhas.
+-- cada um (`assertFiscalCodeDomainsEnforced`). Sem valor "ambos" (H/P, 55/65): são duas linhas. Também binário o `deleted` (sob `_ci`, 'n'
+-- contaria como viva) e, em cada vigência, o fim DEPOIS do início (uma linha com fim ≤ início seria a "de maior início" e anularia a anterior)
+-- — gate adversarial da FAMILIA.E5.P4. Um tipo APAGADO no catálogo não desliga a regra viva (a leitura não filtra o catálogo pelo deleted).
 --
 -- RE-EXECUTÁVEL (D-F123): CREATE TABLE IF NOT EXISTS; a semente por INSERT … SELECT … WHERE NOT EXISTS com datas FIXAS (nunca NOW(), nunca
 -- INSERT IGNORE — cerca `sessao-estrita.test.ts`). ⚠️ F3 (MySQL 8): os CHECKs com REGEXP e COLLATE se conferem na ida para lá, como os da 005.
@@ -41,7 +43,8 @@ CREATE TABLE IF NOT EXISTS `tb_fiscal_code_type` (
   PRIMARY KEY (`id`),
   UNIQUE KEY `uk_fiscal_code_type_id_owner` (`id`, `owner`),
   CONSTRAINT `ck_fiscal_code_type_id_bin` CHECK (`id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$'),
-  CONSTRAINT `ck_fiscal_code_type_owner_bin` CHECK (`owner` COLLATE utf8mb4_bin IN ('provider', 'taxpayer'))
+  CONSTRAINT `ck_fiscal_code_type_owner_bin` CHECK (`owner` COLLATE utf8mb4_bin IN ('provider', 'taxpayer')),
+  CONSTRAINT `ck_fiscal_code_type_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tb_fiscal_code_requirement` (
@@ -61,7 +64,9 @@ CREATE TABLE IF NOT EXISTS `tb_fiscal_code_requirement` (
   CONSTRAINT `ck_fiscal_code_requirement_state_bin` CHECK (`state` COLLATE utf8mb4_bin IN ('AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO')),
   CONSTRAINT `ck_fiscal_code_requirement_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65')),
   CONSTRAINT `ck_fiscal_code_requirement_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P')),
-  CONSTRAINT `ck_fiscal_code_requirement_type_bin` CHECK (`tb_fiscal_code_type_id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$')
+  CONSTRAINT `ck_fiscal_code_requirement_type_bin` CHECK (`tb_fiscal_code_type_id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$'),
+  CONSTRAINT `ck_fiscal_code_requirement_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S')),
+  CONSTRAINT `ck_fiscal_code_requirement_validity` CHECK (`valid_until` IS NULL OR `valid_until` > `valid_from`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tb_provider_fiscal_credential` (
@@ -85,7 +90,9 @@ CREATE TABLE IF NOT EXISTS `tb_provider_fiscal_credential` (
   CONSTRAINT `ck_provider_fiscal_credential_state_bin` CHECK (`state` COLLATE utf8mb4_bin IN ('AC', 'AL', 'AM', 'AP', 'BA', 'CE', 'DF', 'ES', 'GO', 'MA', 'MG', 'MS', 'MT', 'PA', 'PB', 'PE', 'PI', 'PR', 'RJ', 'RN', 'RO', 'RR', 'RS', 'SC', 'SE', 'SP', 'TO')),
   CONSTRAINT `ck_provider_fiscal_credential_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65')),
   CONSTRAINT `ck_provider_fiscal_credential_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P')),
-  CONSTRAINT `ck_provider_fiscal_credential_type_bin` CHECK (`tb_fiscal_code_type_id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$')
+  CONSTRAINT `ck_provider_fiscal_credential_type_bin` CHECK (`tb_fiscal_code_type_id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$'),
+  CONSTRAINT `ck_provider_fiscal_credential_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S')),
+  CONSTRAINT `ck_provider_fiscal_credential_validity` CHECK (`valid_until` IS NULL OR `valid_until` > `valid_from`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 CREATE TABLE IF NOT EXISTS `tb_establishment_fiscal_credential` (
@@ -109,7 +116,9 @@ CREATE TABLE IF NOT EXISTS `tb_establishment_fiscal_credential` (
   CONSTRAINT `ck_establishment_fiscal_credential_owner_bin` CHECK (`owner` COLLATE utf8mb4_bin = 'taxpayer'),
   CONSTRAINT `ck_establishment_fiscal_credential_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65')),
   CONSTRAINT `ck_establishment_fiscal_credential_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P')),
-  CONSTRAINT `ck_establishment_fiscal_credential_type_bin` CHECK (`tb_fiscal_code_type_id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$')
+  CONSTRAINT `ck_establishment_fiscal_credential_type_bin` CHECK (`tb_fiscal_code_type_id` COLLATE utf8mb4_bin REGEXP '^[A-Z][A-Z0-9_]*$'),
+  CONSTRAINT `ck_establishment_fiscal_credential_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S')),
+  CONSTRAINT `ck_establishment_fiscal_credential_validity` CHECK (`valid_until` IS NULL OR `valid_until` > `valid_from`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- Semente do catálogo (RF-NFE-30; o CSC fica catalogado para a NFC-e — formato do id do CSC: até 6 dígitos).

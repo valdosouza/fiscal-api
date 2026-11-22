@@ -56,14 +56,18 @@ export interface MerchandiseTotalFormula {
   readonly validFrom: string
   /** Identifica a versão para quem confere (a nfe-api diz qual o ERP usou). */
   readonly formula:   string
-  readonly compute:   (t: MerchandiseTotalsCents) => number
+  readonly compute:   (t: MerchandiseTotalsCents) => bigint
 }
 
-/** NT 2023.004 v1.11 em produção (01/07/2024); a v1.20 só mudou o troco. */
-const NT_2023_004 = (t: MerchandiseTotalsCents): number => {
-  const st = t.newVehicleSale ? 0 : t.vST + t.vFCPST + t.vIPIDevol
-  return t.vProd - t.vDesc - t.vICMSDesonDeducted + st + t.vICMSMonoReten + t.vFrete + t.vSeg + t.vOutro + t.vII + t.vIPI + t.vServ
-    + t.vPISSTSummed + t.vCOFINSSTSummed
+/**
+ * NT 2023.004 v1.11 em produção (01/07/2024); a v1.20 só mudou o troco. Soma EXATA em BigInt (gate adversarial LOW-2: em `number`, uma
+ * parcial acima do inteiro seguro perde o centavo antes do resultado voltar à faixa); quem chama confere a faixa do resultado.
+ */
+const NT_2023_004 = (t: MerchandiseTotalsCents): bigint => {
+  const b = BigInt
+  const st = t.newVehicleSale ? 0n : b(t.vST) + b(t.vFCPST) + b(t.vIPIDevol)
+  return b(t.vProd) - b(t.vDesc) - b(t.vICMSDesonDeducted) + st + b(t.vICMSMonoReten) + b(t.vFrete) + b(t.vSeg) + b(t.vOutro) + b(t.vII)
+    + b(t.vIPI) + b(t.vServ) + b(t.vPISSTSummed) + b(t.vCOFINSSTSummed)
 }
 
 /** As versões, em ordem de `validFrom` — congelada. */
@@ -86,13 +90,21 @@ function isCalendarDate(v: unknown): v is string {
   return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v
 }
 
-/** A versão da fórmula vigente na data do fato — ou recusa (data inválida ou anterior à 1ª versão). */
-export function merchandiseTotalFormulaAt(factDate: string): MerchandiseTotalFormula {
+/**
+ * A ESCOLHA pela data do fato numa tabela de versões qualquer — a de maior `validFrom` ≤ data (independe da ordem da tabela); recusa data
+ * inválida ou anterior a todas. Exportada para o teste provar a escolha com mais de uma versão (a tabela real tem uma só hoje).
+ */
+export function pickMerchandiseTotalFormula(formulas: readonly MerchandiseTotalFormula[], factDate: string): MerchandiseTotalFormula {
   if (!isCalendarDate(factDate)) throw new MerchandiseTotalError('factDate', 'não é uma data YYYY-MM-DD')
   let found: MerchandiseTotalFormula | null = null
-  for (const f of MERCHANDISE_TOTAL_FORMULAS) if (f.validFrom <= factDate) found = f
-  if (!found) throw new MerchandiseTotalError('factDate', `anterior à 1ª fórmula conhecida (${MERCHANDISE_TOTAL_FORMULAS[0].validFrom})`)
+  for (const f of formulas) if (f.validFrom <= factDate && (found === null || f.validFrom > found.validFrom)) found = f
+  if (!found) throw new MerchandiseTotalError('factDate', 'anterior à 1ª fórmula conhecida')
   return found
+}
+
+/** A versão da fórmula vigente na data do fato — ou recusa (data inválida ou anterior à 1ª versão). */
+export function merchandiseTotalFormulaAt(factDate: string): MerchandiseTotalFormula {
+  return pickMerchandiseTotalFormula(MERCHANDISE_TOTAL_FORMULAS, factDate)
 }
 
 /** O vNF em centavos pela fórmula vigente na data do fato, e qual fórmula foi usada. */
@@ -104,8 +116,8 @@ export function merchandiseInvoiceTotal(totals: MerchandiseTotalsCents, factDate
   }
   if (typeof totals.newVehicleSale !== 'boolean') throw new MerchandiseTotalError('newVehicleSale', 'não é booleano')
   const f = merchandiseTotalFormulaAt(factDate)
-  const cents = f.compute(totals)
-  if (!Number.isSafeInteger(cents)) throw new MerchandiseTotalError('vNF', 'passou do inteiro seguro')
-  if (cents < 0) throw new MerchandiseTotalError('vNF', 'negativo')
-  return Object.freeze({ cents, formula: f.formula })
+  const exact = f.compute(totals)
+  if (exact < 0n) throw new MerchandiseTotalError('vNF', 'negativo')
+  if (exact > BigInt(Number.MAX_SAFE_INTEGER)) throw new MerchandiseTotalError('vNF', 'passou do inteiro seguro')
+  return Object.freeze({ cents: Number(exact), formula: f.formula })
 }

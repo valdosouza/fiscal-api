@@ -16,7 +16,7 @@ const roundTrip = (value: string): string | null =>
 describe('FAMILIA.E5.P4.T1 — escritor de XML (D-NE214)', () => {
   it('ida e volta: o leitor devolve EXATO o texto escrito (especiais no MEIO — o leitor apara as pontas)', () => {
     const casos = [
-      'DIAS & DIAS', 'a<b>"c"\'d\'', 'ÁÇÕ ÿ', 'x😀y', 'a\rb', 'a\r\nb', 'a\tb', 'a\nb', '&amp;', ']]>', '<!-- x -->', 'a&#x41;b',
+      'DIAS & DIAS', 'a<b>"c"\'d\'', 'ÁÇÕ ÿ', 'x😀y', 'a\u0085b', 'a b', 'a b', 'a\rb', 'a\r\nb', 'a\tb', 'a\nb', '&amp;', ']]>', '<!-- x -->', 'a&#x41;b',
     ]
     for (const v of casos) expect(roundTrip(v)).toBe(v)
   })
@@ -33,16 +33,18 @@ describe('FAMILIA.E5.P4.T1 — escritor de XML (D-NE214)', () => {
       expect(reason(() => escapeXmlText(v))).toBe('caractere-invalido')
       expect(reason(() => xmlElement('v', v))).toBe('caractere-invalido')
     }
-    try { xmlElement('CSRT', 'SEGREDO\u0000') } catch (e) {
-      expect((e as Error).message).not.toContain('SEGREDO')
-      expect((e as XmlUnwritableError).field).toBe('CSRT')
-    }
+    let caught: unknown = null
+    try { xmlElement('CSRT', 'SEGREDO\u0000') } catch (e) { caught = e }
+    expect(caught).toBeInstanceOf(XmlUnwritableError)
+    expect((caught as Error).message).not.toContain('SEGREDO')
+    expect((caught as XmlUnwritableError).field).toBe('CSRT')
   })
 
   it('obrigatório vazio recusa; opcional vazio some', () => {
     expect(reason(() => xmlElement('a', ''))).toBe('obrigatorio-vazio')
     expect(reason(() => xmlElement('a', null))).toBe('obrigatorio-vazio')
     expect(reason(() => xmlElement('a', undefined))).toBe('obrigatorio-vazio')
+    for (const v of ['   ', '\t', '\r\n', ' ']) expect(reason(() => xmlElement('a', v))).toBe('obrigatorio-vazio')
     expect(xmlOptionalElement('a', '')).toBe('')
     expect(xmlOptionalElement('a', null)).toBe('')
     expect(xmlOptionalElement('a', undefined)).toBe('')
@@ -51,9 +53,9 @@ describe('FAMILIA.E5.P4.T1 — escritor de XML (D-NE214)', () => {
   })
 
   it('atributos: mapa escapado pela peça; aspas, &, <, TAB, LF e CR relidos iguais', () => {
-    const v = 'x"&<\ny\tz\rw\'q'
+    const v = 'x"&<\ny\tz\rw\'q\u0085r s'
     const xml = xmlGroup('r', xmlElement('v', '1'), { Id: v, versao: '1.00' })
-    expect(xml).toBe('<r Id="x&quot;&amp;&lt;&#xA;y&#x9;z&#xD;w&apos;q" versao="1.00"><v>1</v></r>')
+    expect(xml).toBe('<r Id="x&quot;&amp;&lt;&#xA;y&#x9;z&#xD;w&apos;q&#x85;r&#x2028;s" versao="1.00"><v>1</v></r>')
     const r = firstElement(parseXml(xml), 'r', Q)!
     expect(attrOf(r, 'Id')).toBe(v)
     expect(attrOf(r, 'versao')).toBe('1.00')
@@ -92,6 +94,9 @@ describe('FAMILIA.E5.P4.T1 — escritor de XML (D-NE214)', () => {
     expect(isXsdTString('€', 1, 60)).toBe(false)
     expect(isXsdTString('“a”', 1, 60)).toBe(false)
     expect(isXsdTString('a\tb', 1, 60)).toBe(false)
+    expect(isXsdTString('x ', 1, 60)).toBe(false)
+    expect(isXsdTString(' x', 1, 60)).toBe(false)
+    expect(isXsdTString('a b', 1, 60)).toBe(true)
     expect(isXsdTString('a', 2, 60)).toBe(false)
     expect(isXsdTString('x'.repeat(61), 2, 60)).toBe(false)
     expect(isXsdTString(5, 0, 60)).toBe(false)

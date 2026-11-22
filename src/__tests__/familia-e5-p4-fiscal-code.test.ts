@@ -16,7 +16,7 @@ import { stripComments } from './fence'
 const NT_CSRT = 'FICTICIODETESTE0123456789ABCDEF'   // valor de TESTE, inventado (nunca o da Setes)
 
 type Row = Record<string, any>
-interface Db { types: Row[]; reqs: Row[]; prov: Row[]; est: Row[]; issuers: Row[]; inserts: unknown[][]; dupOnInsert?: boolean }
+interface Db { types: Row[]; reqs: Row[]; prov: Row[]; est: Row[]; issuers: Row[]; inserts: unknown[][]; dupOnInsert?: boolean; failWith?: number }
 
 const db = (): Db => ({
   types: [
@@ -64,10 +64,21 @@ function fake(d: Db) {
       if (/FROM tb_fiscal_code_type WHERE id = \?/.test(sql)) return [d.types.filter(t => t.id === p[0] && t.deleted === 'N'), []]
       if (/^\s*INSERT INTO tb_provider_fiscal_credential/.test(sql)) {
         d.inserts.push(p)
+        if (d.failWith) {
+          // como o mysql2 3.x: o comando montado NO CLIENTE, com os valores dentro, vai em err.sql
+          throw Object.assign(new Error('Lock wait timeout exceeded'), { errno: d.failWith, code: 'ER_LOCK_WAIT_TIMEOUT', sql: `INSERT … ${p.join(', ')}` })
+        }
         if (d.dupOnInsert) throw Object.assign(new Error(`Duplicate entry 'PR-55-H-CSRT-${p[4]}' for key 'PRIMARY'`), { errno: 1062, code: 'ER_DUP_ENTRY' })
         const [state, model, environment, type, validFrom, validUntil, codeId, codeValue, userId] = p
         d.prov.push({ state, model, environment, type, owner: 'provider', validFrom, validUntil, codeId, codeValue, userId, deleted: 'N' })
         return [{ affectedRows: 1 }, []]
+      }
+      if (/^\s*UPDATE tb_provider_fiscal_credential/.test(sql) && /valid_from < \?/.test(sql)) {
+        const [until, state, model, env, type, from, at] = p
+        let n = 0
+        for (const x of d.prov) if (x.state === state && x.model === model && x.environment === env && x.type === type && x.validFrom < from
+          && x.deleted === 'N' && (x.validUntil === null || x.validUntil > at)) { x.validUntil = until; n++ }
+        return [{ affectedRows: n }, []]
       }
       if (/^\s*UPDATE tb_provider_fiscal_credential/.test(sql)) {
         const [until, state, model, env, type, from, at] = p
@@ -145,13 +156,19 @@ describe('FAMILIA.E5.P4.T4 — leitura (cenários do §10 do ResponsavelTecnicoN
     expect(await missingOf(() => requiredFiscalCredentialsFor(fake(d), { ...H, institutionId: 7 }))).not.toBeNull()
   })
 
-  it('9 · apagada ou encerrada = falta; a ANTERIOR não volta', async () => {
+  it('9 · encerrada = falta (a ANTERIOR não volta); apagada = falta; gravada pela peça, a nova ENCERRA a anterior — apagar a nova não a ressuscita', async () => {
     const d = db(); d.prov.push(cred({ validFrom: '2026-01-01 00:00:00' }), cred({ validFrom: '2026-06-01 00:00:00', codeId: '02', validUntil: '2026-11-01 00:00:00' }))
     expect(await providerFiscalCredentialOf(fake(d), { ...H, type: 'CSRT' })).toBeNull()
-    const d2 = db(); d2.prov.push(cred({ codeId: '01' }), cred({ validFrom: '2026-06-01 00:00:00', codeId: '02', deleted: 'S' }))
-    expect((await providerFiscalCredentialOf(fake(d2), { ...H, type: 'CSRT' }))?.codeId).toBe('01')   // apagar por engano faz a anterior valer
     const d3 = db(); d3.prov.push(cred({ deleted: 'S' }))
     expect(await providerFiscalCredentialOf(fake(d3), { ...H, type: 'CSRT' })).toBeNull()
+    const d4 = db(); const q = fake(d4)
+    const base = { state: 'PR', model: '55', environment: 'H', type: 'CSRT', codeValue: NT_CSRT }
+    await saveProviderFiscalCredential(q, { ...base, codeId: '01', validFrom: new Date('2026-01-01T03:00:00Z') })
+    await saveProviderFiscalCredential(q, { ...base, codeId: '02', validFrom: new Date('2026-06-01T03:00:00Z') })
+    expect(d4.prov.find(r => r.codeId === '01')?.validUntil).toBe('2026-06-01 03:00:00')
+    expect((await providerFiscalCredentialOf(q, { ...H, type: 'CSRT' }))?.codeId).toBe('02')
+    d4.prov.find(r => r.codeId === '02')!.deleted = 'S'                     // apagada por engano (à mão)
+    expect(await providerFiscalCredentialOf(q, { ...H, type: 'CSRT' })).toBeNull()
   })
 
   it('10 · UF sem regra → lista vazia, sem erro (o documento segue sem o grupo)', async () => {
@@ -240,6 +257,7 @@ describe('FAMILIA.E5.P4.T4 — escrita e listagem (D-NE224, D-NE226)', () => {
     }
     expect(await field({ codeId: '3' })).toBe('codeId')
     expect(await field({ codeId: '003' })).toBe('codeId')
+    expect(await field({ codeId: '01234567890' })).toBe('codeId')
     expect(await field({ codeValue: '' })).toBe('codeValue')
     expect(await field({ codeValue: ` ${NT_CSRT}` })).toBe('codeValue')
     expect(await field({ codeValue: 'A'.repeat(101) })).toBe('codeValue')
@@ -260,6 +278,16 @@ describe('FAMILIA.E5.P4.T4 — escrita e listagem (D-NE224, D-NE226)', () => {
     expect(e.message).not.toContain(NT_CSRT)
   })
 
+  it('MED-1 do gate: erro do BANCO na gravação sai como FiscalCodeStoreError, SEM o SQL do driver (que leva o valor)', async () => {
+    const d = db(); d.failWith = 1205
+    const e = await saveProviderFiscalCredential(fake(d), input).catch(x => x)
+    expect(e.code).toBe('FISCAL_CODE_STORE_FAILED')
+    expect(e.errno).toBe(1205)
+    expect(e.sql).toBeUndefined()
+    expect(JSON.stringify(e)).not.toContain(NT_CSRT)
+    expect(String(e.message) + String(e.stack)).not.toContain(NT_CSRT)
+  })
+
   it('encerrar: a vigente deixa de valer no instante; encerrar de novo não encerra; o fim antes do início recusa', async () => {
     const d = db(); const q = fake(d)
     await saveProviderFiscalCredential(q, input)
@@ -274,8 +302,9 @@ describe('FAMILIA.E5.P4.T4 — escrita e listagem (D-NE224, D-NE226)', () => {
 
 describe('FAMILIA.E5.P4.T4 — cercas', () => {
   const code = fs.readFileSync(path.resolve(__dirname, '..', 'fiscal-code', 'fiscal-code.ts'), 'utf8')
-  it('o valor nunca vai a log nem a mensagem de erro: a peça não usa o logger nem interpola codeValue/code_value em texto', () => {
-    expect(code).not.toMatch(/logger|console\./)
+  it('o valor nunca vai a log nem a mensagem de erro: a peça não usa o logger nem interpola codeValue/code_value em texto, e não relança o erro cru do driver', () => {
+    expect(stripComments(code)).not.toMatch(/logger|console\./)
+    expect(stripComments(code)).not.toMatch(/throw err/)
     expect(code).not.toMatch(/\$\{[^}]*(codeValue|code_value)[^}]*\}/)
   })
   it('sem `if (uf === …)`: nenhuma sigla de UF decide código (só a lista do domínio e as sondas do boot)', () => {

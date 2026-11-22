@@ -8,7 +8,7 @@ import * as barrel from '../index'
 import * as reading from '../reading'
 import {
   MERCHANDISE_TOTAL_CENT_FIELDS, MERCHANDISE_TOTAL_FORMULAS, MerchandiseTotalError, MerchandiseTotalsCents, merchandiseInvoiceTotal,
-  merchandiseTotalFormulaAt,
+  merchandiseTotalFormulaAt, pickMerchandiseTotalFormula, MerchandiseTotalFormula,
 } from '../merchandise-total/merchandise-total'
 
 const SRC = path.resolve(__dirname, '..')
@@ -44,7 +44,7 @@ describe('FAMILIA.E5.P4.T2 — merchandiseInvoiceTotal (W16-10, D-NE215)', () =>
   })
 
   it('o vetor cobre os casos VNF-001…006 da ficha (anexo B.2) e as chaves de entrada são campos da peça', () => {
-    expect(vector.casos.map((c: any) => c.id)).toEqual(['VNF-001', 'VNF-002', 'VNF-003', 'VNF-004a', 'VNF-004b', 'VNF-005', 'VNF-006'])
+    expect(vector.casos.map((c: any) => c.id)).toEqual(['VNF-001', 'VNF-002', 'VNF-003', 'VNF-004a', 'VNF-004b', 'VNF-005', 'VNF-006', 'VNF-007'])
     for (const c of vector.casos) for (const k of Object.keys(c.entrada)) expect([k, k in ZERO]).toEqual([k, true])
   })
 
@@ -82,6 +82,21 @@ describe('FAMILIA.E5.P4.T2 — merchandiseInvoiceTotal (W16-10, D-NE215)', () =>
     expect(field(() => merchandiseInvoiceTotal(totals({ vProd: 100, vDesc: 101 }), '2026-11-22'))).toBe('vNF')
     expect(field(() => merchandiseInvoiceTotal(totals({ vProd: Number.MAX_SAFE_INTEGER, vFrete: 1 }), '2026-11-22'))).toBe('vNF')
     expect(merchandiseInvoiceTotal(totals({ vProd: 100, vDesc: 100 }), '2026-11-22').cents).toBe(0)
+  })
+
+  it('a ESCOLHA pela data com mais de uma versão (tabela fictícia, fora de ordem): a de maior início ≤ data; antes de todas, recusa', () => {
+    const v = (validFrom: string, formula: string): MerchandiseTotalFormula => ({ validFrom, formula, compute: () => 0n })
+    const table = [v('2030-01-01', 'C'), v('2024-07-01', 'A'), v('2027-01-01', 'B')]
+    expect(pickMerchandiseTotalFormula(table, '2026-12-31').formula).toBe('A')
+    expect(pickMerchandiseTotalFormula(table, '2027-01-01').formula).toBe('B')
+    expect(pickMerchandiseTotalFormula(table, '2029-12-31').formula).toBe('B')
+    expect(pickMerchandiseTotalFormula(table, '2031-05-05').formula).toBe('C')
+    expect(field(() => pickMerchandiseTotalFormula(table, '2024-06-30'))).toBe('factDate')
+  })
+
+  it('soma EXATA mesmo com parciais acima do inteiro seguro (gate LOW-2): o resultado 1 sai 1', () => {
+    const M = Number.MAX_SAFE_INTEGER
+    expect(merchandiseInvoiceTotal(totals({ vProd: 0, vDesc: M, vICMSDesonDeducted: M - 1, vST: M, vFrete: M }), '2026-11-22').cents).toBe(1)
   })
 
   it('soma em inteiros: 0,1 + 0,2 em centavos dá 30 exato', () => {

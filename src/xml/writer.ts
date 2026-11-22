@@ -18,8 +18,10 @@
  * RECUSA, nunca troca calada.
  *
  * CONHECIMENTO NEGATIVO: a recusa NUNCA carrega o valor (pode ser um segredo, como o CSRT antes do hash) — só o motivo e o NOME do campo.
- * O leitor APARA as pontas do texto (`textOf`): espaço/TAB/CR/LF na ponta não volta igual — por isso a regra do leiaute (`TString`) proíbe
- * espaço nas pontas, e a família a aplica antes de escrever.
+ * O leitor APARA as pontas do texto (`textOf`, `String.prototype.trim` — inclui NBSP): o que ele apara na ponta não volta igual — por isso o
+ * `isXsdTString` recusa ponta que o `trim()` remove (o XSD sozinho aceitaria NBSP), e a família o aplica antes de escrever. Valor obrigatório
+ * só com espaço é VAZIO (o leitor o leria como ausente). Ao migrar, a saída da NFS-e só muda onde havia CR, NEL ou U+2028 crus (agora por
+ * referência) e caractere fora do XML 1.0 (agora recusa).
  */
 import { isXmlChar } from './reader'
 
@@ -45,6 +47,8 @@ function assertName(name: unknown): asserts name is string {
 
 const TEXT_ESCAPES: Readonly<Record<string, string>> = Object.freeze({
   '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&apos;', '\r': '&#xD;',
+  // gate adversarial (MED-3): o @xmldom normaliza NEL e LINE SEPARATOR crus para LF (regra do XML 1.1) — por referência voltam intactos
+  '\u0085': '&#x85;', ' ': '&#x2028;',
 })
 const ATTRIBUTE_ESCAPES: Readonly<Record<string, string>> = Object.freeze({ ...TEXT_ESCAPES, '\t': '&#x9;', '\n': '&#xA;' })
 
@@ -68,7 +72,10 @@ export function escapeXmlText(s: string): string {
 /** Elemento OBRIGATÓRIO: valor `null`/`undefined`/`''` = recusa (campo obrigatório nunca some calado do documento). */
 export function xmlElement(name: string, value: string | null | undefined): string {
   assertName(name)
-  if (value === null || value === undefined || value === '') throw new XmlUnwritableError('obrigatorio-vazio', name)
+  // só espaço também é vazio: o leitor apara e devolve AUSENTE (D-NE85) — gate adversarial (LOW-1)
+  if (value === null || value === undefined || value === '' || (typeof value === 'string' && value.trim() === '')) {
+    throw new XmlUnwritableError('obrigatorio-vazio', name)
+  }
   return `<${name}>${escapeWith(value, TEXT_ESCAPES, name)}</${name}>`
 }
 
@@ -100,6 +107,7 @@ export function xmlGroup(name: string, inner: string, attrs: Readonly<Record<str
  */
 export function isXsdTString(s: unknown, min: number, max: number): s is string {
   if (typeof s !== 'string' || s.length < min || s.length > max) return false
-  if (/^ | $/.test(s)) return false
+  // ponta: nem o espaço do XSD nem o que o `trim()` do leitor apara (NBSP U+00A0 está no domínio e sumiria na ida e volta — gate MED-4)
+  if (s !== s.trim()) return false
   return /^[ -ÿ]*$/.test(s)
 }

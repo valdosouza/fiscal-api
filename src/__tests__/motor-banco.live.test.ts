@@ -30,7 +30,8 @@ import { mapServiceAuthorityIbscbs } from '../voice/families/service-authority-i
 import { invoiceRef } from '../ref/invoice-ref'
 import {
   assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent, providerFiscalCredentialOf, saveProviderFiscalCredential,
-  fiscalCodeRequirementsOf, FiscalCodeConflictError, FiscalCodeMissingError,
+  fiscalCodeRequirementsOf, FiscalCodeConflictError, FiscalCodeMissingError, establishmentFiscalCredentialOf, listProviderFiscalCredentials,
+  endProviderFiscalCredential,
 } from '../fiscal-code/fiscal-code'
 import { execFileSync } from 'child_process'
 import os from 'os'
@@ -373,6 +374,35 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
         expect((await providerFiscalCredentialOf(conn, { state: 'PR', model: '55', environment: 'H', type: 'CSRT', at: new Date() }))?.codeValue).toBe(FAKE)
       } finally { await conn.rollback(); conn.release() }
       report.fiscalCodeBoot = true
+    })
+
+    it('no motor: a credencial do contribuinte, a listagem SEM o valor, a nova que encerra a anterior, o encerrar e o tipo apagado que NÃO desliga a regra', async () => {
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        // contribuinte (CSC, regra fictícia de teste): só a do estabelecimento, do ambiente certo
+        await conn.query(`INSERT INTO tb_establishment_issuer (tb_institution_id, model, environment) VALUES (7, '65', 'P'), (8, '65', 'P')`)
+        await conn.query(`INSERT INTO tb_establishment_fiscal_credential (tb_institution_id, model, environment, tb_fiscal_code_type_id, valid_from, code_id, code_value)
+          VALUES (7, '65', 'P', 'CSC', '2026-01-01 00:00:00', '1', ?)`, [FAKE])
+        const at = new Date()
+        expect((await establishmentFiscalCredentialOf(conn, { institutionId: 7, model: '65', environment: 'P', type: 'CSC', at }))?.codeId).toBe('1')
+        expect(await establishmentFiscalCredentialOf(conn, { institutionId: 8, model: '65', environment: 'P', type: 'CSC', at })).toBeNull()
+        expect(await establishmentFiscalCredentialOf(conn, { institutionId: 7, model: '65', environment: 'H', type: 'CSC', at })).toBeNull()
+        // fornecedor: a 2ª gravação encerra a 1ª no início dela; a listagem não traz o valor; encerrar a vigente
+        const base = { state: 'PR', model: '55', environment: 'H', type: 'CSRT', codeValue: FAKE }
+        await saveProviderFiscalCredential(conn, { ...base, codeId: '01', validFrom: new Date('2026-01-01T03:00:00Z') })
+        await saveProviderFiscalCredential(conn, { ...base, codeId: '02', validFrom: new Date('2026-06-01T03:00:00Z') })
+        const list = await listProviderFiscalCredentials(conn)
+        expect(list.map(r => [r.codeId, r.validFrom, r.validUntil])).toEqual([
+          ['01', '2026-01-01 03:00:00', '2026-06-01 03:00:00'], ['02', '2026-06-01 03:00:00', null]])
+        expect(JSON.stringify(list)).not.toContain(FAKE)
+        expect(await endProviderFiscalCredential(conn, { state: 'PR', model: '55', environment: 'H', type: 'CSRT', validFrom: new Date('2026-06-01T03:00:00Z') }, at))
+          .toBe(true)
+        expect(await providerFiscalCredentialOf(conn, { state: 'PR', model: '55', environment: 'H', type: 'CSRT', at: new Date(at.getTime() + 1000) })).toBeNull()
+        // apagar o TIPO no catálogo não desliga a regra viva
+        await conn.query(`UPDATE tb_fiscal_code_type SET deleted = 'S' WHERE id = 'CSRT'`)
+        expect(await fiscalCodeRequirementsOf(conn, { state: 'PR', model: '55', environment: 'H', at })).toEqual([{ type: 'CSRT', owner: 'provider' }])
+      } finally { await conn.rollback(); conn.release() }
     })
 
     it('D-NE226: o script grava pela ENTRADA PADRÃO (o valor não é argumento) e imprime só o que gravou, sem o valor', () => {

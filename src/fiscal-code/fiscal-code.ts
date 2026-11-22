@@ -17,6 +17,9 @@
  * da credencial (para o `hashCsrt` da família); NUNCA entra em mensagem de erro, log ou retorno de escrita/listagem (cerca no teste).
  * Sem `if (uf === 'PR')` (D-NE221): o que a UF exige é DADO da tabela de regras.
  *
+ * Um tipo APAGADO no catálogo não desliga a regra viva (a leitura das exigências não filtra o catálogo pelo `deleted` — gate adversarial):
+ * apagar a regra é apagar a REGRA. A gravação nova ENCERRA as anteriores abertas no início dela (apagar a nova não ressuscita a antiga).
+ *
  * Entrada conferida ANTES do SQL (domínio exato, binário): a coluna é `_ci`, então 'pr' casaria com 'PR' no WHERE — a peça nunca pergunta
  * fora do domínio.
  */
@@ -135,21 +138,20 @@ export async function fiscalCodeRequirementsOf(q: Queryable, scope: FiscalCodeSc
     `SELECT r.tb_fiscal_code_type_id AS type, t.owner AS owner, ${DT('r.valid_from', 'validFrom')}, ${DT('r.valid_until', 'validUntil')}
        FROM tb_fiscal_code_requirement r
        JOIN tb_fiscal_code_type t ON t.id = r.tb_fiscal_code_type_id
-      WHERE r.state = ? AND r.model = ? AND r.environment = ? AND r.deleted = 'N' AND t.deleted = 'N' AND r.valid_from <= ?`,
+      WHERE r.state = ? AND r.model = ? AND r.environment = ? AND r.deleted = 'N' AND r.valid_from <= ?`,
     [state, model, environment, at])
   return requirementsAt(rows as any[], at)
 }
 
 function requirementsAt(rows: readonly any[], at: string): FiscalCodeRequirement[] {
-  const byType = new Map<string, { validFrom: string; validUntil: string | null; owner: FiscalCodeOwner }[]>()
-  for (const r of rows) {
-    const type = String(r.type)
-    const owner = oneOf('owner', String(r.owner), FISCAL_CODE_OWNERS)
-    byType.set(type, [...(byType.get(type) ?? []), { validFrom: String(r.validFrom), validUntil: r.validUntil === null ? null : String(r.validUntil), owner }])
-  }
+  const list = rows.map(r => ({
+    type: String(r.type), owner: oneOf('owner', String(r.owner), FISCAL_CODE_OWNERS),
+    validFrom: String(r.validFrom), validUntil: r.validUntil === null ? null : String(r.validUntil),
+  }))
+  const types = list.map(r => r.type).filter((t, i, all) => all.indexOf(t) === i).sort()
   const out: FiscalCodeRequirement[] = []
-  for (const [type, list] of [...byType.entries()].sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))) {
-    const cur = currentAt(list, at)
+  for (const type of types) {
+    const cur = currentAt(list.filter(r => r.type === type), at)
     if (cur) out.push(Object.freeze({ type, owner: cur.owner }))
   }
   return out
@@ -256,9 +258,9 @@ export async function assertRequiredProviderCodesPresent(q: Queryable, at: Date 
       `SELECT r.state AS state, r.tb_fiscal_code_type_id AS type, t.owner AS owner, ${DT('r.valid_from', 'validFrom')}, ${DT('r.valid_until', 'validUntil')}
          FROM tb_fiscal_code_requirement r
          JOIN tb_fiscal_code_type t ON t.id = r.tb_fiscal_code_type_id
-        WHERE r.model = ? AND r.environment = ? AND r.deleted = 'N' AND t.deleted = 'N' AND r.valid_from <= ?`,
+        WHERE r.model = ? AND r.environment = ? AND r.deleted = 'N' AND r.valid_from <= ?`,
       [model, environment, atSql])
-    const states = [...new Set((rows as any[]).map(r => String(r.state)))].sort()
+    const states = (rows as any[]).map(r => String(r.state)).filter((s, i, all) => all.indexOf(s) === i).sort()
     for (const state of states) {
       for (const req of requirementsAt((rows as any[]).filter(r => String(r.state) === state), atSql)) {
         if (req.owner !== 'provider') continue
@@ -308,6 +310,8 @@ export async function assertFiscalCodeDomainsEnforced(pool: Pick<Pool, 'getConne
     typeProbe('1X', 'ck_fiscal_code_type_id_bin', '1X', 'provider'),
     typeProbe('Provider', 'ck_fiscal_code_type_owner_bin', 'ZZSONDA1', 'Provider'),
     typeProbe('x', 'ck_fiscal_code_type_owner_bin', 'ZZSONDA2', 'x'),
+    { value: "deleted 'n'", constraint: 'ck_fiscal_code_type_deleted_bin', params: [],
+      sql: `INSERT INTO tb_fiscal_code_type (id, owner, code_id_pattern, description, deleted) VALUES ('ZZSONDA3', 'provider', '^x$', 'sonda do boot', 'n')` },
   ], noFk)
   await assertCheckRefuses(pool, 'as regras fiscais por UF', [
     reqProbe('pr', 'ck_fiscal_code_requirement_state_bin', { state: 'pr' }, 1),
@@ -317,6 +321,12 @@ export async function assertFiscalCodeDomainsEnforced(pool: Pick<Pool, 'getConne
     reqProbe('h', 'ck_fiscal_code_requirement_environment_bin', { environment: 'h' }, 5),
     reqProbe('X', 'ck_fiscal_code_requirement_environment_bin', { environment: 'X' }, 6),
     reqProbe('csrt', 'ck_fiscal_code_requirement_type_bin', { type: 'csrt' }, 7),
+    { value: "deleted 'n'", constraint: 'ck_fiscal_code_requirement_deleted_bin', params: [],
+      sql: `INSERT INTO tb_fiscal_code_requirement (state, model, environment, tb_fiscal_code_type_id, valid_from, source, deleted)
+            VALUES ('PR', '55', 'H', 'CSRT', '1990-01-08 00:00:00', 'sonda do boot', 'n')` },
+    { value: 'fim = início', constraint: 'ck_fiscal_code_requirement_validity', params: [],
+      sql: `INSERT INTO tb_fiscal_code_requirement (state, model, environment, tb_fiscal_code_type_id, valid_from, valid_until, source, deleted)
+            VALUES ('PR', '55', 'H', 'CSRT', '1990-01-09 00:00:00', '1990-01-09 00:00:00', 'sonda do boot', 'N')` },
   ], noFk)
   await assertCheckRefuses(pool, 'as credenciais do fornecedor', [
     credProbe('Provider', 'ck_provider_fiscal_credential_owner_bin', { owner: 'Provider' }, 1),
@@ -325,6 +335,12 @@ export async function assertFiscalCodeDomainsEnforced(pool: Pick<Pool, 'getConne
     credProbe('SE', 'ck_provider_fiscal_credential_model_bin', { model: 'SE' }, 4),
     credProbe('h', 'ck_provider_fiscal_credential_environment_bin', { environment: 'h' }, 5),
     credProbe('csrt', 'ck_provider_fiscal_credential_type_bin', { type: 'csrt' }, 6),
+    { value: "deleted 'n'", constraint: 'ck_provider_fiscal_credential_deleted_bin', params: [],
+      sql: `INSERT INTO tb_provider_fiscal_credential (state, model, environment, tb_fiscal_code_type_id, owner, valid_from, code_id, code_value, deleted)
+            VALUES ('PR', '55', 'H', 'CSRT', 'provider', '1990-01-07 00:00:00', '01', 'sonda', 'n')` },
+    { value: 'fim antes do início', constraint: 'ck_provider_fiscal_credential_validity', params: [],
+      sql: `INSERT INTO tb_provider_fiscal_credential (state, model, environment, tb_fiscal_code_type_id, owner, valid_from, valid_until, code_id, code_value, deleted)
+            VALUES ('PR', '55', 'H', 'CSRT', 'provider', '1990-01-08 00:00:00', '1990-01-01 00:00:00', '01', 'sonda', 'N')` },
   ], noFk)
   await assertCheckRefuses(pool, 'as credenciais do contribuinte', [
     estProbe('Taxpayer', 'ck_establishment_fiscal_credential_owner_bin', { owner: 'Taxpayer' }, 1),
@@ -390,7 +406,7 @@ export async function saveProviderFiscalCredential(q: Queryable, input: Provider
   const t = (types as any[]).find(r => String(r.id) === type)
   if (!t) throw new FiscalCodeInvalidError('type', 'não existe no catálogo')
   if (String(t.owner) !== 'provider') throw new FiscalCodeInvalidError('type', 'não é de dono fornecedor')
-  if (typeof input.codeId !== 'string' || !new RegExp(String(t.pattern)).test(input.codeId)) {
+  if (typeof input.codeId !== 'string' || input.codeId.length > 10 || !new RegExp(String(t.pattern)).test(input.codeId)) {
     throw new FiscalCodeInvalidError('codeId', `fora da forma do tipo ${type}`)
   }
   try {
@@ -401,10 +417,33 @@ export async function saveProviderFiscalCredential(q: Queryable, input: Provider
       [state, model, environment, type, validFrom, validUntil, input.codeId, input.codeValue, userId])
   } catch (err) {
     if (isDuplicate(err)) throw new FiscalCodeConflictError()
-    throw err
+    throw storeError(err)
   }
+  // a nova ENCERRA as anteriores ainda abertas no início dela (gate adversarial LOW-3): apagar a nova depois não faz a anterior voltar
+  // calada. Depois do INSERT — um 1062 não encerra nada. Quem quer as duas escritas atômicas passa uma conexão em transação.
+  try {
+    await q.query(
+      `UPDATE tb_provider_fiscal_credential SET valid_until = ?, updated_at = UTC_TIMESTAMP()
+        WHERE state = ? AND model = ? AND environment = ? AND tb_fiscal_code_type_id = ? AND valid_from < ? AND deleted = 'N'
+          AND (valid_until IS NULL OR valid_until > ?)`,
+      [validFrom, state, model, environment, type, validFrom, validFrom])
+  } catch (err) { throw storeError(err) }
   return Object.freeze({ state, model, environment, type, codeId: input.codeId, validFrom, validUntil, userId })
 }
+
+/**
+ * Erro do BANCO na escrita, sem o SQL (gate adversarial MED-1): o mysql2 monta o comando no cliente com os valores dentro e o grava em
+ * `err.sql` — o `code_value` iria junto para qualquer logger que serialize o erro. Daqui sai só o número e o código do motor.
+ */
+export class FiscalCodeStoreError extends Error {
+  readonly code = 'FISCAL_CODE_STORE_FAILED'
+  constructor(readonly errno: number | null, readonly dbCode: string | null) {
+    super(`Configuração fiscal não gravada (erro do banco ${dbCode ?? '?'}${errno === null ? '' : ` ${errno}`})`)
+    this.name = 'FiscalCodeStoreError'
+  }
+}
+const storeError = (err: any): FiscalCodeStoreError =>
+  new FiscalCodeStoreError(typeof err?.errno === 'number' ? err.errno : null, typeof err?.code === 'string' ? err.code : null)
 
 /** Encerra (`valid_until` = at) a credencial viva e não encerrada identificada pela PK. Devolve se encerrou. */
 export async function endProviderFiscalCredential(
@@ -418,11 +457,14 @@ export async function endProviderFiscalCredential(
   const validFrom = instant('validFrom', key.validFrom)
   const atSql = instant('at', at)
   if (atSql <= validFrom) throw new FiscalCodeInvalidError('at', 'não é depois do início')
-  const [res] = await q.query(
-    `UPDATE tb_provider_fiscal_credential SET valid_until = ?, updated_at = UTC_TIMESTAMP()
-      WHERE state = ? AND model = ? AND environment = ? AND tb_fiscal_code_type_id = ? AND valid_from = ? AND deleted = 'N'
-        AND (valid_until IS NULL OR valid_until > ?)`,
-    [atSql, state, model, environment, type, validFrom, atSql])
+  let res: unknown
+  try {
+    [res] = await q.query(
+      `UPDATE tb_provider_fiscal_credential SET valid_until = ?, updated_at = UTC_TIMESTAMP()
+        WHERE state = ? AND model = ? AND environment = ? AND tb_fiscal_code_type_id = ? AND valid_from = ? AND deleted = 'N'
+          AND (valid_until IS NULL OR valid_until > ?)`,
+      [atSql, state, model, environment, type, validFrom, atSql])
+  } catch (err) { throw storeError(err) }
   return Number((res as any)?.affectedRows ?? 0) > 0
 }
 
