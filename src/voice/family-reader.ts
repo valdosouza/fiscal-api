@@ -1,6 +1,5 @@
 import { TransmissionView, VoiceFamilyReading, familyViewSelect } from './reading'
 import { InvoiceLifeRef, familyViewQuery, familyViewQueryLives, positiveInt } from './view-query'
-import { VOICE_READINGS } from './families'
 import { InvoiceRef } from '../ref/invoice-ref'
 
 export type { InvoiceLifeRef }
@@ -54,14 +53,15 @@ export async function readFamilyTransmissionsMany<V extends TransmissionView>(
  * (o setes-api na F2a; a nfse-api também, sobre as próprias views) confere que a view de tentativas de CADA família do catálogo responde ao
  * SELECT publicado — com toda coluna da projeção comum (inclusive `authority_recorded` — nota (9) da F2a) e as da família. Falta de view,
  * coluna ou GRANT = falha ALTO no boot (nunca 500 na 1ª leitura da lista). Ordem de deploy: o serviço da família ANTES de quem lê.
- * D-NE158 (NE-2, Valdo 2026-10-20): uma família FORA do catálogo (a `merchandise` até a janela da NE-6) é conferida pelo serviço dela
- * passando a PRÓPRIA leitura em [readings] (a nfe-api: `[MERCHANDISE_VOICE_READING]`); o valor padrão (catálogo inteiro) segue para
- * a nfse-api e o setes-api — "cada chamador diz o que confere" (sem padrão) fica para a janela da NE-6, quando os dois reiniciam.
+ * D-NE158 (NE-2, Valdo 2026-10-20 — executada na janela da NE-6, fiscal-api:FAMILIA.E5.P3, pacote 5.0.0): SEM valor padrão — cada
+ * chamador diz o que confere em [readings] (a nfe-api a própria view; a nfse-api a dela; quem lê todas as famílias passa
+ * `Object.values(VOICE_READINGS)`). Lista vazia falha ALTO.
  */
 export async function assertFamilyViewsReadable(
-  q: ReadQueryable, db: string, readings: readonly VoiceFamilyReading<TransmissionView>[] = Object.values(VOICE_READINGS) as VoiceFamilyReading<TransmissionView>[],
+  q: ReadQueryable, db: string, readings: readonly VoiceFamilyReading<TransmissionView>[],
 ): Promise<void> {
-  if (!readings.length) throw new Error('assertFamilyViewsReadable: catálogo de famílias vazio')
+  // sem padrão (D-NE158): quem chama de JS sem a lista cai aqui, nunca num TypeError solto
+  if (!Array.isArray(readings) || !readings.length) throw new Error('assertFamilyViewsReadable: catálogo de famílias vazio — cada chamador passa a lista que confere (D-NE158)')
   for (const reading of readings) {
     try {
       await q.query(`${familyViewSelect(reading, db)} WHERE 1 = 0`)

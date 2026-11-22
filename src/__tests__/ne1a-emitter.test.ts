@@ -40,17 +40,22 @@ describe('countLiveTransmissions — leituras PUBLICADAS de cada família, finai
   it('lê a VIEW da família (nunca a tabela), conta "sem voz ou última voz não final", ambiente opcional, sem terminal', async () => {
     const { pool, calls } = fakeConn({ vw_invoice_service_transmission: 3 })
     expect(await emitter.countLiveTransmissions(pool, 1, { branches: 'all' })).toBe(3)
+    // FAMILIA.E5.P3 (D-NE158): `all` percorre as DUAS famílias do catálogo — serviço e mercadoria, uma view cada
+    expect(calls.map(c => /FROM (vw_[a-z_]+) t/.exec(c.sql)?.[1])).toEqual(['vw_invoice_service_transmission', 'vw_invoice_merchandise_transmission'])
     expect(calls[0].sql).toMatch(/FROM vw_invoice_service_transmission t/)
     expect(calls[0].sql).toContain(`AND (t.last_kind IS NULL OR t.last_kind NOT IN (${FINALS}))`)
     expect(calls[0].sql).not.toMatch(/terminal|tb_invoice_service/)
     expect(calls[0].p).toEqual([1, null, null])
     await emitter.countLiveTransmissions(pool, 1, { branches: ['service'], environment: 'P' })
-    expect(calls[1].p).toEqual([1, 'P', 'P'])
+    expect(calls).toHaveLength(3)
+    expect([calls[2].sql.includes('vw_invoice_service_transmission'), calls[2].p]).toEqual([true, [1, 'P', 'P']])
   })
-  it('ramo sem leitura no catálogo (a família ainda não existe) = nenhuma tentativa possível — sem SQL', async () => {
-    const { pool, calls } = fakeConn({})
-    expect(await emitter.countLiveTransmissions(pool, 1, { branches: ['merchandise'] })).toBe(0)
-    expect(calls).toHaveLength(0)
+  it('FAMILIA.E5.P3 (D-NE158): a mercadoria ENTROU no catálogo — o ramo dela conta pela PRÓPRIA view (antes: 0 sem SQL)', async () => {
+    const { pool, calls } = fakeConn({ vw_invoice_merchandise_transmission: 2, vw_invoice_service_transmission: 5 })
+    expect(await emitter.countLiveTransmissions(pool, 1, { branches: ['merchandise'] })).toBe(2)
+    expect(calls).toHaveLength(1)
+    expect(calls[0].sql).toMatch(/FROM vw_invoice_merchandise_transmission t/)
+    expect(await emitter.countLiveTransmissions(pool, 1, { branches: 'all' })).toBe(7)
   })
   it('CONHECIMENTO NEGATIVO [convertido — D-NE76]: view ausente (1146) com a família INSTALADA (a view ou a tabela de tentativas dela existe) NUNCA vira 0 — o erro sobe; a família NÃO instalada neste banco (nem view nem tabela — a outra API ainda não subiu aqui) conta 0', async () => {
     for (const present of [['vw_invoice_service_transmission'], ['tb_invoice_service_transmission']]) {
@@ -72,25 +77,13 @@ describe('countLiveTransmissions — leituras PUBLICADAS de cada família, finai
       await expect(emitter.countLiveTransmissions(pool, 1, { branches })).rejects.toThrow(/ramos inválidos/)
     }
     expect(calls).toEqual([])
-    await expect(emitter.countLiveTransmissions(pool, 1, { branches: ['merchandise'] })).resolves.toBe(0)   // ramo do domínio sem leitura ainda (NE-2)
+    await expect(emitter.countLiveTransmissions(pool, 1, { branches: ['merchandise'] })).resolves.toBe(0)   // ramo do domínio, view sem vivas
   })
 })
 
-describe('D-NE9 — o DELETE do A1 soma TODAS as famílias (catálogo com a NF-e simulada)', () => {
-  // o catálogo real só tem a família de serviço (a NF-e entra na NE-2); aqui uma 2ª leitura é injetada para provar a SOMA
-  const withMerchandise = () => {
-    let mod!: typeof import('../emitter/emitter')
-    jest.isolateModules(() => {
-      jest.doMock('../voice/families', () => {
-        const actual = jest.requireActual('../voice/families')
-        return { ...actual, VOICE_READINGS: Object.freeze({ ...actual.VOICE_READINGS,
-          merchandise: { ...actual.VOICE_READINGS.service, branch: 'merchandise', transmissionView: 'vw_invoice_merchandise_transmission' } }) }
-      })
-      mod = require('../emitter/emitter')
-    })
-    return mod
-  }
-  afterEach(() => jest.dontMock('../voice/families'))
+describe('D-NE9 — o DELETE do A1 soma TODAS as famílias (catálogo REAL com a NF-e — FAMILIA.E5.P3)', () => {
+  // até a janela da NE-6 a 2ª leitura era INJETADA por mock; desde a FAMILIA.E5.P3 (D-NE158) o catálogo real tem as duas famílias
+  const withMerchandise = () => emitter
 
   it('NF-e viva e nenhuma NFS-e viva → o A1 NÃO se apaga (409); a habilitação SE (família de serviço) segue livre para trocar de ambiente', async () => {
     const mod = withMerchandise()
@@ -113,12 +106,12 @@ describe('D-NE9 — o DELETE do A1 soma TODAS as famílias (catálogo com a NF-e
   })
 })
 
-describe('composição do emitter (catálogo real — só a família de serviço)', () => {
+describe('composição do emitter (catálogo real — serviço e mercadoria)', () => {
   it('apagar o A1: 1ª instrução = TRAVA das linhas da habilitação, depois as vivas (view), depois apaga — sem vivas apaga', async () => {
     const db = fakeConn({ vw_invoice_service_transmission: 0 })
     await emitter.clearCertificate({ pool: db.pool, keyring: ring }, 1, 7, { schemaName: 'setes_setes' })
     const order = db.calls.map(c => (/FOR UPDATE/.test(c.sql) ? 'trava' : /FROM vw_/.test(c.sql) ? 'vivas' : /UPDATE tb_establishment_certificate/.test(c.sql) ? 'apaga' : null)).filter(Boolean)
-    expect(order).toEqual(['trava', 'vivas', 'apaga'])
+    expect(order).toEqual(['trava', 'vivas', 'vivas', 'apaga'])                      // as vivas das DUAS famílias (D-NE9), depois apaga
   })
   it('trocar o ambiente da habilitação com viva no ambiente ATUAL → 409 (contando só o ambiente atual); mesmo ambiente não conta', async () => {
     const db = fakeConn({ vw_invoice_service_transmission: 1 }, { issuer: ISSUER_SE_H })

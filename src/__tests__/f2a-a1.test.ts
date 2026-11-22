@@ -189,16 +189,16 @@ describe('D-NE84/D-F107 — assertCheckRefuses', () => {
 // ---------------------------------------------------------------------------
 // D-F113 / D-F120 / D-F122 (Rodada 1 da F2a e gates da A1 — Valdo 2026-10-12)
 // ---------------------------------------------------------------------------
-describe('D-F113 — assertFamilyViewsReadable: a família INSTALADA é o catálogo VOICE_READINGS e a view de cada uma responde ao SELECT publicado', () => {
-  it('pergunta a view de tentativas de CADA família do catálogo (SELECT publicado, WHERE 1 = 0 — nenhuma linha lida)', async () => {
+describe('D-F113 — assertFamilyViewsReadable: a view de cada família PEDIDA responde ao SELECT publicado (sem padrão desde a janela da NE-6 — D-NE158)', () => {
+  it('pergunta a view de tentativas de CADA família pedida (SELECT publicado, WHERE 1 = 0 — nenhuma linha lida)', async () => {
     const { q, calls } = driver([])
-    await assertFamilyViewsReadable(q, 'fiscal_api')
+    await assertFamilyViewsReadable(q, 'fiscal_api', [SERVICE_VOICE_READING])
     expect(calls.map(c => c.sql.replace(/\s+/g, ' '))).toEqual([expect.stringMatching(/^SELECT .*v\.authority_recorded AS authorityRecorded.* FROM `fiscal_api`\.vw_invoice_service_transmission v WHERE 1 = 0$/)])
   })
   it('view ausente, coluna faltando (authority_recorded — nota (9) da F2a) ou sem GRANT → falha ALTO no boot com o nome da família e da view', async () => {
     for (const e of [{ code: 'ER_NO_SUCH_TABLE', errno: 1146 }, { code: 'ER_BAD_FIELD_ERROR', errno: 1054 }, { code: 'ER_TABLEACCESS_DENIED_ERROR', errno: 1142 }]) {
       const q: ReadQueryable = { query: async () => { throw Object.assign(new Error('x'), e) } }
-      await expect(assertFamilyViewsReadable(q, 'fiscal_api')).rejects.toThrow(new RegExp(`família "service" \\(fiscal_api\\.vw_invoice_service_transmission\\).*${e.code}.*D-F113`))
+      await expect(assertFamilyViewsReadable(q, 'fiscal_api', [SERVICE_VOICE_READING])).rejects.toThrow(new RegExp(`família "service" \\(fiscal_api\\.vw_invoice_service_transmission\\).*${e.code}.*D-F113`))
     }
     await expect(assertFamilyViewsReadable(driver([]).q, 'fiscal_api', [])).rejects.toThrow(/catálogo de famílias vazio/)
   })

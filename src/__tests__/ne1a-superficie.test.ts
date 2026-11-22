@@ -46,7 +46,8 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       'voice/family-reader.ts': ['./reading', './view-query', './families', '../ref/invoice-ref'],
       'voice/view-query.ts': ['./reading', '../ref/invoice-ref'],
       'voice/families/service.ts': ['../kinds', '../reading', '../../util/readonly-set'],
-      'voice/families/index.ts': ['../reading', './service'],
+      'voice/families/index.ts': ['../reading', './service', './merchandise'],
+      'voice/families/merchandise.ts': ['../reading'],
       'ref/invoice-ref.ts': [],
     }
     for (const [rel, ok] of Object.entries(ALLOWED)) expect([rel, imports(rel).filter(i => !ok.includes(i))]).toEqual([rel, []])

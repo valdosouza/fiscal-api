@@ -79,8 +79,8 @@ describe('D-NE56 — o REGISTRO pelo fisco é FATO da view, nunca a presença da
 })
 
 describe('leitura PUBLICADA por família (VoiceFamilyReading) — views por família com a projeção comum', () => {
-  it('o catálogo tem só a família de serviço (a de mercadoria entra na NE-2) e é imutável', () => {
-    expect(Object.keys(VOICE_READINGS)).toEqual(['service'])
+  it('o catálogo tem a família de serviço e a de mercadoria (entrou na janela da NE-6 — FAMILIA.E5.P3, D-NE158) e é imutável', () => {
+    expect(Object.keys(VOICE_READINGS)).toEqual(['service', 'merchandise'])
     expect(VOICE_READINGS.service).toBe(SERVICE_VOICE_READING)
     expect(Object.isFrozen(VOICE_READINGS) && Object.isFrozen(SERVICE_VOICE_READING)).toBe(true)
   })

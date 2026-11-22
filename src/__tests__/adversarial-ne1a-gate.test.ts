@@ -370,13 +370,14 @@ describe('RESISTIU — índice da biblioteca (D-F33: o setes-api só importa o n
     expect([...owner].filter(([, o]) => o.length > 1)).toEqual([])
     for (const [k] of owner) expect([k, k in core]).toEqual([k, true])
   })
-  it('resistiu: os nomes PÚBLICOS de antes da NE-1a seguem no índice (a mudança de arquivo não quebra a nfse-api nem a F2a) e o catálogo tem só a família de serviço, imutável', () => {
+  it('resistiu: os nomes PÚBLICOS de antes da NE-1a seguem no índice (a mudança de arquivo não quebra a nfse-api nem a F2a) e o catálogo (serviço e, desde a FAMILIA.E5.P3, mercadoria) é imutável', () => {
     const before = ['currentOf', 'fiscalStateOf', 'inLife', 'isLiveTransmission', 'isAuthorized', 'localCancelPending', 'isSubstitutionCancel',
       'isHumanEffectCancel', 'reconfirmationCandidate', 'reconfirmationProven', 'transmissionViewSelect', 'mapTransmissionView',
       'FINAL_TRANSMISSION_KINDS', 'AUTHORIZED_KINDS', 'CANCEL_EVENT_CODES', 'SUBSTITUTION_CANCEL_CODE', 'EX_OFFICIO_CANCEL_CODE', 'HUMAN_EFFECT_CANCEL_CODES']
     expect(before.filter(k => !(k in core))).toEqual([])
-    expect(Object.keys(VOICE_READINGS)).toEqual(['service'])
+    expect(Object.keys(VOICE_READINGS)).toEqual(['service', 'merchandise'])
     expect(() => { (VOICE_READINGS as any).merchandise = SERVICE_VOICE_READING }).toThrow(TypeError)
+    expect(() => { (VOICE_READINGS as any).other = SERVICE_VOICE_READING }).toThrow(TypeError)
     expect(() => { (SERVICE_VOICE_READING as any).transmissionView = 'vw_x' }).toThrow(TypeError)
   })
   it('resistiu: `familyViewQuery` — a nota pela referência INTEIRA (terminal como parâmetro, nunca literal) e ordenada pela tentativa, para qualquer terminal', () => {

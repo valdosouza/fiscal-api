@@ -49,33 +49,36 @@ describe('D-NE160 — o que a família publica', () => {
   })
 })
 
-describe('D-NE158 — fora do catálogo e fora de `fiscal-api/reading`, só no barrel', () => {
-  it('o catálogo segue só com `service`; a leitura e a numeração existem no barrel e NÃO na superfície de leitura', () => {
-    expect(Object.keys(VOICE_READINGS)).toEqual(['service'])
+describe('D-NE158 — a janela da NE-6 (FAMILIA.E5.P3): a família entra no catálogo; a superfície vem na ordem 3 da ficha', () => {
+  it('o catálogo tem `service` e `merchandise` (esta, a leitura PUBLICADA da NF-e); a leitura e a numeração existem no barrel e ainda NÃO na superfície de leitura', () => {
+    expect(Object.keys(VOICE_READINGS)).toEqual(['service', 'merchandise'])
+    expect(VOICE_READINGS.merchandise).toBe(MERCHANDISE_VOICE_READING)
     for (const n of ['MERCHANDISE_VOICE_READING', 'mapMerchandiseTransmissionView', 'isMerchandiseHumanEffectCancel', 'readWithdrawnRanges', 'withdrawnRangesQuery',
       'assertWithdrawnRangesViewReadable', 'WITHDRAWN_RANGES_VIEW']) {
       expect([n, n in barrel, n in reading]).toEqual([n, true, false])
     }
   })
-  it('o emitter conta 0 para o ramo de mercadoria SEM consultar o banco (família sem leitura no catálogo = nenhuma tentativa possível) e `all` percorre só a NFS-e', async () => {
+  it('o emitter conta o ramo de mercadoria pela view da NF-e e `all` percorre as duas famílias (antes da janela: 0 sem SQL e só a NFS-e)', async () => {
     const calls: string[] = []
     const q: any = { query: jest.fn(async (sql: string) => { calls.push(sql); return [[{ n: 3 }]] }) }
-    expect(await countLiveTransmissions(q, 1, { branches: ['merchandise'] })).toBe(0)
-    expect(calls).toEqual([])
-    expect(await countLiveTransmissions(q, 1, { branches: 'all' })).toBe(3)
+    expect(await countLiveTransmissions(q, 1, { branches: ['merchandise'] })).toBe(3)
     expect(calls).toHaveLength(1)
-    expect(calls[0]).toContain('vw_invoice_service_transmission ')
-    expect(calls[0]).not.toContain('merchandise')
+    expect(calls[0]).toContain('vw_invoice_merchandise_transmission ')
+    expect(await countLiveTransmissions(q, 1, { branches: 'all' })).toBe(6)
+    expect(calls).toHaveLength(3)
+    expect(calls[1]).toContain('vw_invoice_service_transmission ')
+    expect(calls[2]).toContain('vw_invoice_merchandise_transmission ')
   })
-  it('a nfe-api confere a PRÓPRIA view passando a leitura; o padrão (catálogo) segue conferindo só as do catálogo', async () => {
+  it('a nfe-api confere a PRÓPRIA view passando a leitura; sem padrão, quem confere o catálogo inteiro passa o catálogo (as duas views)', async () => {
     const calls: string[] = []
     const q: any = { query: jest.fn(async (sql: string) => { calls.push(sql); return [[]] }) }
     await assertFamilyViewsReadable(q, 'fiscal_api', [MERCHANDISE_VOICE_READING])
     expect(calls).toHaveLength(1)
     expect(calls[0]).toMatch(/FROM `fiscal_api`\.vw_invoice_merchandise_transmission v WHERE 1 = 0$/)
-    await assertFamilyViewsReadable(q, 'fiscal_api')
-    expect(calls).toHaveLength(2)
+    await assertFamilyViewsReadable(q, 'fiscal_api', Object.values(VOICE_READINGS) as any)
+    expect(calls).toHaveLength(3)
     expect(calls[1]).toContain('vw_invoice_service_transmission')
+    expect(calls[2]).toContain('vw_invoice_merchandise_transmission')
     const bad: any = { query: jest.fn(async () => { throw Object.assign(new Error('no view'), { code: 'ER_NO_SUCH_TABLE' }) }) }
     await expect(assertFamilyViewsReadable(bad, 'fiscal_api', [MERCHANDISE_VOICE_READING])).rejects.toThrow(/família "merchandise".*ER_NO_SUCH_TABLE.*D-F113/)
   })
