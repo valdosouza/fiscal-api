@@ -348,6 +348,12 @@ export async function assertFiscalCodeDomainsEnforced(pool: Pick<Pool, 'getConne
     estProbe('SE', 'ck_establishment_fiscal_credential_model_bin', { model: 'SE' }, 3),
     estProbe('h', 'ck_establishment_fiscal_credential_environment_bin', { environment: 'h' }, 4),
     estProbe('csc', 'ck_establishment_fiscal_credential_type_bin', { type: 'csc' }, 5),
+    { value: "deleted 'n'", constraint: 'ck_establishment_fiscal_credential_deleted_bin', params: [],
+      sql: `INSERT INTO tb_establishment_fiscal_credential (tb_institution_id, model, environment, tb_fiscal_code_type_id, owner, valid_from, code_id, code_value, deleted)
+            VALUES (0, '65', 'H', 'CSC', 'taxpayer', '1990-01-06 00:00:00', '1', 'sonda', 'n')` },
+    { value: 'fim = início', constraint: 'ck_establishment_fiscal_credential_validity', params: [],
+      sql: `INSERT INTO tb_establishment_fiscal_credential (tb_institution_id, model, environment, tb_fiscal_code_type_id, owner, valid_from, valid_until, code_id, code_value, deleted)
+            VALUES (0, '65', 'H', 'CSC', 'taxpayer', '1990-01-07 00:00:00', '1990-01-07 00:00:00', '1', 'sonda', 'N')` },
   ], noFk)
   await assertLengthRefused(pool, 'o código da credencial', [{
     value: 'A'.repeat(101), column: 'tb_provider_fiscal_credential.code_value',

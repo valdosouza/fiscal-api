@@ -78,13 +78,21 @@ async function main() {
   const core = await import(pathToFileURL(path.resolve(here, '..', 'dist', 'index.js')).href)
   const value = await readSecret(`Valor do ${args.type} (${args.state} ${args.model} ${args.environment}) — não aparece na tela: `)
   const pool = core.createFiscalPool(core.dbConfigFromEnv(env))
+  const conn = await pool.getConnection()
   try {
-    const row = await core.saveProviderFiscalCredential(pool, {
+    // a gravação e o encerramento da anterior numa transação só (gate socrático): ou as duas, ou nenhuma
+    await conn.beginTransaction()
+    const row = await core.saveProviderFiscalCredential(conn, {
       state: args.state, model: args.model, environment: args.environment, type: args.type, codeId: args['code-id'], codeValue: value,
       validFrom: new Date(args['valid-from']), userId: null,
     })
+    await conn.commit()
     console.log(`gravado: ${row.state} ${row.type} ${row.model} ${row.environment} code_id=${row.codeId} desde ${row.validFrom} (UTC)`)
+  } catch (err) {
+    await conn.rollback().catch(() => undefined)
+    throw err
   } finally {
+    conn.release()
     await pool.end()
   }
 }
