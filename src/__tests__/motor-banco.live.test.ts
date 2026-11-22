@@ -10,11 +10,13 @@
 // sobras com esse prefixo). O usuário descartável tem o GRANT no FORMATO do serviço (nfse-api ops/grants.sql): ALL no banco fiscal, SÓ
 // SELECT no "ERP" (`setes\_%`), SÓ SELECT na view da "central" (`setes_central.vw_user_link`).
 //
-// T2: as migrations 001–005 aplicam, a 2ª corrida não aplica nada, e apagado o registro em `_migrations` elas RE-EXECUTAM sem erro e o
+// T2: as migrations 001–006 aplicam, a 2ª corrida não aplica nada, e apagado o registro em `_migrations` elas RE-EXECUTAM sem erro e o
 //     schema sai igual (D-F123); o banco e as tabelas nascem utf8mb4 mesmo com o padrão utf8mb3 do servidor (§23.12).
 // T1: o CHECK de model e environment é aplicado (as sondas do boot — D-F45/D-NE84/D-F120); as views respondem com o GRANT mínimo; a
 //     leitura travante (FOR UPDATE da nota — D-F27/D-F31 — e a COMPARTILHADA da view de vida) funciona com SÓ SELECT e trava de verdade;
 //     o servidor é primário único (não é réplica, não é Galera, read_only desligado, todas as conexões no MESMO servidor — D-F9).
+// FAMILIA.E5.P4.T4: a 006 (configuração fiscal por UF) — sondas dos CHECKs binários, semente, FK composta do dono, 1062 da PK, o boot que
+//     recusa sem o CSRT exigido e passa com uma credencial FICTÍCIA, e o script de cadastro (D-NE226) — tudo pelo usuário no FORMATO do serviço.
 // IBS.E1.P1 (fase IBS/CBS): sonda SEM tabela — `CAST(<DECIMAL(17,2)> AS CHAR)` chega pelo pool da casa como texto decimal canônico (a
 //     suposição do leitor dos valores do fisco); roda sozinha com `-t "IBS.E1.P1"`, sem criar nada.
 import fs from 'fs'
@@ -26,6 +28,13 @@ import { assertIssuerModelDomainEnforced, assertIssuerEnvironmentDomainEnforced 
 import { assertSessionViewReadable } from '../access/access'
 import { mapServiceAuthorityIbscbs } from '../voice/families/service-authority-ibscbs'
 import { invoiceRef } from '../ref/invoice-ref'
+import {
+  assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent, providerFiscalCredentialOf, saveProviderFiscalCredential,
+  fiscalCodeRequirementsOf, FiscalCodeConflictError, FiscalCodeMissingError,
+} from '../fiscal-code/fiscal-code'
+import { execFileSync } from 'child_process'
+import os from 'os'
+import path from 'path'
 
 const LIVE = process.env.FISCAL_ENGINE_LIVE === '1'
 const d = LIVE ? describe : describe.skip
@@ -95,9 +104,14 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
 
   async function schemaSnapshot(): Promise<string> {
     const out: string[] = []
-    for (const t of ['tb_establishment_certificate', 'tb_establishment_issuer']) {
+    for (const t of ['tb_establishment_certificate', 'tb_establishment_issuer', 'tb_fiscal_code_type', 'tb_fiscal_code_requirement',
+      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential']) {
       const [rows] = await root.query<any[]>(`SHOW CREATE TABLE \`${DB}\`.\`${t}\``)
       out.push(String(rows[0]['Create Table']))
+      if (t === 'tb_fiscal_code_type' || t === 'tb_fiscal_code_requirement') {
+        const [seed] = await root.query<any[]>(`SELECT * FROM \`${DB}\`.\`${t}\``)
+        out.push(JSON.stringify(seed.map(r => Object.values(r).map(String)).sort()))
+      }
     }
     const [ck] = await root.query<any[]>(`SELECT CONSTRAINT_NAME AS n, CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
       WHERE CONSTRAINT_SCHEMA = ? ORDER BY CONSTRAINT_NAME`, [DB])
@@ -133,14 +147,14 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   })
 
   // ---------------------------------------------------------------- T2
-  describe('T2 — as migrations 001–005 aplicam e re-executam', () => {
+  describe('T2 — as migrations 001–006 aplicam e re-executam', () => {
     let first = ''
 
     it('aplicam todas, na ordem, num banco novo (o executor confere a sessão estrita e o modo global antes)', async () => {
       const applied = await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])
       expect(applied).toEqual([
         'fiscal-api/001_core_baseline', 'fiscal-api/002_issuer_refresh_lease', 'fiscal-api/003_issuer_cutover',
-        'fiscal-api/004_issuer_model_domain', 'fiscal-api/005_issuer_domains_binary',
+        'fiscal-api/004_issuer_model_domain', 'fiscal-api/005_issuer_domains_binary', 'fiscal-api/006_fiscal_code',
       ])
       first = await schemaSnapshot()
       // 005: sai o CHECK _ci da 004, ficam os dois binários de nome próprio
@@ -154,10 +168,10 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])).toEqual([])
     })
 
-    it('apagado o registro, as 001–005 RE-EXECUTAM sem erro e o schema sai igual (D-F123 — processo morto entre o ALTER e o registro)', async () => {
+    it('apagado o registro, as 001–006 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
       await root.query(`DELETE FROM \`${DB}\`.\`_migrations\` WHERE project = ?`, [CORE_MIGRATIONS_PROJECT])
       const again = await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])
-      expect(again).toHaveLength(5)
+      expect(again).toHaveLength(6)
       expect(await schemaSnapshot()).toBe(first)
       report.migrationsReexecuted = again.length
     })
@@ -168,7 +182,8 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(db[0]).toEqual({ cs: 'utf8mb4', co: 'utf8mb4_unicode_ci' })
       const [tabs] = await root.query<any[]>(`SELECT TABLE_NAME AS t, TABLE_COLLATION AS co FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`, [DB])
-      expect(tabs.map(r => String(r.t)).sort()).toEqual(['_migrations', 'tb_establishment_certificate', 'tb_establishment_issuer'])
+      expect(tabs.map(r => String(r.t)).sort()).toEqual(['_migrations', 'tb_establishment_certificate', 'tb_establishment_fiscal_credential',
+        'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_provider_fiscal_credential'])
       for (const r of tabs) expect(r.co).toBe('utf8mb4_unicode_ci')
       const [cols] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = ? AND CHARACTER_SET_NAME IS NOT NULL AND CHARACTER_SET_NAME <> 'utf8mb4'`, [DB])
@@ -300,6 +315,85 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
         }
       } finally { await c.end() }
       report.realViews = erpSchema ? `vw_user_link + ${erpSchema}.vw_invoice_life/vw_order_interface` : 'vw_user_link'
+    })
+  })
+
+  // ---------------------------------------------------------------- FAMILIA.E5.P4.T4
+  describe('FAMILIA.E5.P4.T4 — a 006 no motor, pelo usuário no FORMATO do serviço (ALL só no banco fiscal)', () => {
+    // valor de TESTE inventado — nunca o da Setes (D-NE223/D-NE226: o valor real só pela entrada padrão do script, no dev, pelo Valdo)
+    const FAKE = 'FICTICIODETESTE0123456789ABCDEF'
+    let pool: Pool
+    beforeAll(() => { pool = createFiscalPool(probeCfg); pools.push(pool) })
+
+    it('a semente está lá: catálogo CSRT/provider e CSC/taxpayer; PR·55 exige CSRT em H desde 19/01/2026 e em P desde 23/02/2026 (03:00 UTC)', async () => {
+      const [types] = await pool.query<any[]>(`SELECT id, owner, code_id_pattern AS p FROM tb_fiscal_code_type ORDER BY id`)
+      expect(types).toEqual([{ id: 'CSC', owner: 'taxpayer', p: '^[0-9]{1,6}$' }, { id: 'CSRT', owner: 'provider', p: '^[0-9]{2}$' }])
+      expect(await fiscalCodeRequirementsOf(pool, { state: 'PR', model: '55', environment: 'H', at: new Date('2026-01-19T02:59:59Z') })).toEqual([])
+      expect(await fiscalCodeRequirementsOf(pool, { state: 'PR', model: '55', environment: 'H', at: new Date('2026-01-19T03:00:00Z') }))
+        .toEqual([{ type: 'CSRT', owner: 'provider' }])
+      expect(await fiscalCodeRequirementsOf(pool, { state: 'PR', model: '55', environment: 'P', at: new Date('2026-02-23T03:00:00Z') }))
+        .toEqual([{ type: 'CSRT', owner: 'provider' }])
+      expect(await fiscalCodeRequirementsOf(pool, { state: 'PR', model: '65', environment: 'P', at: new Date() })).toEqual([])
+    })
+
+    it('cada domínio fechado é recusado pelo CHECK BINÁRIO de nome certo (fora do domínio e minúscula), e a sessão é estrita no valor', async () => {
+      await expect(assertFiscalCodeDomainsEnforced(pool)).resolves.toBeUndefined()
+      report.fiscalCodeChecks = true
+    })
+
+    it('12 e 13 pelo motor: a FK composta (tipo, dono) recusa CSC na tabela do fornecedor e CSRT na do contribuinte; a minúscula não passa pela FK', async () => {
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        await conn.query(`INSERT INTO tb_establishment_issuer (tb_institution_id, model, environment) VALUES (7, '65', 'H')`)
+        await expect(conn.query(`INSERT INTO tb_provider_fiscal_credential (state, model, environment, tb_fiscal_code_type_id, valid_from, code_id, code_value)
+          VALUES ('SC', '65', 'H', 'CSC', '2026-01-01 00:00:00', '1', ?)`, [FAKE])).rejects.toMatchObject({ errno: 1452 })
+        await expect(conn.query(`INSERT INTO tb_establishment_fiscal_credential (tb_institution_id, model, environment, tb_fiscal_code_type_id, valid_from, code_id, code_value)
+          VALUES (7, '65', 'H', 'CSRT', '2026-01-01 00:00:00', '01', ?)`, [FAKE])).rejects.toMatchObject({ errno: 1452 })
+        await expect(conn.query(`INSERT INTO tb_provider_fiscal_credential (state, model, environment, tb_fiscal_code_type_id, valid_from, code_id, code_value)
+          VALUES ('PR', '55', 'H', 'csrt', '2026-01-01 00:00:00', '01', ?)`, [FAKE])).rejects.toMatchObject({ errno: 4025 })
+        // o caminho certo passa (as sondas não são "o motor recusa tudo")
+        await conn.query(`INSERT INTO tb_establishment_fiscal_credential (tb_institution_id, model, environment, tb_fiscal_code_type_id, valid_from, code_id, code_value)
+          VALUES (7, '65', 'H', 'CSC', '2026-01-01 00:00:00', '1', ?)`, [FAKE])
+      } finally { await conn.rollback(); conn.release() }
+    })
+
+    it('o boot RECUSA com uma habilitação 55/H viva e sem o CSRT de H; 14: mesmo início = FiscalCodeConflictError; com a credencial fictícia, SOBE', async () => {
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        await conn.query(`INSERT INTO tb_establishment_issuer (tb_institution_id, model, environment) VALUES (7, '55', 'H')`)
+        const e = await assertRequiredProviderCodesPresent(conn).catch(x => x)
+        expect(e).toBeInstanceOf(FiscalCodeMissingError)
+        expect(e.missing).toEqual([{ state: 'PR', type: 'CSRT', model: '55', environment: 'H', owner: 'provider' }])
+        const input = { state: 'PR', model: '55', environment: 'H', type: 'CSRT', codeId: '01', codeValue: FAKE, validFrom: new Date('2026-01-01T03:00:00Z') }
+        await saveProviderFiscalCredential(conn, input)
+        await expect(saveProviderFiscalCredential(conn, input)).rejects.toBeInstanceOf(FiscalCodeConflictError)
+        await expect(assertRequiredProviderCodesPresent(conn)).resolves.toBeUndefined()
+        expect((await providerFiscalCredentialOf(conn, { state: 'PR', model: '55', environment: 'H', type: 'CSRT', at: new Date() }))?.codeValue).toBe(FAKE)
+      } finally { await conn.rollback(); conn.release() }
+      report.fiscalCodeBoot = true
+    })
+
+    it('D-NE226: o script grava pela ENTRADA PADRÃO (o valor não é argumento) e imprime só o que gravou, sem o valor', () => {
+      const root_ = path.resolve(__dirname, '..', '..')
+      const dist = path.join(root_, 'dist', 'fiscal-code', 'fiscal-code.js')
+      if (!fs.existsSync(dist)) throw new Error('rode `npm run build` antes: o script importa do dist/')
+      const envFile = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'fiscal-cred-')), '.env')
+      fs.writeFileSync(envFile, [`DB_HOST=${owner.host}`, `DB_PORT=${owner.port}`, `DB_USER=${PROBE_USER}`, `DB_PASSWORD=${PROBE_PASSWORD}`,
+        `FISCAL_DB_NAME=${DB}`].join('\n'))
+      try {
+        const out = execFileSync(process.execPath, [path.join(root_, 'scripts', 'fiscal-credential.mjs'), '--env-file', envFile, '--state', 'PR',
+          '--model', '55', '--environment', 'P', '--type', 'CSRT', '--code-id', '02', '--valid-from', '2026-02-23T00:00:00-03:00'],
+          { input: `${FAKE}\n`, encoding: 'utf8' })
+        expect(out.trim()).toBe('gravado: PR CSRT 55 P code_id=02 desde 2026-02-23 03:00:00 (UTC)')
+        expect(out).not.toContain(FAKE)
+      } finally { fs.rmSync(path.dirname(envFile), { recursive: true, force: true }) }
+    })
+
+    it('a linha do script está no banco (e sai pela leitura do núcleo); limpeza', async () => {
+      expect((await providerFiscalCredentialOf(pool, { state: 'PR', model: '55', environment: 'P', type: 'CSRT', at: new Date() }))?.codeId).toBe('02')
+      await pool.query(`DELETE FROM tb_provider_fiscal_credential WHERE code_value = ?`, [FAKE])
     })
   })
 })

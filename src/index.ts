@@ -57,6 +57,9 @@ export * from './xml/writer'
 // RESPONSÁVEL TÉCNICO da instância (D-NE217 — FAMILIA.E5.P4.T3): dados públicos do `infRespTec` pelo ambiente, conferidos no boot da família
 export * from './technical-responsible/technical-responsible'
 
+// CONFIGURAÇÃO FISCAL POR UF (migration 006 — D-NE221…D-NE226, FAMILIA.E5.P4.T4): exigências, credenciais do dono certo, boot e escrita
+export * from './fiscal-code/fiscal-code'
+
 // arquivo fiscal (XML)
 export * from './storage/fiscal-storage'
 
