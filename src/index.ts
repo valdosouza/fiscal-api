@@ -51,6 +51,9 @@ export * from './xml/reader'
 // ESCRITOR de XML (D-NE214 — FAMILIA.E5.P4.T1): aditivo, simétrico ao leitor; sem subpath (o ERP não escreve XML)
 export * from './xml/writer'
 
+// RESPONSÁVEL TÉCNICO da instância (D-NE217 — FAMILIA.E5.P4.T3): dados públicos do `infRespTec` pelo ambiente, conferidos no boot da família
+export * from './technical-responsible/technical-responsible'
+
 // arquivo fiscal (XML)
 export * from './storage/fiscal-storage'
 
