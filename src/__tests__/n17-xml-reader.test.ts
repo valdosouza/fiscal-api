@@ -98,10 +98,6 @@ describe('CERCA do N17 — nenhuma leitura de XML por RECORTE em produção (nú
     'fiscal-api/src/transport/https-json.ts': 1,
     'nfse-api/scripts/carga/fisco-falso.ts': 1,
     'nfse-api/scripts/carga/semear.ts': 1,
-    // exceção NOMEADA (FAMILIA.E5.P4.T5, Valdo 2026-11-22 "Sim, destrave"): a validação XSD LOCAL da nfe-api (NFE.E4.P3.T1, 6e5b4ca — D-NE181,
-    // D-NE211) lê por recorte só texto NOSSO, nunca resposta do fisco: o `schemaLocation` dos XSD conferidos por hash (MANIFESTO.json) e o
-    // trecho `detEvento` da mensagem que ELA montou, antes de validar — nada que decida voz
-    'nfe-api/src/authority/xsd.ts': 4,
   }
   it('a cerca não é cega (inclusive às formas que o gate do delta mostrou), não acusa o que não é recorte, e o código real só tem a exceção nomeada', () => {
     const caught = [
