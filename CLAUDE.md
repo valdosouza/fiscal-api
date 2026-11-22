@@ -27,7 +27,8 @@ O núcleo guarda o que é COMUM às famílias:
   ALUGUEL da consulta ativa `refresh_lease_until`)
 - **voz**: vocabulário comum com classificação TOTAL (`voice/kinds.ts` — S/A/R/C/K/F/N + P/D da NF-e) e o CONTRATO DE LEITURA
   (`voice/reading.ts`: projeção comum `TransmissionView` com o REGISTRO como fato `authorityRecorded` — D-NE56 —, estado derivado
-  exaustivo, `currentOf` por registro; `voice/families/` = a leitura publicada POR família, hoje só `service`). A máquina tentativa × voz
+  exaustivo, `currentOf` por registro; `voice/families/` = a leitura publicada POR família, `service` e `merchandise` no catálogo desde a
+  janela da NE-6 — FAMILIA.E5.P3, pacote 5.0.0). A máquina tentativa × voz
   (escrita, reserva, rodízio) AINDA mora na nfse-api — vem para cá como PEÇAS na parte 2 da NE-1a (D-NE13/D-NE58), nunca como roteiro
   genérico; estado DERIVADO da última voz; ambíguo nunca fecha; recusa ≠ transitório
 - **referência da nota** (`ref/invoice-ref.ts` — `InvoiceRef` com o TERMINAL; `WEB_TERMINAL` só na borda; nenhum `terminal = 0` em SQL do

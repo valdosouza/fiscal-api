@@ -66,6 +66,13 @@ describe('countLiveTransmissions — leituras PUBLICADAS de cada família, finai
     }
     const { pool } = fakeConn({}, { failView: 'vw_invoice_service_transmission', catalog: [] })
     await expect(emitter.countLiveTransmissions(pool, 1, { branches: 'all' })).resolves.toBe(0)
+    // FAMILIA.E5.P3 (gates): o banco só da nfse-api ao adotar o 5.0.0 — a NF-e NÃO instalada (nem view nem tabela) conta 0 e `all` soma só a
+    // NFS-e; com a TABELA da NF-e presente e sem a view, a falha SOBE (nunca 0)
+    const nfseOnly = fakeConn({ vw_invoice_service_transmission: 2 }, { failView: 'vw_invoice_merchandise_transmission', catalog: [] })
+    await expect(emitter.countLiveTransmissions(nfseOnly.pool, 1, { branches: 'all' })).resolves.toBe(2)
+    expect(nfseOnly.calls.find(c => /information_schema\.TABLES/.test(c.sql))!.p).toEqual(['vw_invoice_merchandise_transmission', 'tb_invoice_merchandise_transmission'])
+    const halfMerch = fakeConn({ vw_invoice_service_transmission: 2 }, { failView: 'vw_invoice_merchandise_transmission', catalog: ['tb_invoice_merchandise_transmission'] })
+    await expect(emitter.countLiveTransmissions(halfMerch.pool, 1, { branches: 'all' })).rejects.toMatchObject({ errno: 1146 })
     // outro erro (não 1146) nem pergunta ao catálogo
     const lost = fakeConn({}, { failView: 'vw_invoice_service_transmission', failWith: Object.assign(new Error('Connection lost'), { code: 'PROTOCOL_CONNECTION_LOST' }) })
     await expect(emitter.countLiveTransmissions(lost.pool, 1, { branches: 'all' })).rejects.toMatchObject({ code: 'PROTOCOL_CONNECTION_LOST' })

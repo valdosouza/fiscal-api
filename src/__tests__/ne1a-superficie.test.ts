@@ -45,7 +45,8 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       'voice/kinds.ts': ['../util/readonly-set'],
       'voice/reading.ts': ['./kinds', '../ref/invoice-ref'],
       // D-NE66 (b), F2a: o leitor que já MAPEIA usa o SQL cru INTERNO (`view-query`, fora da superfície e do barrel)
-      'voice/family-reader.ts': ['./reading', './view-query', './families', '../ref/invoice-ref'],
+      // FAMILIA.E5.P3 (D-NE158): o leitor não importa mais o catálogo (a conferência perdeu o valor padrão) — a cerca segura a volta dele
+      'voice/family-reader.ts': ['./reading', './view-query', '../ref/invoice-ref'],
       'voice/view-query.ts': ['./reading', '../ref/invoice-ref'],
       'voice/families/service.ts': ['../kinds', '../reading', '../../util/readonly-set'],
       'voice/families/index.ts': ['../reading', './service', './merchandise'],

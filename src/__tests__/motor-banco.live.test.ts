@@ -118,7 +118,8 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       }
     }
     // FAMILIA.E5.P3: a view da 007 entra no retrato (CREATE OR REPLACE reaplica igual)
-    const [view] = await root.query<any[]>(`SELECT VIEW_DEFINITION AS d, ALGORITHM AS a FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`, [DB])
+    const [view] = await root.query<any[]>(`SELECT VIEW_DEFINITION AS d, ALGORITHM AS a, CHARACTER_SET_CLIENT AS cs, COLLATION_CONNECTION AS co
+      FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? ORDER BY TABLE_NAME`, [DB])
     out.push(JSON.stringify(view))
     const [ck] = await root.query<any[]>(`SELECT CONSTRAINT_NAME AS n, CHECK_CLAUSE AS c FROM information_schema.CHECK_CONSTRAINTS
       WHERE CONSTRAINT_SCHEMA = ? ORDER BY CONSTRAINT_NAME`, [DB])
@@ -453,11 +454,12 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       await root.query(`DELETE FROM \`${DB}\`.tb_establishment_issuer WHERE tb_institution_id IN (9101, 9102)`)
     })
 
-    it('a view existe e o motor a FUNDE (ALGORITHM ≠ TEMPTABLE); o usuário do serviço a lê pelo boot', async () => {
-      const [v] = await root.query<any[]>(`SELECT ALGORITHM AS a, SECURITY_TYPE AS s FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`,
-        [DB, ISSUER_VIEW])
+    it('a view existe e o motor a FUNDE (ALGORITHM ≠ TEMPTABLE), nasce utf8mb4 pela conexão do executor (padrão utf8mb3 da SaveInCloud — §23.12) e é DEFINER; o usuário do serviço a lê pelo boot', async () => {
+      const [v] = await root.query<any[]>(`SELECT ALGORITHM AS a, SECURITY_TYPE AS s, CHARACTER_SET_CLIENT AS cs, COLLATION_CONNECTION AS co
+        FROM information_schema.VIEWS WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ?`, [DB, ISSUER_VIEW])
       expect(v).toHaveLength(1)
       expect(['UNDEFINED', 'MERGE']).toContain(String(v[0].a))
+      expect([v[0].s, v[0].cs, String(v[0].co).startsWith('utf8mb4_')]).toEqual(['DEFINER', 'utf8mb4', true])
       await assertIssuerViewReadable(pool, DB)
       report.issuerViewAlgorithm = v[0].a
     })
@@ -488,6 +490,25 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       }
       expect(await readIssuerView(pool, DB, { institutionId: 9103, model: '55' })).toBeNull()      // sem linha = não habilitado
       report.issuerViewEquivalent = fromView.length
+    })
+
+    it('GRANT MÍNIMO de fato (forma do `setes_api` — o GRANT real é passo do consumidor, PM-9): SELECT só na view lê pelo leitor publicado e é RECUSADO na tabela', async () => {
+      const reader = `${TAG}r`
+      const password = crypto.randomBytes(18).toString('base64url')
+      try {
+        await root.query(`CREATE USER ?@? IDENTIFIED BY ?`, [reader, probeHost, password])
+        await root.query(`GRANT SELECT ON \`${DB}\`.\`${ISSUER_VIEW}\` TO ?@?`, [reader, probeHost])
+        const conn = await mysql.createConnection({ host: owner.host, port: owner.port, user: reader, password, database: DB, timezone: 'Z' })
+        try {
+          await assertIssuerViewReadable(conn, DB)
+          expect(await readIssuerView(conn, DB, { institutionId: 9101, model: '55' })).toEqual({ institutionId: 9101, model: '55', environment: 'H', cutoverAt: '2026-11-22 03:00:00' })
+          await expect(conn.query(`SELECT * FROM \`${DB}\`.tb_establishment_issuer`)).rejects.toMatchObject({ code: 'ER_TABLEACCESS_DENIED_ERROR' })
+          await expect(conn.query(`SELECT * FROM \`${DB}\`.vw_invoice_merchandise_transmission`)).rejects.toBeTruthy()
+        } finally { await conn.end() }
+        report.issuerViewSelectOnly = true
+      } finally {
+        await root.query(`DROP USER IF EXISTS ?@?`, [reader, probeHost])
+      }
     })
   })
 })

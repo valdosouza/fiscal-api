@@ -32,10 +32,10 @@ import type { ExpectedCnpj } from '../secret/certificate'
  * (2) 55 e 65 dividem a MESMA família — as vivas de um barram o ambiente do outro (sobre-bloqueio, falha FECHADO). D-NE160 (NE-2,
  * Valdo 2026-10-20): a projeção NÃO ganha `model` até a F5 — na F4 só existe o 55 (D-NE2) e o sobre-bloqueio não tem objeto; na F5 o
  * modelo sai da CHAVE (posições 21-22) e, se este emitter precisar filtrar por modelo, `model` entra na PROJEÇÃO COMUM (a NFS-e
- * publica 'SE'), nunca como coluna só da família; (3) família no catálogo sem a migration dela aplicada = erro 1146 no DELETE do A1 —
- * NUNCA tratar como 0 (falha ABERTO); a família só entra em `VOICE_READINGS` junto com a conferência de boot da view dela (D-NE158: a
- * leitura `merchandise` existe no núcleo desde a NE-2 e entra no catálogo na janela da NE-6 — até lá este emitter conta 0 para ela,
- * legítimo: nenhuma tentativa de NF-e é possível antes).
+ * publica 'SE'), nunca como coluna só da família; (3) D-NE76: família do catálogo NÃO INSTALADA neste banco (nem a view nem a tabela de
+ * tentativas dela — a outra API ainda não aplicou a migration aqui) conta 0, legítimo; INSTALADA (a tabela existe) e sem a view = o erro
+ * 1146 SOBE (nunca 0 — falharia ABERTO no DELETE do A1). A `merchandise` entrou no catálogo na janela da NE-6 (fiscal-api:FAMILIA.E5.P3 —
+ * D-NE158): desde então este emitter conta as NF-e vivas pela view dela.
  */
 
 export interface EmitterDeps {
