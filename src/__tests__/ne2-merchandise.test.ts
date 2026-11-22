@@ -49,14 +49,15 @@ describe('D-NE160 — o que a família publica', () => {
   })
 })
 
-describe('D-NE158 — a janela da NE-6 (FAMILIA.E5.P3): a família entra no catálogo; a superfície vem na ordem 3 da ficha', () => {
-  it('o catálogo tem `service` e `merchandise` (esta, a leitura PUBLICADA da NF-e); a leitura e a numeração existem no barrel e ainda NÃO na superfície de leitura', () => {
+describe('D-NE158 — a janela da NE-6 (FAMILIA.E5.P3): a família no catálogo e em `fiscal-api/reading`', () => {
+  it('o catálogo tem `service` e `merchandise` (esta, a leitura PUBLICADA da NF-e); a leitura e a numeração estão no barrel E na superfície — o SQL cru da numeração, só no barrel', () => {
     expect(Object.keys(VOICE_READINGS)).toEqual(['service', 'merchandise'])
     expect(VOICE_READINGS.merchandise).toBe(MERCHANDISE_VOICE_READING)
-    for (const n of ['MERCHANDISE_VOICE_READING', 'mapMerchandiseTransmissionView', 'isMerchandiseHumanEffectCancel', 'readWithdrawnRanges', 'withdrawnRangesQuery',
+    for (const n of ['MERCHANDISE_VOICE_READING', 'mapMerchandiseTransmissionView', 'isMerchandiseHumanEffectCancel', 'readWithdrawnRanges',
       'assertWithdrawnRangesViewReadable', 'WITHDRAWN_RANGES_VIEW']) {
-      expect([n, n in barrel, n in reading]).toEqual([n, true, false])
+      expect([n, n in barrel, n in reading]).toEqual([n, true, true])
     }
+    for (const n of ['withdrawnRangesQuery', 'withdrawnRangesSelect']) expect([n, n in barrel, n in reading]).toEqual([n, true, false])
   })
   it('o emitter conta o ramo de mercadoria pela view da NF-e e `all` percorre as duas famílias (antes da janela: 0 sem SQL e só a NFS-e)', async () => {
     const calls: string[] = []

@@ -6,9 +6,10 @@ import type { ReadQueryable } from '../voice/family-reader'
  * FAIXAS RETIRADAS DA NUMERAÇÃO — peça própria do núcleo (NE-2; D-NE161 = Q-NE161 (a), Valdo 2026-10-20, literal: "a nota de mercadoria
  * é controlada por nós, e a nota de serviço é gerada pelo servidor"): a faixa inutilizada é fato da NOSSA numeração (D-F21 — série e número
  * do 55/65 são do ERP), não voz do fisco. Por isso mora em `numbering/`, FORA do catálogo `VOICE_READINGS` (o catálogo é de famílias de
- * TRANSMISSÃO — o emitter e o boot o percorrem; uma faixa ali seria "tentativa" falsa), e FORA da superfície `fiscal-api/reading` até o
- * 1º leitor (o setes-api ao cunhar número — NE-6), quando entra junto do GRANT da view. Na NFS-e o fato não existe (o número vem do
- * servidor nacional).
+ * TRANSMISSÃO — o emitter e o boot o percorrem; uma faixa ali seria "tentativa" falsa). Entrou na superfície `fiscal-api/reading` na janela
+ * da NE-6 (fiscal-api:FAMILIA.E5.P3 — o 1º leitor é o setes-api ao cunhar número, junto da habilitação `establishment/issuer-view`); o SQL
+ * cru (`withdrawnRangesSelect`/`withdrawnRangesQuery`) fica só no barrel. O GRANT da view é passo do consumidor (PM-9). Na NFS-e o fato não
+ * existe (o número vem do servidor nacional).
  *
  * Fonte: a view `vw_invoice_number_void` (migration 001 da nfe-api — D-F35): faixas PENDENTES e homologadas (D-NE110 — o ERP pula as duas
  * ao cunhar), sem `authority_recorded` (D-NE161 — "registro" é palavra da voz). Colunas GERADAS do Id da inutilização (uma fonte só).

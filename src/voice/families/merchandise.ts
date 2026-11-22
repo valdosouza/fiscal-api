@@ -5,12 +5,12 @@ import { TransmissionView, ViewColumn, VoiceFamilyReading, frozenColumns, mapCom
  * `Infra-IA/prompts/prompt_onda_nfe_sefaz.md` §15.8). A família é dona do DDL (migration 001 da nfe-api — D-F35); o núcleo publica a
  * FORMA da leitura para quem lê o `fiscal_api` (D-F33).
  *
- * D-NE158 (= Q-NE158 (b)): esta leitura NASCE FORA do catálogo `VOICE_READINGS` e FORA da superfície `fiscal-api/reading` — só no barrel
- * `fiscal-api`. Entrar no catálogo é ato PUBLICADOR com três consumidores (o emitter do núcleo conta as vivas por ele; o boot da nfse-api e
- * do setes-api conferem cada view do catálogo — D-F113; o setes-api tem a cerca `KNOWN_FAMILIES` do plano de cancelamento): acontece na
- * JANELA da NE-6, antes da 1ª tentativa possível, com a 001 aplicada e o GRANT ao `setes_api`. Até lá: a nfe-api confere a PRÓPRIA view no
- * boot passando esta leitura a `assertFamilyViewsReadable`; o emitter conta 0 para a família (ramo sem leitura no catálogo = família sem
- * tentativa possível — a NE-5 confere que a nfe-api não monta a reserva sem a família no catálogo).
+ * D-NE158 (= Q-NE158 (b)): esta leitura NASCEU FORA do catálogo `VOICE_READINGS` e da superfície `fiscal-api/reading` (NE-2) e ENTROU nos
+ * dois na JANELA da NE-6 (fiscal-api:FAMILIA.E5.P3, pacote 5.0.0), antes da 1ª tentativa possível. Entrar no catálogo é ato PUBLICADOR com
+ * três consumidores: o emitter do núcleo conta as vivas por ele (D-NE76: sem view nem tabela da família no banco, 0); quem confere views no
+ * boot passa a lista que confere (sem padrão — D-NE158); o setes-api tem a cerca `KNOWN_FAMILIES` do plano de cancelamento. O GRANT da view
+ * ao `setes_api` e a adoção do pacote são passos de cada consumidor (PM-9/PM-10). A NE-5 confere que a nfe-api não monta a reserva sem a
+ * família no catálogo.
  *
  * D-NE160 (= Q-NE160 (a)): coluna PRÓPRIA publicada só `dh_emission` (D-NE21 — a data FISCAL deriva do dhEmi assinado; nunca espelhada no
  * ERP). `protocol`/`authorizer`/`receipt`/`dh_recbto`/`digest_value` são INTERNOS da nfe-api até haver leitor (regra da D-IB78). Sem `model`
@@ -58,7 +58,7 @@ export function isMerchandiseHumanEffectCancel(_current: Pick<TransmissionView, 
   return false
 }
 
-/** A leitura PUBLICADA da família de mercadoria (view 4.1 da migration 001 da nfe-api — D-F35). FORA de `VOICE_READINGS` (D-NE158). */
+/** A leitura PUBLICADA da família de mercadoria (view 4.1 da migration 001 da nfe-api — D-F35). Em `VOICE_READINGS` desde a janela da NE-6 (D-NE158). */
 export const MERCHANDISE_VOICE_READING: VoiceFamilyReading<MerchandiseTransmissionView> = Object.freeze({
   branch:            'merchandise' as const,
   transmissionView:  'vw_invoice_merchandise_transmission',

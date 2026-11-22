@@ -75,8 +75,8 @@ export * from './voice/reading'
 export * from './voice/family-reader'
 export * from './voice/families/service'
 export * from './voice/families'
-// NE-2 (D-NE158, Valdo 2026-10-20): a leitura publicada da NF-e EXISTE aqui, FORA do catálogo `VOICE_READINGS` e FORA de `fiscal-api/reading`
-// (só no barrel) até a janela da NE-6 — a nfe-api confere a própria view no boot por ela
+// NE-2 (D-NE158, Valdo 2026-10-20): a leitura publicada da NF-e nasceu aqui, fora do catálogo e de `fiscal-api/reading`; ENTROU nos dois na
+// janela da NE-6 (fiscal-api:FAMILIA.E5.P3)
 export * from './voice/families/merchandise'
 // a ESCRITA da voz por família (D-F108 — parte 2 da NE-1a) e a transação sob a trava da nota (D-NE74)
 export * from './voice/event-table'
@@ -84,8 +84,8 @@ export * from './voice/outcome'
 export * from './voice/policy'
 export * from './erp/invoice-tx'
 
-// NUMERAÇÃO (NE-2 — D-NE161): faixas RETIRADAS da numeração do 55/65 (fato NOSSO, não voz) — peça própria, fora do catálogo da voz e de
-// `fiscal-api/reading` até o 1º leitor (o setes-api ao cunhar número — NE-6, junto do GRANT da view)
+// NUMERAÇÃO (NE-2 — D-NE161): faixas RETIRADAS da numeração do 55/65 (fato NOSSO, não voz) — peça própria, fora do catálogo da voz; em
+// `fiscal-api/reading` desde a janela da NE-6 (FAMILIA.E5.P3 — o SQL cru só aqui)
 export * from './numbering/withdrawn-ranges'
 
 // VALORES DE IBS/CBS DO FISCO na NFS-e (fase IBS/CBS — D-IB124…D-IB126): dado do fisco gravado uma vez, NÃO é voz — peça da família de

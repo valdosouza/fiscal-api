@@ -35,8 +35,10 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // gates da A1 da F2a: lista EXPLÍCITA (`export { … }`/`export type { … }`) nos módulos que têm algo FORA da superfície
     const froms = sf.statements.map(s => (ts.isExportDeclaration(s) && s.moduleSpecifier && ts.isStringLiteral(s.moduleSpecifier))
       ? `${s.exportClause ? (s.isTypeOnly ? 'type ' : '{} ') : '* '}${s.moduleSpecifier.text}` : `OUTRO: ${s.getText(sf).slice(0, 60)}`)
+    // FAMILIA.E5.P3 (janela da NE-6 — D-NE158/D-NE161/D-NE170): + a leitura da NF-e, as faixas retiradas e a habilitação (as duas, lista explícita)
     expect(froms).toEqual(['* ./voice/kinds', '{} ./voice/reading', 'type ./voice/reading', '* ./voice/family-reader', '{} ./voice/families/service',
-      'type ./voice/families/service', '* ./voice/families', '* ./ref/invoice-ref'])
+      'type ./voice/families/service', '* ./voice/families', '* ./voice/families/merchandise', '* ./ref/invoice-ref',
+      '{} ./numbering/withdrawn-ranges', 'type ./numbering/withdrawn-ranges', '{} ./establishment/issuer-view', 'type ./establishment/issuer-view'])
     // e esses módulos não puxam o lado de escrita por dentro (só a peça do conjunto imutável fora deles)
     const imports = (rel: string) => [...read(path.join(SRC, rel)).matchAll(/from '([^']+)'/g)].map(m => m[1])
     const ALLOWED: Record<string, string[]> = {
@@ -49,6 +51,10 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       'voice/families/index.ts': ['../reading', './service', './merchandise'],
       'voice/families/merchandise.ts': ['../reading'],
       'ref/invoice-ref.ts': [],
+      // FAMILIA.E5.P3: as duas peças de leitura do ERP ao cunhar o nNF — só o catálogo dos modelos e TIPOS da voz
+      'numbering/withdrawn-ranges.ts': ['../establishment/issuer-models', '../voice/kinds', '../voice/family-reader'],
+      'establishment/issuer-view.ts': ['./issuer-models', '../voice/kinds', '../voice/family-reader'],
+      'establishment/issuer-models.ts': ['../ref/invoice-ref'],
     }
     for (const [rel, ok] of Object.entries(ALLOWED)) expect([rel, imports(rel).filter(i => !ok.includes(i))]).toEqual([rel, []])
   })
@@ -59,15 +65,20 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     expect(WRITE_SIDE.filter(n => !(n in barrel))).toEqual([])
     // o contrato de leitura que a F2a usa está lá
     for (const n of ['VOICE_READINGS', 'SERVICE_VOICE_READING', 'isLiveTransmission', 'isFiscalRecord', 'currentOf', 'localCancelPending', 'invoiceRef', 'KIND_CLASS',
-      'readFamilyTransmissions', 'readFamilyTransmissionsMany', 'reconfirmationVerdict']) {
+      'readFamilyTransmissions', 'readFamilyTransmissionsMany', 'reconfirmationVerdict',
+      // FAMILIA.E5.P3 (janela da NE-6): a leitura da NF-e, as faixas retiradas e a habilitação — o que o ERP lê ao cunhar o nNF do 55
+      'MERCHANDISE_VOICE_READING', 'readWithdrawnRanges', 'assertWithdrawnRangesViewReadable', 'readIssuerView', 'assertIssuerViewReadable']) {
       expect([n, n in reading]).toEqual([n, true])
     }
     // D-NE66 (b) (executada na F2a): o SQL cru da view deixou de ser caminho PÚBLICO — nem a superfície nem o barrel o exportam
     for (const n of ['familyViewQuery', 'familyViewQueryMany', 'familyViewQueryLives']) expect([n, n in reading, n in barrel]).toEqual([n, false, false])
   })
   it('gates da A1 da F2a: a superfície = o que os módulos exportam MENOS a lista de FORA (SELECT cru — F2A1-04; o booleano da prova — D-F118; a guarda interna) — export NOVO num módulo quebra esta cerca até alguém decidir se entra; os de fora seguem no barrel', async () => {
-    const OUT = ['familyViewSelect', 'transmissionViewSelect', 'reconfirmationProven', 'assertOneInvoiceLife']
-    const mods = await Promise.all(['../voice/kinds', '../voice/reading', '../voice/family-reader', '../voice/families/service', '../voice/families', '../ref/invoice-ref']
+    // FAMILIA.E5.P3: + o SQL cru das duas peças novas (F2A1-04; molde D-NE66 (b)) — fora da superfície, DENTRO do barrel
+    const OUT = ['familyViewSelect', 'transmissionViewSelect', 'reconfirmationProven', 'assertOneInvoiceLife',
+      'withdrawnRangesSelect', 'withdrawnRangesQuery', 'issuerViewSelect', 'issuerViewQuery']
+    const mods = await Promise.all(['../voice/kinds', '../voice/reading', '../voice/family-reader', '../voice/families/service', '../voice/families',
+      '../voice/families/merchandise', '../ref/invoice-ref', '../numbering/withdrawn-ranges', '../establishment/issuer-view']
       .map(m => import(m)))
     const expected = [...new Set(mods.flatMap(m => Object.keys(m)))].filter(n => !OUT.includes(n)).sort()
     expect(Object.keys(reading).sort()).toEqual(expected)

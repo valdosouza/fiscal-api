@@ -72,8 +72,9 @@ describe('boot e superfície', () => {
     const bad: any = { query: jest.fn(async () => { throw Object.assign(new Error('x'), { errno: 1142 }) }) }
     await expect(assertWithdrawnRangesViewReadable(bad, 'fiscal_api')).rejects.toThrow(/faixas retiradas.*1142.*D-NE161/)
   })
-  it('D-NE161: NADA da numeração sai por `fiscal-api/reading` até o 1º leitor (NE-6) — e a peça não importa a voz nem o ERP', () => {
-    for (const n of ['readWithdrawnRanges', 'withdrawnRangesQuery', 'withdrawnRangesSelect', 'assertWithdrawnRangesViewReadable', 'WITHDRAWN_RANGES_VIEW']) expect([n, n in reading]).toEqual([n, false])
+  it('D-NE161 (janela da NE-6 — FAMILIA.E5.P3): a numeração sai por `fiscal-api/reading` para o 1º leitor, MENOS o SQL cru — e a peça não importa a voz nem o ERP', () => {
+    for (const n of ['readWithdrawnRanges', 'mapWithdrawnRange', 'assertWithdrawnRangesViewReadable', 'WITHDRAWN_RANGES_VIEW', 'WITHDRAWN_RANGE_MODELS']) expect([n, n in reading]).toEqual([n, true])
+    for (const n of ['withdrawnRangesQuery', 'withdrawnRangesSelect']) expect([n, n in reading]).toEqual([n, false])
     const code = fs.readFileSync(path.resolve(__dirname, '..', 'numbering', 'withdrawn-ranges.ts'), 'utf8')
     const imports = [...code.matchAll(/from '([^']+)'/g)].map(m => m[1]).sort()
     expect(imports).toEqual(['../establishment/issuer-models', '../voice/family-reader', '../voice/kinds'])

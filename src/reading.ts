@@ -13,6 +13,11 @@
  * de UMA candidata sem a barreira da vida — quem decide o cancelamento enxerga só o VEREDITO) e a guarda interna `assertOneInvoiceLife`. Os
  * três seguem no barrel (`fiscal-api`) para as famílias e os testes.
  *
+ * JANELA DA NE-6 (fiscal-api:FAMILIA.E5.P3, pacote 5.0.0 — D-NE158, D-NE161, D-NE170): entram a leitura publicada da NF-e
+ * (`voice/families/merchandise`, já no catálogo), as faixas RETIRADAS da numeração (`numbering/withdrawn-ranges` — o ERP as lê ao cunhar o
+ * nNF) e a HABILITAÇÃO por modelo (`establishment/issuer-view` — o ambiente do 55, lido junto das faixas). O SQL cru das duas peças novas
+ * (`withdrawnRangesSelect`/`withdrawnRangesQuery`, `issuerViewSelect`/`issuerViewQuery`) fica FORA, no barrel (F2A1-04; molde D-NE66 (b)).
+ *
  * CERCA (`ne1a-superficie.test.ts`): a lista daqui = o que os módulos exportam MENOS a lista de fora (export novo num módulo quebra a cerca até
  * alguém decidir se entra); nada do lado de escrita aparece nela; o setes-api só importa `fiscal-api/reading`.
  */
@@ -33,4 +38,11 @@ export {
 } from './voice/families/service'
 export type { ServiceTransmissionView, ReconfirmReason, ReconfirmVerdict } from './voice/families/service'
 export * from './voice/families'
+export * from './voice/families/merchandise'
 export * from './ref/invoice-ref'
+export {
+  WITHDRAWN_RANGES_VIEW, WITHDRAWN_RANGE_MODELS, mapWithdrawnRange, readWithdrawnRanges, assertWithdrawnRangesViewReadable,
+} from './numbering/withdrawn-ranges'
+export type { WithdrawnRange, WithdrawnRangeScope } from './numbering/withdrawn-ranges'
+export { ISSUER_VIEW, mapIssuerView, readIssuerView, assertIssuerViewReadable } from './establishment/issuer-view'
+export type { IssuerView, IssuerViewScope } from './establishment/issuer-view'
