@@ -31,7 +31,9 @@ import { assertSessionViewReadable } from '../access/access'
 import { ISSUER_VIEW, issuerViewQuery, readIssuerView, assertIssuerViewReadable } from '../establishment/issuer-view'
 import { mapServiceAuthorityIbscbs } from '../voice/families/service-authority-ibscbs'
 import { invoiceRef } from '../ref/invoice-ref'
-import { assertNumberSequenceDomainsEnforced } from '../numbering/number-sequence'
+import { assertNumberSequenceDomainsEnforced, nextInvoiceNumber, lockNumberSequence, openNumberSequence } from '../numbering/number-sequence'
+import { ErrorCodes } from '../errors/error-codes'
+import type { PoolConnection } from 'mysql2/promise'
 import {
   assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent, providerFiscalCredentialOf, saveProviderFiscalCredential,
   fiscalCodeRequirementsOf, FiscalCodeConflictError, FiscalCodeMissingError, establishmentFiscalCredentialOf, listProviderFiscalCredentials,
@@ -517,6 +519,133 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       } finally {
         await root.query(`DROP USER IF EXISTS ?@?`, [reader, probeHost])
       }
+    })
+  })
+
+  // ---------------------------------------------------------------- FAMILIA.E5.P5 (o último número da NF-e — migration 008)
+  // T1: o gerador sob a trava nunca repete nem volta, homologação começa do 1 e produção só anda depois de aberta (D-NE257, D-NE265).
+  // T2: gerar × travar para a inutilização se serializam na mesma linha (D-NE263). Pelo usuário no FORMATO do serviço (ALL só no fiscal).
+  describe('FAMILIA.E5.P5 — o último número da NF-e por estabelecimento × modelo × série × ambiente', () => {
+    let pool: Pool
+    const A = 9201, B = 9202, C = 9203, D = 9204                       // estabelecimentos só deste bloco
+    const scope = (institutionId: number, serie = 1) => ({ institutionId, model: '55' as const, serie })
+    const setEnvironment = (institutionId: number, environment: 'H' | 'P') =>
+      root.query(`UPDATE \`${DB}\`.tb_establishment_issuer SET environment = ? WHERE tb_institution_id = ? AND model = '55'`, [environment, institutionId])
+    const rowsOf = async (institutionId: number) => {
+      const [rows] = await root.query<any[]>(`SELECT serie, environment, last_number AS n FROM \`${DB}\`.tb_invoice_number_sequence
+        WHERE tb_institution_id = ? ORDER BY serie, environment`, [institutionId])
+      return rows.map(r => `${r.serie}/${r.environment}=${r.n}`)
+    }
+    /** Uma geração na sua própria transação (como a reserva da transmissão). */
+    async function generate(institutionId: number, serie = 1): Promise<number> {
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        const out = await nextInvoiceNumber(conn, scope(institutionId, serie))
+        await conn.commit()
+        return out.number
+      } catch (err) { await conn.rollback().catch(() => undefined); throw err } finally { conn.release() }
+    }
+    async function inTx<T>(body: (conn: PoolConnection) => Promise<T>): Promise<T> {
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        const out = await body(conn)
+        await conn.commit()
+        return out
+      } catch (err) { await conn.rollback().catch(() => undefined); throw err } finally { conn.release() }
+    }
+
+    beforeAll(async () => {
+      pool = createFiscalPool(probeCfg); pools.push(pool)
+      for (const [i, e] of [[A, 'H'], [B, 'P'], [C, 'H'], [D, 'H']] as [number, string][]) {
+        await root.query(`INSERT INTO \`${DB}\`.tb_establishment_issuer (tb_institution_id, model, environment, cutover_at, deleted, created_at)
+          VALUES (?, '55', ?, '2026-11-22 03:00:00', 'N', '2026-11-22 00:00:00')`, [i, e])
+      }
+    })
+
+    it('(a) homologação: a linha nasce sozinha e o primeiro número é o 1; cada série tem a sua sequência', async () => {
+      expect([await generate(A), await generate(A), await generate(A)]).toEqual([1, 2, 3])
+      expect(await generate(A, 2)).toBe(1)
+      expect(await rowsOf(A)).toEqual(['1/H=3', '2/H=1'])
+    })
+
+    it('(b) produção: sem a sequência aberta é 409 e NADA é gravado; aberta com 3138, o próximo é 3138; abrir de novo é 409', async () => {
+      await expect(generate(B)).rejects.toMatchObject({ statusCode: 409, code: ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN })
+      expect(await rowsOf(B)).toEqual([])
+      await inTx(conn => openNumberSequence(conn, scope(B), 3138, null))
+      expect(await rowsOf(B)).toEqual(['1/P=3137'])
+      expect([await generate(B), await generate(B)]).toEqual([3138, 3139])
+      await expect(inTx(conn => openNumberSequence(conn, scope(B), 1, null))).rejects.toMatchObject({ statusCode: 409, code: ErrorCodes.FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN })
+      expect(await rowsOf(B)).toEqual(['1/P=3139'])
+    })
+
+    it('(c) virar o ambiente não toca a sequência: cada ambiente continua do seu último (abre-se a de produção ainda em homologação)', async () => {
+      await inTx(conn => openNumberSequence(conn, scope(A), 500, null))   // a habilitação de A ainda está em H
+      await setEnvironment(A, 'P')
+      expect(await generate(A)).toBe(500)
+      await setEnvironment(A, 'H')
+      expect(await generate(A)).toBe(4)
+      await setEnvironment(A, 'P')
+      expect(await generate(A)).toBe(501)
+      await setEnvironment(A, 'H')
+      expect(await rowsOf(A)).toEqual(['1/H=4', '1/P=501', '2/H=1'])
+    })
+
+    it('(d) duas conexões gerando 50 números cada, em paralelo: os 100 números são exatamente 1 a 100, sem repetição', async () => {
+      let deadlocks = 0
+      const worker = async (): Promise<number[]> => {
+        const out: number[] = []
+        for (let i = 0; i < 50; i++) {
+          for (let attempt = 1; ; attempt++) {
+            try { out.push(await generate(C)); break } catch (err: any) {
+              if (err?.errno !== 1213 || attempt === 3) throw err      // deadlock repete até 3 vezes; o que sobrar é falha
+              deadlocks++
+            }
+          }
+        }
+        return out
+      }
+      const [x, y] = await Promise.all([worker(), worker()])
+      const all = [...x, ...y].sort((p, q) => p - q)
+      expect(all).toEqual(Array.from({ length: 100 }, (_, i) => i + 1))
+      // dentro de cada conexão a sequência é crescente (nunca volta)
+      for (const w of [x, y]) expect(w.every((n, i) => i === 0 || n > w[i - 1])).toBe(true)
+      expect(await rowsOf(C)).toEqual(['1/H=100'])
+      report.numberSequenceParallel = { generated: all.length, deadlocksRetried: deadlocks }
+    }, 60_000)
+
+    it('(e) gerar × travar para a inutilização: enquanto a trava está aberta a geração ESPERA; solta, sai o último lido + 1', async () => {
+      await generate(D); await generate(D)                              // último = 2
+      const locker = await pool.getConnection()
+      const waiter = await pool.getConnection()
+      try {
+        await locker.beginTransaction()
+        expect(await lockNumberSequence(locker, scope(D))).toEqual({ environment: 'H', lastNumber: 2 })
+        await waiter.beginTransaction()
+        let settled = false
+        const pending = nextInvoiceNumber(waiter, scope(D)).finally(() => { settled = true })
+        pending.catch(() => undefined)
+        await new Promise(r => setTimeout(r, 300))
+        expect(settled).toBe(false)                                     // a geração concorrente não andou
+        expect(await lockNumberSequence(locker, scope(D))).toEqual({ environment: 'H', lastNumber: 2 })   // e o último não mudou para quem trava
+        await locker.commit()
+        expect(await pending).toEqual({ number: 3, environment: 'H' })
+        await waiter.commit()
+      } finally {
+        await locker.rollback().catch(() => undefined); await waiter.rollback().catch(() => undefined)
+        locker.release(); waiter.release()
+      }
+      // sem linha ainda (série nunca usada): a trava devolve null e nada nasce
+      expect(await inTx(conn => lockNumberSequence(conn, scope(D, 7)))).toEqual({ environment: 'H', lastNumber: null })
+      expect(await rowsOf(D)).toEqual(['1/H=3'])
+    })
+
+    it('réplica do ERP e habilitação apagada nunca geram número (D-F39)', async () => {
+      await root.query(`INSERT INTO \`${DB}\`.tb_establishment_issuer (tb_institution_id, model, environment, cutover_at, deleted) VALUES (9205, '55', 'H', NULL, 'N'), (9206, '55', 'H', '2026-11-22 03:00:00', 'S')`)
+      await expect(generate(9205)).rejects.toMatchObject({ statusCode: 409, code: ErrorCodes.FISCAL_CUTOVER_PENDING })
+      await expect(generate(9206)).rejects.toThrow(/sem habilitação viva do modelo 55/)
+      expect([...await rowsOf(9205), ...await rowsOf(9206)]).toEqual([])
     })
   })
 })
