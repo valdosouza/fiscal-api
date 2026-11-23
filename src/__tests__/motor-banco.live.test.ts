@@ -709,5 +709,33 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       } finally { await holder.rollback().catch(() => undefined); holder.release() }
       expect(await rowsOf(9212)).toEqual([])
     }, 30_000)
+
+    it('retrato aberto ANTES da trava: linha marcada excluída depois dele — o gerador RECUSA (a leitura de volta é corrente) e o número não anda', async () => {
+      expect(await generate(A, 6)).toBe(1)                              // 6/H=1
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        await conn.query('SELECT COUNT(*) AS n FROM tb_fiscal_number_sequence')     // leitura comum: o retrato da transação nasce aqui, com a linha 'N'
+        await root.query(`UPDATE \`${DB}\`.tb_fiscal_number_sequence SET deleted = 'S' WHERE tb_institution_id = ? AND serie = 6`, [A])
+        // com a leitura de volta comum, o IF não avançaria e o retrato devolveria o 1 de novo como "gerado" — número repetido
+        await expect(nextInvoiceNumber(conn, scope(A, 6))).rejects.toThrow(/marcada como excluída/)
+        await conn.rollback()
+      } finally { await conn.rollback().catch(() => undefined); conn.release() }
+      expect((await rowsOf(A)).filter(r => r.startsWith('6/'))).toEqual(['6/H=1'])
+    })
+
+    it('retrato aberto ANTES da trava: linha que nasce depois dele — `lockNumberSequence` falha FECHADO (null = nada a inutilizar); em transação limpa lê o último', async () => {
+      await root.query(`INSERT INTO \`${DB}\`.tb_establishment_issuer (tb_institution_id, model, environment, cutover_at, deleted)
+        VALUES (9221, '55', 'H', '2026-11-22 03:00:00', 'N')`)
+      const stale = await pool.getConnection()
+      try {
+        await stale.beginTransaction()
+        await stale.query('SELECT COUNT(*) AS n FROM tb_fiscal_number_sequence')    // quem chama violou o contrato: leu antes de travar
+        expect(await generate(9221)).toBe(1)                            // a linha nasce em outra transação, já confirmada
+        expect(await lockNumberSequence(stale, scope(9221))).toEqual({ environment: 'H', lastNumber: null })
+        await stale.commit()
+      } finally { await stale.rollback().catch(() => undefined); stale.release() }
+      expect(await inTx(conn => lockNumberSequence(conn, scope(9221)))).toEqual({ environment: 'H', lastNumber: 1 })
+    })
   })
 })

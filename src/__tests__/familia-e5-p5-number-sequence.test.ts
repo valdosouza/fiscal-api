@@ -197,7 +197,8 @@ describe('openNumberSequence — abre a sequência de PRODUÇÃO com o número i
     const open = fake({ row: { n: 10 }, writeError: DUPLICATE() })
     const err = await httpError(openNumberSequence(open.conn, SCOPE, 500, null))
     expect([err.statusCode, err.code]).toEqual([409, ErrorCodes.FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN])
-    expect(open.calls[2].sql).toMatch(/^SELECT last_number .* FOR UPDATE$/)   // a linha EXISTE: a leitura travante é de registro
+    // depois do 1062 a leitura é COMUM: o INSERT recusado deixou trava compartilhada na linha e um FOR UPDATE a promoveria (regra 8)
+    expect(open.calls[2].sql).toMatch(/^SELECT last_number .* environment = \?$/)
     expect(open.calls[2].params).toEqual([7, '55', 1, 'P'])
     const deadlock = Object.assign(new Error('Deadlock'), { errno: 1213 })
     await expect(openNumberSequence(fake({ row: null, writeError: deadlock }).conn, SCOPE, 500, null)).rejects.toBe(deadlock)
@@ -232,16 +233,30 @@ describe('cerca de texto — a D-NE257 trocou a D-F21 no ponto do número', () =
   // nas quatro peças de LEITURA a raiz "cunh" some inteira (pega "cunhador" e "1ª cunhagem", que não traziam "ERP" na linha); em
   // `establishment.ts` o nDPS da NFS-e segue sendo cunhado pelo núcleo — lá a cerca só recusa "cunh" ligado ao ERP/setes-api
   const READ_SIDE = ['numbering/withdrawn-ranges.ts', 'establishment/issuer-view.ts', 'reading.ts', 'index.ts']
+  /** A linha diz que o ERP web cunha/gera o número do 55? (`rel` decide a régua: peça de leitura ou o resto) */
+  const offends = (rel: string, line: string): boolean => {
+    const minting = /cunh/i.test(line) && (READ_SIDE.includes(rel) || (/\b(ERP|setes-api)\b/i.test(line) && !/D-NE257/.test(line)))
+    const numberOfErp = /s[ée]rie\s*\/\s*n[úu]mero deles [ée] do ERP/i.test(line) || /n[úu]mero do 55(\/65)? (s[ãa]o|[ée]) (cunhad[oa]s? )?(pel|d)o ERP/i.test(line)
+    return minting || numberOfErp
+  }
   it('nas peças de leitura ninguém "cunha"; no resto, "cunhar" não se liga ao ERP sem citar a D-NE257; ninguém diz que o número do 55/65 é do ERP', () => {
     const bad: string[] = []
-    for (const rel of FILES) {
-      lines(rel).forEach((line, i) => {
-        const minting = /cunh/i.test(line) && (READ_SIDE.includes(rel) || (/\b(ERP|setes-api)\b/i.test(line) && !/D-NE257/.test(line)))
-        const numberOfErp = /s[ée]rie\s*\/\s*n[úu]mero deles [ée] do ERP/i.test(line) || /n[úu]mero do 55(\/65)? (s[ãa]o|[ée]) (cunhad[oa]s? )?(pel|d)o ERP/i.test(line)
-        if (minting || numberOfErp) bad.push(`${rel}:${i + 1}: ${line.trim()}`)
-      })
-    }
+    for (const rel of FILES) lines(rel).forEach((line, i) => { if (offends(rel, line)) bad.push(`${rel}:${i + 1}: ${line.trim()}`) })
     expect(bad).toEqual([])
+  })
+  it('a cerca não é cega: pega os textos ANTIGOS (inclusive sem "ERP" na linha e em maiúsculas) e deixa passar o nDPS que o núcleo cunha', () => {
+    for (const old of [
+      ' * conceitual). O ERP (setes-api) lê o AMBIENTE do modelo 55 por aqui ao CUNHAR o nNF, junto das',
+      ' * quem decide o que fazer com cada um é quem chama; a restrição ao 55/65 é do cunhador.',
+      ' * coluna ou GRANT = falha ALTO no boot, nunca 500 na 1ª cunhagem (molde da D-F113).',
+      '// a view da 007 que o ERP lê ao cunhar o nNF; o leitor está também',
+    ]) {
+      for (const rel of READ_SIDE) expect([rel, old, offends(rel, old)]).toEqual([rel, old, true])
+    }
+    expect(offends('establishment/establishment.ts', ' * e só SE; a série/número deles é do ERP, D-F21) e NÃO')).toBe(true)
+    expect(offends('establishment/establishment.ts', ' * o ERP cunha o número no faturamento')).toBe(true)
+    expect(offends('establishment/establishment.ts', ' * grava (cunhar nDPS — MEDIUM-3: ambiente/série congelados DESTA leitura).')).toBe(false)
+    expect(offends('establishment/establishment.ts', ' * a série deles é do ERP, D-F21, e o número nasce na transmissão, D-NE257) e NÃO')).toBe(false)
   })
   it('as duas peças de leitura dizem quem lê agora (D-NE257) e a superfície diz que a escrita fica fora', () => {
     for (const rel of ['numbering/withdrawn-ranges.ts', 'establishment/issuer-view.ts', 'reading.ts']) {

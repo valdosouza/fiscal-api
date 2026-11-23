@@ -19,16 +19,22 @@ import { getIssuer, IssuerEnvironment } from '../establishment/establishment.rep
  * a sequência. A habilitação é travada por UMA linha, pela PK inteira (trava de registro — regra 8). É ela que SERIALIZA tudo: gerar,
  * travar para a inutilização e abrir, de TODAS as séries do mesmo estabelecimento × modelo, esperam umas pelas outras na linha da
  * habilitação; a trava na linha da sequência é o cinto (segura quem escrever nela sem passar por aqui).
- * LINHA AUSENTE nunca é lida com trava (seria trava de INTERVALO, que faz estabelecimentos vizinhos esperarem ou fecharem deadlock — regras
+ * LINHA AUSENTE nunca é LIDA com trava (seria trava de INTERVALO, que faz estabelecimentos vizinhos esperarem ou fecharem deadlock — regras
  * 12 e 13): a 1ª geração em H é um upsert, a abertura em P é um INSERT que decide pelo 1062, e `lockNumberSequence` só trava a linha que existe.
+ * Um caso sobra: o `UPDATE` da geração em PRODUÇÃO sobre a sequência NÃO aberta deixa trava de intervalo até o fim da transação que recebeu
+ * o 409 — por isso o item 4 do contrato.
  *
  * CONTRATO DE QUEM CHAMA (a reserva da família — a nfe-api):
  *  1. Chamar DENTRO da própria transação, e travar a habilitação ANTES do A1 (`openIssuer` com `forUpdate`) — a releitura daqui cai na
- *     mesma linha já travada e não inverte a ordem. Nenhuma leitura comum (sem trava) da sequência ANTES de chamar: o retrato do
- *     REPEATABLE READ nasceria velho (regra 2).
+ *     mesma linha já travada e não inverte a ordem. NENHUMA leitura comum (sem trava), de tabela ALGUMA, antes de travar a habilitação:
+ *     o retrato do REPEATABLE READ é da transação inteira e nasceria velho (regras 2 e 13). Com retrato velho as peças falham FECHADO —
+ *     `lockNumberSequence` devolve `null` para uma linha que nasceu depois dele (recusa uma inutilização legítima; nunca libera número) —
+ *     mas falham caladas.
  *  2. Deadlock (1213) e espera esgotada (1205) sobem CRUS, como o banco os dá: quem chama repete a transação inteira ou devolve 409 de
  *     "tente de novo" — nunca reaproveita um número lido antes do erro.
  *  3. O número só existe depois do COMMIT de quem chama; transação desfeita devolve o número à sequência (ninguém o viu).
+ *  4. Recebeu o 409 `FISCAL_NUMBER_SEQUENCE_NOT_OPEN`: DESFAZER a transação logo, sem mais nada nela (em especial, nunca abrir a sequência
+ *     na mesma transação) — a trava de intervalo do `UPDATE` que não achou linha segura a abertura e a 1ª geração dos vizinhos enquanto ela viver.
  *
  * O AMBIENTE nunca vem de quem chama: sai da habilitação lida sob a trava (uma fonte só). Réplica do ERP (`cutover_at` NULL) nunca gera
  * número (D-F39, molde `nextDpsNumber`).
@@ -125,8 +131,9 @@ export async function nextInvoiceNumber(conn: Queryable, scope: NumberSequenceSc
       const [r] = await conn.query(
         `UPDATE tb_fiscal_number_sequence SET last_number = last_number + 1, updated_at = NOW() WHERE ${WHERE_AXIS} AND deleted = 'N'`, axis(scope, environment))
       if (Number(r?.affectedRows ?? 0) === 0) {
-        // linha excluída falha ALTO aqui. Leitura comum de propósito: travar a linha AUSENTE seria trava de intervalo (regra 12); um retrato
-        // velho só troca a mensagem (409 no lugar de "excluída") — falha fechado nos dois casos, nada foi gravado
+        // linha excluída falha ALTO aqui (leitura comum: um retrato velho só troca a mensagem — 409 no lugar de "excluída" —, falha fechado
+        // nos dois casos e nada foi gravado). O `UPDATE` acima JÁ deixou trava de intervalo se a linha não existe: quem chama desfaz a
+        // transação logo (item 4 do contrato)
         await readRow(conn, scope, environment, false)
         throw new HttpError(409, `A numeração de produção da NF-e (modelo ${scope.model}, série ${scope.serie}) ainda não foi aberta — informe o número inicial antes de transmitir em produção`,
           undefined, ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN)
@@ -183,7 +190,9 @@ export async function openNumberSequence(conn: Queryable, scope: NumberSequenceS
       [scope.institutionId, scope.model, scope.serie, firstNumber - 1, userId])
   } catch (err: any) {
     if (err?.errno !== 1062) throw err
-    await readRow(conn, scope, 'P', true)                               // a linha existe: travante é de registro; excluída falha ALTO
+    // excluída falha ALTO. Leitura COMUM: o INSERT recusado deixou trava compartilhada na linha, e um `FOR UPDATE` agora a PROMOVERIA
+    // (regra 8 — deadlock com quem estiver na fila da linha). Retrato velho que não a veja cai no 409, que é a verdade (a chave existe)
+    await readRow(conn, scope, 'P', false)
     throw alreadyOpen()
   }
 }
