@@ -4,19 +4,22 @@ import type { ReadQueryable } from '../voice/family-reader'
 
 /**
  * LEITURA PUBLICADA DA HABILITAÇÃO por modelo — fiscal-api:FAMILIA.E5.P3.T1 (D-NE170 = Q-NE170 (a), Valdo 2026-10-31; nomes do guardião
- * conceitual, anexo `ficha-familia-e5-p3-pareceres.md`). O ERP (setes-api) lê o AMBIENTE do modelo 55 por aqui ao CUNHAR o nNF, junto das
- * faixas retiradas (`numbering/withdrawn-ranges.ts` — D-NE161): VIVO, nunca cache nem cópia (uma fonte só para o ambiente).
+ * conceitual, anexo `ficha-familia-e5-p3-pareceres.md`). Quem lê de fora da família lê o AMBIENTE do modelo por aqui: VIVO, nunca cache
+ * nem cópia (uma fonte só para o ambiente).
+ *
+ * DEPOIS DA D-NE257 (Valdo 2026-11-23, fiscal-api:FAMILIA.E5.P5): o número do 55 nasce na TRANSMISSÃO, na nfe-api, e o gerador
+ * (`numbering/number-sequence`) tira o ambiente da habilitação TRAVADA, não desta view. A leitura fica publicada (tirar export é versão
+ * maior, e a nfe-api confere a view no boot); o motivo de nascença — escolher o eixo das faixas ao gerar o número — deixou de existir.
  *
  * Só a JANELA de leitura da linha da habilitação (`tb_establishment_issuer`): nenhum fato novo, nenhuma regra. A view publica a VIRADA
  * (`cutoverAt`, D-F39) sem filtrar — NULL (réplica do ERP) e "sem linha" (`null` aqui: não habilitado ou apagado) são fatos diferentes, e
- * quem decide o que fazer com cada um é quem chama. Todos os modelos do domínio (`ISSUER_MODELS`); a restrição ao 55/65 é do cunhador.
+ * quem decide o que fazer com cada um é quem chama. Todos os modelos do domínio (`ISSUER_MODELS`); a restrição ao 55/65 é de quem lê.
  *
  * Fica FORA daqui o lado de escrita (`establishment.repository.ts`: `openIssuer`, aluguel, nDPS): este módulo entra na superfície
  * `fiscal-api/reading` e só importa o catálogo dos modelos e tipos. O SELECT cru (`issuerViewSelect`, `issuerViewQuery`) fica no barrel e
  * FORA da superfície (F2A1-04 / D-NE66 (b)).
  *
- * Só SELECT, sem trava: quem cunha número lê DEPOIS da trava do contador da institution no ERP (D-NE110; PADROES §9 regra 2). A troca de
- * ambiente entre a cunhagem e a emissão não se fecha aqui (achado A3 da ficha — pergunta da nfe-api).
+ * Só SELECT, sem trava: quem DECIDE pelo ambiente (gerar número, reservar inutilização) lê a habilitação travada, no lado de escrita.
  */
 
 /** A view publicada da habilitação (migration 007 do núcleo). */
@@ -68,7 +71,7 @@ export function issuerViewQuery(db: string, scope: IssuerViewScope, alias = 'v')
   }
 }
 
-/** Mapa ESTRITO de uma linha da view: coluna fora do domínio ou fora do escopo pedido falha ALTO (view torta nunca entra na cunhagem). */
+/** Mapa ESTRITO de uma linha da view: coluna fora do domínio ou fora do escopo pedido falha ALTO (view torta nunca vira dado de quem lê). */
 export function mapIssuerView(r: any, scope: IssuerViewScope): IssuerView {
   // número ou texto DECIMAL canônico — '1e3', '0x10', ' 5 ' e '01' não são o que o banco devolve (molde de `mapWithdrawnRange`)
   const v = r?.institutionId
@@ -96,8 +99,8 @@ export async function readIssuerView(q: ReadQueryable, db: string, scope: Issuer
 }
 
 /**
- * Boot de quem lê a habilitação (o setes-api, ao adotar — NE-6): a view responde ao SELECT publicado com TODAS as colunas. Falta de view,
- * coluna ou GRANT = falha ALTO no boot, nunca 500 na 1ª cunhagem (molde da D-F113).
+ * Boot de quem lê a habilitação pela view: ela responde ao SELECT publicado com TODAS as colunas. Falta de view, coluna ou GRANT = falha
+ * ALTO no boot, nunca 500 na 1ª leitura (molde da D-F113).
  */
 export async function assertIssuerViewReadable(q: ReadQueryable, db: string): Promise<void> {
   try {

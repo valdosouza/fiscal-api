@@ -4,19 +4,22 @@ import type { ReadQueryable } from '../voice/family-reader'
 
 /**
  * FAIXAS RETIRADAS DA NUMERAÇÃO — peça própria do núcleo (NE-2; D-NE161 = Q-NE161 (a), Valdo 2026-10-20, literal: "a nota de mercadoria
- * é controlada por nós, e a nota de serviço é gerada pelo servidor"): a faixa inutilizada é fato da NOSSA numeração (D-F21 — série e número
- * do 55/65 são do ERP), não voz do fisco. Por isso mora em `numbering/`, FORA do catálogo `VOICE_READINGS` (o catálogo é de famílias de
- * TRANSMISSÃO — o emitter e o boot o percorrem; uma faixa ali seria "tentativa" falsa). Entrou na superfície `fiscal-api/reading` na janela
- * da NE-6 (fiscal-api:FAMILIA.E5.P3 — o 1º leitor é o setes-api ao cunhar número, junto da habilitação `establishment/issuer-view`); o SQL
- * cru (`withdrawnRangesSelect`/`withdrawnRangesQuery`) fica só no barrel. O GRANT da view é passo do consumidor (PM-9). Na NFS-e o fato não
- * existe (o número vem do servidor nacional).
+ * é controlada por nós, e a nota de serviço é gerada pelo servidor"): a faixa inutilizada é fato da NOSSA numeração, não voz do fisco.
+ * Por isso mora em `numbering/`, FORA do catálogo `VOICE_READINGS` (o catálogo é de famílias de TRANSMISSÃO — o emitter e o boot o
+ * percorrem; uma faixa ali seria "tentativa" falsa). Está na superfície `fiscal-api/reading` desde a janela da NE-6
+ * (fiscal-api:FAMILIA.E5.P3); o SQL cru (`withdrawnRangesSelect`/`withdrawnRangesQuery`) fica só no barrel. O GRANT da view é passo do
+ * consumidor (PM-9). Na NFS-e o fato não existe (o número vem do servidor nacional).
  *
- * Fonte: a view `vw_invoice_number_void` (migration 001 da nfe-api — D-F35): faixas PENDENTES e homologadas (D-NE110 — o ERP pula as duas
- * ao cunhar), sem `authority_recorded` (D-NE161 — "registro" é palavra da voz). Colunas GERADAS do Id da inutilização (uma fonte só).
+ * QUEM LÊ, depois da D-NE257 (Valdo 2026-11-23, fiscal-api:FAMILIA.E5.P5): o número do 55 nasce na TRANSMISSÃO, na nfe-api, do último
+ * número guardado no núcleo (`numbering/number-sequence`) — ninguém mais "pula faixa" ao gerar número, e a inutilização só vale até o
+ * último número gerado (D-NE263). Esta leitura serve à tabela de controle de notas do ERP web, que COPIA as faixas inutilizadas (D-NE258,
+ * D-NE259), e à consulta da sequência. A série continua do ERP (D-NE11).
+ *
+ * Fonte: a view `vw_invoice_number_void` (migration 001 da nfe-api — D-F35): faixas PENDENTES e homologadas, sem `authority_recorded`
+ * (D-NE161 — "registro" é palavra da voz). Colunas GERADAS do Id da inutilização (uma fonte só).
  * O leitor recebe OBRIGATORIAMENTE os quatro eixos — institution × modelo × série × AMBIENTE (faixa inutilizada em H não retira número
- * de P — D-NE163); qualquer eixo ausente é erro de quem chama (nunca "todas as séries"). Só SELECT, sem trava: quem cunha número lê
- * DEPOIS da trava do contador da institution no ERP (D-NE110 — 2º item da lista fechada da D-F31; PADROES §9 regra 2) — o retrato do
- * REPEATABLE READ nasce na 1ª leitura consistente, depois da espera.
+ * de P — D-NE163); qualquer eixo ausente é erro de quem chama (nunca "todas as séries"). Só SELECT, sem trava: a corrida entre gerar
+ * número e inutilizar se fecha na linha do último número, no núcleo (`lockNumberSequence`), não aqui.
  * LIMITE CONHECIDO (parecer do guardião, §15.3-4): inutilização pendente não conta como "viva" no DELETE do A1 — falha FECHADO (a faixa
  * fica retirada até o A1 voltar).
  */
@@ -88,7 +91,7 @@ export function withdrawnRangesQuery(db: string, scope: WithdrawnRangeScope, ali
   }
 }
 
-/** Mapa ESTRITO de uma linha da view: coluna que decide fora do domínio ou fora do eixo pedido falha ALTO (view torta nunca entra na cunhagem). */
+/** Mapa ESTRITO de uma linha da view: coluna que decide fora do domínio ou fora do eixo pedido falha ALTO (view torta nunca vira dado de quem lê). */
 export function mapWithdrawnRange(r: any, scope: WithdrawnRangeScope): WithdrawnRange {
   // ESTRITO (gate adversarial da NE-2, INPUT_LENIENCY): número ou texto DECIMAL canônico — '1e3', '0x10', ' 5 ' e '01' não são o que o banco devolve
   const int = (v: unknown, what: string): number => {
@@ -120,8 +123,8 @@ export async function readWithdrawnRanges(q: ReadQueryable, db: string, scope: W
 }
 
 /**
- * Boot de quem lê as faixas (a nfe-api desde a NE-2 — a dona da view; o setes-api na NE-6): a view responde ao SELECT publicado com TODAS
- * as colunas. Falta de view, coluna ou GRANT = falha ALTO no boot, nunca 500 na 1ª cunhagem (molde da D-F113).
+ * Boot de quem lê as faixas (a nfe-api desde a NE-2 — a dona da view; o setes-api quando copiar as faixas, D-NE259): a view responde ao
+ * SELECT publicado com TODAS as colunas. Falta de view, coluna ou GRANT = falha ALTO no boot, nunca 500 na 1ª leitura (molde da D-F113).
  */
 export async function assertWithdrawnRangesViewReadable(q: ReadQueryable, db: string): Promise<void> {
   try {

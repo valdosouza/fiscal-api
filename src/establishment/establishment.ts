@@ -160,7 +160,7 @@ export async function storeCertificate(
 /**
  * D-F39 + D-NE10 (a) (parte 2 da NE-1a) — "a emissão deste MODELO ainda é do ERP": réplica do modelo no `fiscal_api` (viva ou
  * excluída) OU, para o modelo que o ERP transmitia (SE) e sem linha dele, a habilitação própria no ERP (lacuna (b), lida pela fonte de
- * fatos). 55/65 NASCEM virados (D-F42 — réplica só nasce do `migrate:setes` e só SE; a série/número deles é do ERP, D-F21) e NÃO
+ * fatos). 55/65 NASCEM virados (D-F42 — réplica só nasce do `migrate:setes` e só SE; a série deles é do ERP, D-F21, e o número nasce na transmissão, D-NE257) e NÃO
  * dependem da SE. Quem age no fisco por um modelo confere ESTE predicado; [model] é obrigatório (sem padrão — prova de segurança não
  * tem default, lição R18-04).
  */

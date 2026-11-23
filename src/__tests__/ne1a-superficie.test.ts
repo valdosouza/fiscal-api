@@ -54,7 +54,7 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
       'voice/families/index.ts': ['../reading', './service', './merchandise'],
       'voice/families/merchandise.ts': ['../reading'],
       'ref/invoice-ref.ts': [],
-      // FAMILIA.E5.P3: as duas peças de leitura do ERP ao cunhar o nNF — só o catálogo dos modelos e TIPOS da voz
+      // FAMILIA.E5.P3: as duas peças de leitura da numeração e da habilitação — só o catálogo dos modelos e TIPOS da voz
       'numbering/withdrawn-ranges.ts': ['../establishment/issuer-models', '../voice/kinds', '../voice/family-reader'],
       'establishment/issuer-view.ts': ['./issuer-models', '../voice/kinds', '../voice/family-reader'],
       'establishment/issuer-models.ts': ['../ref/invoice-ref'],
@@ -69,7 +69,7 @@ describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {
     // o contrato de leitura que a F2a usa está lá
     for (const n of ['VOICE_READINGS', 'SERVICE_VOICE_READING', 'isLiveTransmission', 'isFiscalRecord', 'currentOf', 'localCancelPending', 'invoiceRef', 'KIND_CLASS',
       'readFamilyTransmissions', 'readFamilyTransmissionsMany', 'reconfirmationVerdict',
-      // FAMILIA.E5.P3 (janela da NE-6): a leitura da NF-e, as faixas retiradas e a habilitação — o que o ERP lê ao cunhar o nNF do 55
+      // FAMILIA.E5.P3 (janela da NE-6): a leitura da NF-e, as faixas retiradas e a habilitação (o número do 55 nasce na nfe-api — D-NE257)
       'MERCHANDISE_VOICE_READING', 'readWithdrawnRanges', 'assertWithdrawnRangesViewReadable', 'readIssuerView', 'assertIssuerViewReadable']) {
       expect([n, n in reading]).toEqual([n, true])
     }

@@ -14,9 +14,13 @@
  * três seguem no barrel (`fiscal-api`) para as famílias e os testes.
  *
  * JANELA DA NE-6 (fiscal-api:FAMILIA.E5.P3, pacote 5.0.0 — D-NE158, D-NE161, D-NE170): entram a leitura publicada da NF-e
- * (`voice/families/merchandise`, já no catálogo), as faixas RETIRADAS da numeração (`numbering/withdrawn-ranges` — o ERP as lê ao cunhar o
- * nNF) e a HABILITAÇÃO por modelo (`establishment/issuer-view` — o ambiente do 55, lido junto das faixas). O SQL cru das duas peças novas
+ * (`voice/families/merchandise`, já no catálogo), as faixas RETIRADAS da numeração (`numbering/withdrawn-ranges`) e a HABILITAÇÃO por
+ * modelo (`establishment/issuer-view` — o ambiente do modelo). O SQL cru das duas peças novas
  * (`withdrawnRangesSelect`/`withdrawnRangesQuery`, `issuerViewSelect`/`issuerViewQuery`) fica FORA, no barrel (F2A1-04; molde D-NE66 (b)).
+ *
+ * DEPOIS DA D-NE257 (fiscal-api:FAMILIA.E5.P5, pacote 5.1.0): o número do 55 nasce na transmissão, na nfe-api, do último número guardado
+ * no núcleo — o lado de ESCRITA (`numbering/number-sequence`) NÃO entra aqui. As faixas seguem publicadas para a tabela de controle de
+ * notas do ERP web, que as copia (D-NE259).
  *
  * CERCA (`ne1a-superficie.test.ts`): a lista daqui = o que os módulos exportam MENOS a lista de fora (export novo num módulo quebra a cerca até
  * alguém decidir se entra); nada do lado de escrita aparece nela; o setes-api só importa `fiscal-api/reading`.

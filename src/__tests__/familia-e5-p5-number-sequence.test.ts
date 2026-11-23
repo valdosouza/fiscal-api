@@ -220,3 +220,27 @@ describe('superfície — lado de escrita só no barrel', () => {
     }
   })
 })
+// ---------------------------------------------------------------- T2: os textos antigos deixam de dizer que o ERP web cunha o número
+describe('cerca de texto — a D-NE257 trocou a D-F21 no ponto do número', () => {
+  const SRC = path.resolve(__dirname, '..')
+  const FILES = ['numbering/withdrawn-ranges.ts', 'establishment/issuer-view.ts', 'reading.ts', 'establishment/establishment.ts', 'index.ts']
+  const lines = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8').split(/\r?\n/)
+
+  it('nenhuma linha liga "cunhar" ao ERP/setes-api sem citar a D-NE257, e ninguém diz que o número do 55/65 é do ERP', () => {
+    const bad: string[] = []
+    for (const rel of FILES) {
+      lines(rel).forEach((line, i) => {
+        const minting = /cunh/i.test(line) && /\b(ERP|setes-api)\b/i.test(line) && !/D-NE257/.test(line)
+        const numberOfErp = /s[ée]rie\s*\/\s*n[úu]mero deles [ée] do ERP/i.test(line) || /n[úu]mero do 55(\/65)? (s[ãa]o|[ée]) (cunhad[oa]s? )?(pel|d)o ERP/i.test(line)
+        if (minting || numberOfErp) bad.push(`${rel}:${i + 1}: ${line.trim()}`)
+      })
+    }
+    expect(bad).toEqual([])
+  })
+  it('as duas peças de leitura dizem quem lê agora (D-NE257) e a superfície diz que a escrita fica fora', () => {
+    for (const rel of ['numbering/withdrawn-ranges.ts', 'establishment/issuer-view.ts', 'reading.ts']) {
+      expect([rel, lines(rel).some(l => /D-NE257/.test(l))]).toEqual([rel, true])
+    }
+    expect(lines('reading.ts').join('\n')).toMatch(/numbering\/number-sequence`\) NÃO entra aqui/)
+  })
+})
