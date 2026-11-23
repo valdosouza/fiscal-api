@@ -87,6 +87,8 @@ export * from './erp/invoice-tx'
 // NUMERAÇÃO (NE-2 — D-NE161): faixas RETIRADAS da numeração do 55/65 (fato NOSSO, não voz) — peça própria, fora do catálogo da voz; em
 // `fiscal-api/reading` desde a janela da NE-6 (FAMILIA.E5.P3 — o SQL cru só aqui)
 export * from './numbering/withdrawn-ranges'
+// FAMILIA.E5.P5 (D-NE255/D-NE257): o ÚLTIMO NÚMERO da NF-e por série e ambiente — lado de ESCRITA, só aqui no barrel (fora de `reading`)
+export * from './numbering/number-sequence'
 
 // VALORES DE IBS/CBS DO FISCO na NFS-e (fase IBS/CBS — D-IB124…D-IB126): dado do fisco gravado uma vez, NÃO é voz — peça da família de
 // serviço, fora do catálogo da voz e de `fiscal-api/reading` até o 1º leitor (a conferência dos títulos no setes-api — D-IB125, junto do

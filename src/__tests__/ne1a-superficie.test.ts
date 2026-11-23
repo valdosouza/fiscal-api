@@ -27,6 +27,8 @@ const WRITE_SIDE = [
   'classifyAuthorityError', 'OUTCOME_KIND', 'unhandledOutcome', 'writeIssuer', 'deleteIssuer', 'uploadCertificate', 'clearCertificate',
   'deleteCertificate', 'storeCertificate', 'upsertIssuer', 'openIssuer', 'nextDpsNumber', 'acquireRefreshLease', 'signXml', 'httpsRequest',
   'authorityJson', 'createFiscalPool', 'erp',
+  // FAMILIA.E5.P5 (D-NE255/D-NE257): o último número da NF-e é gerado pela família na transmissão — o ERP web não gera número
+  'nextInvoiceNumber', 'lockNumberSequence', 'openNumberSequence', 'assertNumberSequenceDomainsEnforced',
 ]
 
 describe('D-NE77 — a superfície de LEITURA `fiscal-api/reading`', () => {

@@ -53,6 +53,9 @@ export const ErrorCodes = {
   FISCAL_DPS_INVALID:                'FISCAL_DPS_INVALID',
   FISCAL_DPS_ID_CHANGED:             'FISCAL_DPS_ID_CHANGED',
   FISCAL_CUTOVER_PENDING:            'FISCAL_CUTOVER_PENDING',
+  // Último número da NF-e (FAMILIA.E5.P5 — D-NE265)
+  FISCAL_NUMBER_SEQUENCE_NOT_OPEN:     'FISCAL_NUMBER_SEQUENCE_NOT_OPEN',
+  FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN: 'FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN',
 } as const
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes]
@@ -102,4 +105,6 @@ export const ErrorCatalog: Record<ErrorCode, string> = {
   FISCAL_DPS_INVALID:                'DPS não pôde ser montado com os dados da nota/cadastros — campo e motivo em fields[]; nada reservado',
   FISCAL_DPS_ID_CHANGED:             'O Id do DPS desta vida mudaria (município/CNPJ do emitente mudou desde a 1ª tentativa) — o fisco já conhece o Id antigo; nada enviado (D-F30)',
   FISCAL_CUTOVER_PENDING:            'A emissão fiscal desta empresa ainda é feita pelo ERP — a API fiscal só LÊ até a virada (D-F18 sem dual-write; virada = fato `cutover_at` na habilitação — D-F39)',
+  FISCAL_NUMBER_SEQUENCE_NOT_OPEN:     'A numeração de PRODUÇÃO da NF-e desta série ainda não foi aberta — informe o número inicial antes de transmitir em produção; nada foi gerado (D-NE265)',
+  FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN: 'A numeração de produção da NF-e desta série já está aberta — o número inicial não muda (D-NE265)',
 }
