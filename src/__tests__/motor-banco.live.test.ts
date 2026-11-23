@@ -112,7 +112,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   async function schemaSnapshot(): Promise<string> {
     const out: string[] = []
     for (const t of ['tb_establishment_certificate', 'tb_establishment_issuer', 'tb_fiscal_code_type', 'tb_fiscal_code_requirement',
-      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential', 'tb_invoice_number_sequence']) {
+      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential', 'tb_fiscal_number_sequence']) {
       const [rows] = await root.query<any[]>(`SHOW CREATE TABLE \`${DB}\`.\`${t}\``)
       out.push(String(rows[0]['Create Table']))
       if (t === 'tb_fiscal_code_type' || t === 'tb_fiscal_code_requirement') {
@@ -166,7 +166,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(applied).toEqual([
         'fiscal-api/001_core_baseline', 'fiscal-api/002_issuer_refresh_lease', 'fiscal-api/003_issuer_cutover',
         'fiscal-api/004_issuer_model_domain', 'fiscal-api/005_issuer_domains_binary', 'fiscal-api/006_fiscal_code',
-        'fiscal-api/007_issuer_view', 'fiscal-api/008_invoice_number_sequence',
+        'fiscal-api/007_issuer_view', 'fiscal-api/008_fiscal_number_sequence',
       ])
       first = await schemaSnapshot()
       // 005: sai o CHECK _ci da 004, ficam os dois binários de nome próprio
@@ -195,7 +195,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       const [tabs] = await root.query<any[]>(`SELECT TABLE_NAME AS t, TABLE_COLLATION AS co FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`, [DB])
       expect(tabs.map(r => String(r.t)).sort()).toEqual(['_migrations', 'tb_establishment_certificate', 'tb_establishment_fiscal_credential',
-        'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_invoice_number_sequence', 'tb_provider_fiscal_credential'])
+        'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_fiscal_number_sequence', 'tb_provider_fiscal_credential'])
       for (const r of tabs) expect(r.co).toBe('utf8mb4_unicode_ci')
       const [cols] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = ? AND CHARACTER_SET_NAME IS NOT NULL AND CHARACTER_SET_NAME <> 'utf8mb4'`, [DB])
@@ -205,7 +205,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     it('FAMILIA.E5.P5 — a 008: o motor aplica os cinco CHECKs do último número (sonda do boot, transação desfeita, nada fica gravado)', async () => {
       const pool = createFiscalPool(ownerCfg); pools.push(pool)
       await assertNumberSequenceDomainsEnforced(pool)
-      const [left] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM \`${DB}\`.tb_invoice_number_sequence`)
+      const [left] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM \`${DB}\`.tb_fiscal_number_sequence`)
       expect(Number(left[0].n)).toBe(0)
     })
   })
@@ -532,7 +532,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     const setEnvironment = (institutionId: number, environment: 'H' | 'P') =>
       root.query(`UPDATE \`${DB}\`.tb_establishment_issuer SET environment = ? WHERE tb_institution_id = ? AND model = '55'`, [environment, institutionId])
     const rowsOf = async (institutionId: number) => {
-      const [rows] = await root.query<any[]>(`SELECT serie, environment, last_number AS n FROM \`${DB}\`.tb_invoice_number_sequence
+      const [rows] = await root.query<any[]>(`SELECT serie, environment, last_number AS n FROM \`${DB}\`.tb_fiscal_number_sequence
         WHERE tb_institution_id = ? ORDER BY serie, environment`, [institutionId])
       return rows.map(r => `${r.serie}/${r.environment}=${r.n}`)
     }
@@ -636,7 +636,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
         // a LINHA da sequência também está travada (o cinto): uma escrita direta nela, sem passar pela habilitação, espera igual
         const direct = await pool.getConnection()
         let directSettled = false
-        const directWrite = direct.query(`UPDATE tb_invoice_number_sequence SET updated_at = updated_at
+        const directWrite = direct.query(`UPDATE tb_fiscal_number_sequence SET updated_at = updated_at
           WHERE tb_institution_id = ? AND model = '55' AND serie = 1 AND environment = 'H'`, [D]).finally(() => { directSettled = true; direct.release() })
         directWrite.catch(() => undefined)
         await new Promise(r => setTimeout(r, 300))
@@ -666,7 +666,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     it('o teto do nNF (999.999.999 — RF-NFE-44) no motor: o último número possível sai, o seguinte é "numeração esgotada" e nada avança, em H e em P', async () => {
       // H pelo upsert: a linha da série 9 de A é posta no penúltimo número
       await generate(A, 9)
-      await root.query(`UPDATE \`${DB}\`.tb_invoice_number_sequence SET last_number = 999999998 WHERE tb_institution_id = ? AND serie = 9 AND environment = 'H'`, [A])
+      await root.query(`UPDATE \`${DB}\`.tb_fiscal_number_sequence SET last_number = 999999998 WHERE tb_institution_id = ? AND serie = 9 AND environment = 'H'`, [A])
       expect(await generate(A, 9)).toBe(999_999_999)
       await expect(generate(A, 9)).rejects.toThrow(/numeração esgotada/)
       // P pelo UPDATE: aberta já no último número
@@ -680,7 +680,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     it('linha marcada como excluída (só por mão no banco): gerar, travar e abrir falham ALTO e o número não anda', async () => {
       await generate(A, 5)                                              // 5/H=1
       await inTx(conn => openNumberSequence(conn, scope(A, 5), 70, null))   // 5/P=69
-      await root.query(`UPDATE \`${DB}\`.tb_invoice_number_sequence SET deleted = 'S' WHERE tb_institution_id = ? AND serie = 5`, [A])
+      await root.query(`UPDATE \`${DB}\`.tb_fiscal_number_sequence SET deleted = 'S' WHERE tb_institution_id = ? AND serie = 5`, [A])
       await expect(generate(A, 5)).rejects.toThrow(/marcada como excluída/)
       await expect(inTx(conn => lockNumberSequence(conn, scope(A, 5)))).rejects.toThrow(/marcada como excluída/)
       await expect(inTx(conn => openNumberSequence(conn, scope(A, 5), 70, null))).rejects.toThrow(/marcada como excluída/)

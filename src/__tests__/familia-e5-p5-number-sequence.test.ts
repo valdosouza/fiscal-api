@@ -14,24 +14,24 @@ import { modelsOf } from '../establishment/issuer-models'
 import * as reading from '../reading'
 import * as barrel from '../index'
 
-const SQL_008 = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', 'sql', '008_invoice_number_sequence.sql'), 'utf8')
+const SQL_008 = fs.readFileSync(path.resolve(__dirname, '..', 'migrations', 'sql', '008_fiscal_number_sequence.sql'), 'utf8')
 
 describe('008 — a tabela do último número', () => {
   it('um CREATE TABLE re-executável, com a PK do eixo como único índice único', () => {
     const statements = splitStatements(SQL_008)
     expect(statements).toHaveLength(1)
-    expect(statements[0]).toMatch(/^CREATE TABLE IF NOT EXISTS `tb_invoice_number_sequence` \(/)
-    expect(NUMBER_SEQUENCE_TABLE).toBe('tb_invoice_number_sequence')
+    expect(statements[0]).toMatch(/^CREATE TABLE IF NOT EXISTS `tb_fiscal_number_sequence` \(/)
+    expect(NUMBER_SEQUENCE_TABLE).toBe('tb_fiscal_number_sequence')
     expect(SQL_008).toContain('PRIMARY KEY (`tb_institution_id`, `model`, `serie`, `environment`)')
     expect(SQL_008).not.toMatch(/UNIQUE KEY/)
     expect(SQL_008).toMatch(/ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;\s*$/)
   })
   it('os cinco CHECKs de nome próprio: modelo 55/65 e ambiente H/P e deleted N/S binários; série 0–999 e número 0–999999999 (RF-NFE-44)', () => {
-    expect(SQL_008).toContain("CONSTRAINT `ck_invoice_number_sequence_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65'))")
-    expect(SQL_008).toContain("CONSTRAINT `ck_invoice_number_sequence_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P'))")
-    expect(SQL_008).toContain('CONSTRAINT `ck_invoice_number_sequence_serie` CHECK (`serie` BETWEEN 0 AND 999)')
-    expect(SQL_008).toContain('CONSTRAINT `ck_invoice_number_sequence_last_number` CHECK (`last_number` BETWEEN 0 AND 999999999)')
-    expect(SQL_008).toContain("CONSTRAINT `ck_invoice_number_sequence_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S'))")
+    expect(SQL_008).toContain("CONSTRAINT `ck_fiscal_number_sequence_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65'))")
+    expect(SQL_008).toContain("CONSTRAINT `ck_fiscal_number_sequence_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P'))")
+    expect(SQL_008).toContain('CONSTRAINT `ck_fiscal_number_sequence_serie` CHECK (`serie` BETWEEN 0 AND 999)')
+    expect(SQL_008).toContain('CONSTRAINT `ck_fiscal_number_sequence_last_number` CHECK (`last_number` BETWEEN 0 AND 999999999)')
+    expect(SQL_008).toContain("CONSTRAINT `ck_fiscal_number_sequence_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S'))")
     expect(SQL_008.match(/CONSTRAINT `ck_/g)).toHaveLength(5)
   })
   it('nenhum COMMENT de coluna leva `;` nem `--` (o executor corta por statement)', () => {
@@ -47,18 +47,18 @@ describe('a sonda do boot', () => {
       query: jest.fn(async (_sql: string, params: unknown[]) => {
         seen.push(params)
         const ck = refuse(params)
-        if (ck) throw Object.assign(new Error(`CONSTRAINT \`${ck}\` failed for \`fiscal_api\`.\`tb_invoice_number_sequence\``), { errno: 4025 })
+        if (ck) throw Object.assign(new Error(`CONSTRAINT \`${ck}\` failed for \`fiscal_api\`.\`tb_fiscal_number_sequence\``), { errno: 4025 })
         return [{ affectedRows: 1 }]
       }),
     }
     return { pool: { getConnection: async () => conn } as any, conn, seen }
   }
   const byDomain = ([model, serie, environment, lastNumber, deleted]: any[]): string | null =>
-    model !== '55' && model !== '65' ? 'ck_invoice_number_sequence_model_bin'
-      : environment !== 'H' && environment !== 'P' ? 'ck_invoice_number_sequence_environment_bin'
-        : serie > 999 ? 'ck_invoice_number_sequence_serie'
-          : lastNumber > 999_999_999 ? 'ck_invoice_number_sequence_last_number'
-            : deleted !== 'N' && deleted !== 'S' ? 'ck_invoice_number_sequence_deleted_bin' : null
+    model !== '55' && model !== '65' ? 'ck_fiscal_number_sequence_model_bin'
+      : environment !== 'H' && environment !== 'P' ? 'ck_fiscal_number_sequence_environment_bin'
+        : serie > 999 ? 'ck_fiscal_number_sequence_serie'
+          : lastNumber > 999_999_999 ? 'ck_fiscal_number_sequence_last_number'
+            : deleted !== 'N' && deleted !== 'S' ? 'ck_fiscal_number_sequence_deleted_bin' : null
 
   it('seis sondas, cada uma recusada pelo CHECK do nome certo, numa transação sempre desfeita', async () => {
     const p = pool(byDomain)
@@ -104,17 +104,17 @@ describe('nextInvoiceNumber — o próximo número nasce do último, sob a trava
     expect(calls).toHaveLength(3)
     expect(calls[0].sql).toMatch(/FROM tb_establishment_issuer WHERE tb_institution_id = \? AND model = \? AND deleted = 'N' FOR UPDATE$/)
     expect(calls[0].params).toEqual([7, '55'])
-    expect(calls[1].sql).toMatch(/^INSERT INTO tb_invoice_number_sequence \(tb_institution_id, model, serie, environment, last_number, created_at, updated_at, deleted\) VALUES \(\?, \?, \?, \?, 1, NOW\(\), NOW\(\), 'N'\) ON DUPLICATE KEY UPDATE /)
+    expect(calls[1].sql).toMatch(/^INSERT INTO tb_fiscal_number_sequence \(tb_institution_id, model, serie, environment, last_number, created_at, updated_at, deleted\) VALUES \(\?, \?, \?, \?, 1, NOW\(\), NOW\(\), 'N'\) ON DUPLICATE KEY UPDATE /)
     expect(calls[1].sql).toContain("last_number = IF(deleted = 'N', last_number + 1, last_number)")
     expect(calls[1].params).toEqual([7, '55', 1, 'H'])
     // a leitura de volta é TRAVANTE (corrente): com retrato velho, a leitura comum devolveria o número antigo de uma linha marcada excluída
-    expect(calls[2].sql).toBe('SELECT last_number AS n, deleted AS d FROM tb_invoice_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ? FOR UPDATE')
+    expect(calls[2].sql).toBe('SELECT last_number AS n, deleted AS d FROM tb_fiscal_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ? FOR UPDATE')
     expect(calls[2].params).toEqual([7, '55', 1, 'H'])
   })
   it('produção: só UPDATE (a linha nunca nasce sozinha — D-NE265); o ambiente sai da habilitação, não de quem chama', async () => {
     const { conn, calls } = fake({ issuer: { environment: 'P' }, row: { n: '3138' } })
     expect(await nextInvoiceNumber(conn, SCOPE)).toEqual({ number: 3138, environment: 'P' })
-    expect(calls[1].sql).toBe("UPDATE tb_invoice_number_sequence SET last_number = last_number + 1, updated_at = NOW() WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ? AND deleted = 'N'")
+    expect(calls[1].sql).toBe("UPDATE tb_fiscal_number_sequence SET last_number = last_number + 1, updated_at = NOW() WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ? AND deleted = 'N'")
     expect(calls[1].params).toEqual([7, '55', 1, 'P'])
     expect(calls.some(c => /^INSERT/.test(c.sql))).toBe(false)
   })
@@ -124,7 +124,7 @@ describe('nextInvoiceNumber — o próximo número nasce do último, sob a trava
     expect([err.statusCode, err.code]).toEqual([409, ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN])
     expect(calls.filter(c => /^INSERT/.test(c.sql))).toEqual([])
     // a linha AUSENTE nunca é lida com trava (seria trava de intervalo — PADROES §9 regra 12)
-    expect(calls.filter(c => /FROM tb_invoice_number_sequence/.test(c.sql)).map(c => / FOR UPDATE$/.test(c.sql))).toEqual([false])
+    expect(calls.filter(c => /FROM tb_fiscal_number_sequence/.test(c.sql)).map(c => / FOR UPDATE$/.test(c.sql))).toEqual([false])
     expect(ErrorCatalog.FISCAL_NUMBER_SEQUENCE_NOT_OPEN).toMatch(/PRODUÇÃO/)
   })
   it('réplica do ERP (cutover_at NULL) = 409 FISCAL_CUTOVER_PENDING; sem habilitação viva = erro simples — nos dois, nada toca a sequência', async () => {
@@ -138,7 +138,7 @@ describe('nextInvoiceNumber — o próximo número nasce do último, sob a trava
     expect(none.calls.every(c => /tb_establishment_issuer/.test(c.sql))).toBe(true)
   })
   it('o CHECK do último número recusando (teto do nNF — RF-NFE-44) vira "numeração esgotada"; outro erro do banco sobe como veio', async () => {
-    const full = Object.assign(new Error('CONSTRAINT `ck_invoice_number_sequence_last_number` failed for `fiscal_api`.`tb_invoice_number_sequence`'), { errno: 4025 })
+    const full = Object.assign(new Error('CONSTRAINT `ck_fiscal_number_sequence_last_number` failed for `fiscal_api`.`tb_fiscal_number_sequence`'), { errno: 4025 })
     await expect(nextInvoiceNumber(fake({ writeError: full }).conn, SCOPE)).rejects.toThrow(/numeração esgotada.*999999999/)
     const other = Object.assign(new Error('Lock wait timeout'), { errno: 1205 })
     await expect(nextInvoiceNumber(fake({ writeError: other }).conn, SCOPE)).rejects.toBe(other)
@@ -168,14 +168,14 @@ describe('lockNumberSequence — a leitura travante para a inutilização (D-NE2
   it('trava a habilitação, vê que a linha existe (leitura comum) e só então a trava (FOR UPDATE); devolve o último número do ambiente vigente', async () => {
     const { conn, calls } = fake({ issuer: { environment: 'P' }, row: { n: 3140 } })
     expect(await lockNumberSequence(conn, SCOPE)).toEqual({ environment: 'P', lastNumber: 3140 })
-    const SELECT = 'SELECT last_number AS n, deleted AS d FROM tb_invoice_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ?'
+    const SELECT = 'SELECT last_number AS n, deleted AS d FROM tb_fiscal_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ?'
     expect(calls.map(c => c.sql)).toEqual([expect.stringMatching(/FROM tb_establishment_issuer .* FOR UPDATE$/), SELECT, `${SELECT} FOR UPDATE`])
     expect(calls[2].params).toEqual([7, '55', 1, 'P'])
   })
   it('sem linha = lastNumber null SEM travar a linha ausente (trava de intervalo — regra 12); réplica, sem habilitação e linha excluída como no gerador', async () => {
     const absent = fake({ row: null })
     expect(await lockNumberSequence(absent.conn, SCOPE)).toEqual({ environment: 'H', lastNumber: null })
-    expect(absent.calls.filter(c => /FROM tb_invoice_number_sequence/.test(c.sql)).map(c => / FOR UPDATE$/.test(c.sql))).toEqual([false])
+    expect(absent.calls.filter(c => /FROM tb_fiscal_number_sequence/.test(c.sql)).map(c => / FOR UPDATE$/.test(c.sql))).toEqual([false])
     expect((await httpError(lockNumberSequence(fake({ issuer: { cutoverAt: null } }).conn, SCOPE))).code).toBe(ErrorCodes.FISCAL_CUTOVER_PENDING)
     await expect(lockNumberSequence(fake({ issuer: null }).conn, SCOPE)).rejects.toThrow(/sem habilitação viva/)
     await expect(lockNumberSequence(fake({ row: { n: 2, d: 'S' } }).conn, SCOPE)).rejects.toThrow(/marcada como excluída/)
@@ -190,7 +190,7 @@ describe('openNumberSequence — abre a sequência de PRODUÇÃO com o número i
     await openNumberSequence(conn, SCOPE, 3138, 12)
     expect(calls).toHaveLength(2)
     expect(calls[0].sql).toMatch(/tb_establishment_issuer .* FOR UPDATE$/)
-    expect(calls[1].sql).toBe("INSERT INTO tb_invoice_number_sequence (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted) VALUES (?, ?, ?, 'P', ?, ?, NOW(), NOW(), 'N')")
+    expect(calls[1].sql).toBe("INSERT INTO tb_fiscal_number_sequence (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted) VALUES (?, ?, ?, 'P', ?, ?, NOW(), NOW(), 'N')")
     expect(calls[1].params).toEqual([7, '55', 1, 3137, 12])
   })
   it('sequência que já existe (a chave decide — 1062) = 409 FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN; outro erro do banco sobe como veio', async () => {

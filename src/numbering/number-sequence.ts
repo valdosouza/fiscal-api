@@ -8,7 +8,7 @@ import { getIssuer, IssuerEnvironment } from '../establishment/establishment.rep
 
 /**
  * O ÚLTIMO NÚMERO da NF-e/NFC-e — peça do núcleo (fiscal-api:FAMILIA.E5.P5; D-NE255, D-NE257, D-NE263 e D-NE265, Valdo 2026-11-23): o nNF
- * do 55 nasce na TRANSMISSÃO, na nfe-api, do último número guardado em `tb_invoice_number_sequence` (migration 008 do núcleo) — uma linha
+ * do 55 nasce na TRANSMISSÃO, na nfe-api, do último número guardado em `tb_fiscal_number_sequence` (migration 008 do núcleo) — uma linha
  * por estabelecimento × modelo × série × AMBIENTE. A D-NE257 troca a D-F21 no ponto do número (a série segue do ERP).
  *
  * LADO DE ESCRITA: só no barrel, FORA de `fiscal-api/reading` (o ERP web não gera número — é outro controle, paralelo à tabela de controle
@@ -35,7 +35,7 @@ import { getIssuer, IssuerEnvironment } from '../establishment/establishment.rep
  */
 
 /** A tabela do último número (migration 008 do núcleo). */
-export const NUMBER_SEQUENCE_TABLE = 'tb_invoice_number_sequence'
+export const NUMBER_SEQUENCE_TABLE = 'tb_fiscal_number_sequence'
 
 /** Modelos com numeração NOSSA (ramo de mercadoria — 55/65); a NFS-e tem o nDPS na habilitação. */
 export const NUMBER_SEQUENCE_MODELS: readonly IssuerModel[] = modelsOf('merchandise')
@@ -95,7 +95,7 @@ const describeAxis = (scope: NumberSequenceScope, environment: IssuerEnvironment
 /** A linha do eixo como está (`null` = não existe); linha excluída falha ALTO — o contador não se exclui e nunca "recomeça". */
 async function readRow(conn: Queryable, scope: NumberSequenceScope, environment: IssuerEnvironment, forUpdate: boolean): Promise<number | null> {
   const [rows] = await conn.query(
-    `SELECT last_number AS n, deleted AS d FROM ${NUMBER_SEQUENCE_TABLE} WHERE ${WHERE_AXIS}${forUpdate ? ' FOR UPDATE' : ''}`, axis(scope, environment))
+    `SELECT last_number AS n, deleted AS d FROM tb_fiscal_number_sequence WHERE ${WHERE_AXIS}${forUpdate ? ' FOR UPDATE' : ''}`, axis(scope, environment))
   if (!Array.isArray(rows)) throw new Error('Último número da NF-e: o driver não devolveu linhas')
   if (!rows.length) return null
   if (rows[0].d !== 'N') throw new Error(`Último número da NF-e: a sequência ${describeAxis(scope, environment)} está marcada como excluída — corrija no banco antes de gerar (o contador nunca recomeça)`)
@@ -117,13 +117,13 @@ export async function nextInvoiceNumber(conn: Queryable, scope: NumberSequenceSc
     if (environment === 'H') {
       // linha excluída não avança (o IF) — a leitura de volta, travante, a recusa
       await conn.query(
-        `INSERT INTO ${NUMBER_SEQUENCE_TABLE} (tb_institution_id, model, serie, environment, last_number, created_at, updated_at, deleted)
+        `INSERT INTO tb_fiscal_number_sequence (tb_institution_id, model, serie, environment, last_number, created_at, updated_at, deleted)
          VALUES (?, ?, ?, ?, 1, NOW(), NOW(), 'N')
          ON DUPLICATE KEY UPDATE updated_at = IF(deleted = 'N', NOW(), updated_at), last_number = IF(deleted = 'N', last_number + 1, last_number)`,
         axis(scope, environment))
     } else {
       const [r] = await conn.query(
-        `UPDATE ${NUMBER_SEQUENCE_TABLE} SET last_number = last_number + 1, updated_at = NOW() WHERE ${WHERE_AXIS} AND deleted = 'N'`, axis(scope, environment))
+        `UPDATE tb_fiscal_number_sequence SET last_number = last_number + 1, updated_at = NOW() WHERE ${WHERE_AXIS} AND deleted = 'N'`, axis(scope, environment))
       if (Number(r?.affectedRows ?? 0) === 0) {
         // linha excluída falha ALTO aqui. Leitura comum de propósito: travar a linha AUSENTE seria trava de intervalo (regra 12); um retrato
         // velho só troca a mensagem (409 no lugar de "excluída") — falha fechado nos dois casos, nada foi gravado
@@ -133,7 +133,7 @@ export async function nextInvoiceNumber(conn: Queryable, scope: NumberSequenceSc
       }
     }
   } catch (err) {
-    if (isCheckViolationOf(err, 'ck_invoice_number_sequence_last_number')) {
+    if (isCheckViolationOf(err, 'ck_fiscal_number_sequence_last_number')) {
       throw new Error(`Último número da NF-e: numeração esgotada na sequência ${describeAxis(scope, environment)} (o nNF vai até ${MAX_INVOICE_NUMBER})`)
     }
     throw err
@@ -178,7 +178,7 @@ export async function openNumberSequence(conn: Queryable, scope: NumberSequenceS
     // INSERT direto: a chave decide (1062). Ler a linha AUSENTE com trava antes daqui seria trava de intervalo, e duas aberturas de
     // estabelecimentos vizinhos fechariam deadlock (regra 13)
     await conn.query(
-      `INSERT INTO ${NUMBER_SEQUENCE_TABLE} (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted)
+      `INSERT INTO tb_fiscal_number_sequence (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted)
        VALUES (?, ?, ?, 'P', ?, ?, NOW(), NOW(), 'N')`,
       [scope.institutionId, scope.model, scope.serie, firstNumber - 1, userId])
   } catch (err: any) {
@@ -197,14 +197,14 @@ export async function assertNumberSequenceDomainsEnforced(pool: Pick<Pool, 'getC
   const probe = (value: string, constraint: string, row: { model?: string; serie?: number; environment?: string; lastNumber?: number; deleted?: string }, serie: number): CheckProbe => ({
     value, constraint,
     params: [row.model ?? '55', row.serie ?? serie, row.environment ?? 'H', row.lastNumber ?? 0, row.deleted ?? 'N'],
-    sql: `INSERT INTO ${NUMBER_SEQUENCE_TABLE} (tb_institution_id, model, serie, environment, last_number, deleted) VALUES (0, ?, ?, ?, ?, ?)`,
+    sql: `INSERT INTO tb_fiscal_number_sequence (tb_institution_id, model, serie, environment, last_number, deleted) VALUES (0, ?, ?, ?, ?, ?)`,
   })
   await assertCheckRefuses(pool, 'o domínio do último número da NF-e', [
-    probe('modelo SE', 'ck_invoice_number_sequence_model_bin', { model: 'SE' }, 1),
-    probe('modelo 5', 'ck_invoice_number_sequence_model_bin', { model: '5' }, 2),
-    probe('ambiente h', 'ck_invoice_number_sequence_environment_bin', { environment: 'h' }, 3),
-    probe('série 1000', 'ck_invoice_number_sequence_serie', { serie: 1000 }, 4),
-    probe('número 1000000000', 'ck_invoice_number_sequence_last_number', { lastNumber: 1_000_000_000 }, 5),
-    probe('deleted s', 'ck_invoice_number_sequence_deleted_bin', { deleted: 's' }, 6),
+    probe('modelo SE', 'ck_fiscal_number_sequence_model_bin', { model: 'SE' }, 1),
+    probe('modelo 5', 'ck_fiscal_number_sequence_model_bin', { model: '5' }, 2),
+    probe('ambiente h', 'ck_fiscal_number_sequence_environment_bin', { environment: 'h' }, 3),
+    probe('série 1000', 'ck_fiscal_number_sequence_serie', { serie: 1000 }, 4),
+    probe('número 1000000000', 'ck_fiscal_number_sequence_last_number', { lastNumber: 1_000_000_000 }, 5),
+    probe('deleted s', 'ck_fiscal_number_sequence_deleted_bin', { deleted: 's' }, 6),
   ])
 }

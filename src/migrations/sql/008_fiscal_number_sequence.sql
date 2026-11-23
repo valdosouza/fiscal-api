@@ -20,7 +20,7 @@
 -- não se exclui, e uma linha 'S' faz as peças falharem alto (nunca "recomeça do 1").
 -- A PK é o ÚNICO índice único: o upsert da 1ª geração em H é seguro (PADROES_BANCO §9 regra 10).
 -- RE-EXECUTÁVEL (D-F123): CREATE TABLE IF NOT EXISTS, sem semente.
-CREATE TABLE IF NOT EXISTS `tb_invoice_number_sequence` (
+CREATE TABLE IF NOT EXISTS `tb_fiscal_number_sequence` (
   `tb_institution_id` INT(11) NOT NULL,
   `model`             CHAR(2) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT '55 (NF-e) · 65 (NFC-e)',
   `serie`             SMALLINT UNSIGNED NOT NULL COMMENT 'Série da nota (a do ERP), numérica: 0 a 999',
@@ -31,9 +31,9 @@ CREATE TABLE IF NOT EXISTS `tb_invoice_number_sequence` (
   `updated_at`        DATETIME DEFAULT NULL,
   `deleted`           CHAR(1) NOT NULL DEFAULT 'N',
   PRIMARY KEY (`tb_institution_id`, `model`, `serie`, `environment`),
-  CONSTRAINT `ck_invoice_number_sequence_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65')),
-  CONSTRAINT `ck_invoice_number_sequence_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P')),
-  CONSTRAINT `ck_invoice_number_sequence_serie` CHECK (`serie` BETWEEN 0 AND 999),
-  CONSTRAINT `ck_invoice_number_sequence_last_number` CHECK (`last_number` BETWEEN 0 AND 999999999),
-  CONSTRAINT `ck_invoice_number_sequence_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S'))
+  CONSTRAINT `ck_fiscal_number_sequence_model_bin` CHECK (`model` COLLATE utf8mb4_bin IN ('55', '65')),
+  CONSTRAINT `ck_fiscal_number_sequence_environment_bin` CHECK (`environment` COLLATE utf8mb4_bin IN ('H', 'P')),
+  CONSTRAINT `ck_fiscal_number_sequence_serie` CHECK (`serie` BETWEEN 0 AND 999),
+  CONSTRAINT `ck_fiscal_number_sequence_last_number` CHECK (`last_number` BETWEEN 0 AND 999999999),
+  CONSTRAINT `ck_fiscal_number_sequence_deleted_bin` CHECK (`deleted` COLLATE utf8mb4_bin IN ('N', 'S'))
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
