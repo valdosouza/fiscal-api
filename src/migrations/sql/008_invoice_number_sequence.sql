@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS `tb_invoice_number_sequence` (
   `serie`             SMALLINT UNSIGNED NOT NULL COMMENT 'Série da nota (a do ERP), numérica: 0 a 999',
   `environment`       CHAR(1) CHARACTER SET utf8mb4 COLLATE utf8mb4_bin NOT NULL COMMENT 'H homologação · P produção: cada ambiente tem a sua linha',
   `last_number`       INT UNSIGNED NOT NULL COMMENT 'Último número gerado neste eixo (0 = nenhum). O próximo é este mais 1 e nunca volta',
-  `tb_user_id`        INT(11) DEFAULT NULL COMMENT 'Quem abriu a sequência (produção); NULL quando nasceu sozinha em homologação',
+  `tb_user_id`        INT(11) DEFAULT NULL COMMENT 'Quem abriu a sequência (produção). NULL quando nasceu sozinha em homologação',
   `created_at`        DATETIME DEFAULT NULL,
   `updated_at`        DATETIME DEFAULT NULL,
   `deleted`           CHAR(1) NOT NULL DEFAULT 'N',
