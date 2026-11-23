@@ -1,6 +1,6 @@
 {
   "name": "fiscal-api",
-  "version": "5.0.0",
+  "version": "5.1.0",
   "private": true,
   "description": "Núcleo comum das APIs fiscais do Gestão 2027 (biblioteca — D-F17): mTLS, XMLDSig, A1 cifrado, habilitação e emitente, voz do fisco (leitura publicada por família, escritor genérico sob a trava da nota, política em peças — os roteiros são da família), fonte de fatos base, migrations do banco fiscal_api",
   "main": "dist/index.js",
