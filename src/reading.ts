@@ -19,8 +19,8 @@
  * (`withdrawnRangesSelect`/`withdrawnRangesQuery`, `issuerViewSelect`/`issuerViewQuery`) fica FORA, no barrel (F2A1-04; molde D-NE66 (b)).
  *
  * DEPOIS DA D-NE257 (fiscal-api:FAMILIA.E5.P5, pacote 5.1.0): o número do 55 nasce na transmissão, na nfe-api, do último número guardado
- * no núcleo — o lado de ESCRITA (`numbering/number-sequence`) NÃO entra aqui. As faixas seguem publicadas para a tabela de controle de
- * notas do ERP web, que as copia (D-NE259).
+ * no núcleo — o lado de ESCRITA (`numbering/number-sequence`) NÃO entra aqui. As faixas seguem publicadas; a tabela de controle de notas do
+ * ERP web copia as inutilizações do banco fiscal (D-NE259) e pode usá-las — por onde a cópia lê é da ficha do setes-api.
  *
  * CERCA (`ne1a-superficie.test.ts`): a lista daqui = o que os módulos exportam MENOS a lista de fora (export novo num módulo quebra a cerca até
  * alguém decidir se entra); nada do lado de escrita aparece nela; o setes-api só importa `fiscal-api/reading`.

@@ -15,10 +15,20 @@ import { getIssuer, IssuerEnvironment } from '../establishment/establishment.rep
  * de notas dele, D-NE255/D-NE258).
  *
  * TRAVAS — a ordem de quem chama (PADROES_BANCO §9): nota no ERP (`lockInvoice`) → linha da habilitação do modelo → A1 → linha da sequência.
- * A inutilização não tem nota: habilitação → A1 → sequência. Cada peça daqui RELÊ a habilitação do modelo com `FOR UPDATE` (a mesma linha que
- * o `openIssuer` de quem chama já travou na transação — não espera ninguém nem inverte a ordem) e só depois toca a sequência. Uma linha só,
- * pela PK inteira: trava de REGISTRO (regra 8 — nada de faixa). Quando a linha da sequência ainda não existe (1ª geração em H), quem
- * serializa as gerações concorrentes é a linha da habilitação, já travada (regra 12).
+ * A inutilização não tem nota: habilitação → A1 → sequência. Cada peça daqui RELÊ a habilitação do modelo com `FOR UPDATE` e só depois toca
+ * a sequência. A habilitação é travada por UMA linha, pela PK inteira (trava de registro — regra 8). É ela que SERIALIZA tudo: gerar,
+ * travar para a inutilização e abrir, de TODAS as séries do mesmo estabelecimento × modelo, esperam umas pelas outras na linha da
+ * habilitação; a trava na linha da sequência é o cinto (segura quem escrever nela sem passar por aqui).
+ * LINHA AUSENTE nunca é lida com trava (seria trava de INTERVALO, que faz estabelecimentos vizinhos esperarem ou fecharem deadlock — regras
+ * 12 e 13): a 1ª geração em H é um upsert, a abertura em P é um INSERT que decide pelo 1062, e `lockNumberSequence` só trava a linha que existe.
+ *
+ * CONTRATO DE QUEM CHAMA (a reserva da família — a nfe-api):
+ *  1. Chamar DENTRO da própria transação, e travar a habilitação ANTES do A1 (`openIssuer` com `forUpdate`) — a releitura daqui cai na
+ *     mesma linha já travada e não inverte a ordem. Nenhuma leitura comum (sem trava) da sequência ANTES de chamar: o retrato do
+ *     REPEATABLE READ nasceria velho (regra 2).
+ *  2. Deadlock (1213) e espera esgotada (1205) sobem CRUS, como o banco os dá: quem chama repete a transação inteira ou devolve 409 de
+ *     "tente de novo" — nunca reaproveita um número lido antes do erro.
+ *  3. O número só existe depois do COMMIT de quem chama; transação desfeita devolve o número à sequência (ninguém o viu).
  *
  * O AMBIENTE nunca vem de quem chama: sai da habilitação lida sob a trava (uma fonte só). Réplica do ERP (`cutover_at` NULL) nunca gera
  * número (D-F39, molde `nextDpsNumber`).
@@ -48,7 +58,11 @@ export interface GeneratedInvoiceNumber {
 
 export interface LockedNumberSequence {
   readonly environment: IssuerEnvironment
-  /** O último número gerado no ambiente vigente; `null` = sequência ainda não aberta (nenhum número gerado nem aberta em produção). */
+  /**
+   * O valor de `last_number` do ambiente vigente; `null` = a linha não existe (nada gerado em homologação; produção não aberta).
+   * NÃO é sempre "um número já gerado": a sequência de produção aberta com o número inicial N guarda N − 1 antes da 1ª nota (0 quando
+   * N = 1). `null` e 0 querem dizer "nada a inutilizar"; se N − 1 libera inutilizar números anteriores ao sistema é decisão da família.
+   */
   readonly lastNumber:  number | null
 }
 
@@ -101,7 +115,7 @@ export async function nextInvoiceNumber(conn: Queryable, scope: NumberSequenceSc
   const environment = await lockedEnvironment(conn, scope)
   try {
     if (environment === 'H') {
-      // linha excluída não avança (o IF) — a leitura de volta a recusa
+      // linha excluída não avança (o IF) — a leitura de volta, travante, a recusa
       await conn.query(
         `INSERT INTO ${NUMBER_SEQUENCE_TABLE} (tb_institution_id, model, serie, environment, last_number, created_at, updated_at, deleted)
          VALUES (?, ?, ?, ?, 1, NOW(), NOW(), 'N')
@@ -111,7 +125,9 @@ export async function nextInvoiceNumber(conn: Queryable, scope: NumberSequenceSc
       const [r] = await conn.query(
         `UPDATE ${NUMBER_SEQUENCE_TABLE} SET last_number = last_number + 1, updated_at = NOW() WHERE ${WHERE_AXIS} AND deleted = 'N'`, axis(scope, environment))
       if (Number(r?.affectedRows ?? 0) === 0) {
-        await readRow(conn, scope, environment, false)                    // linha excluída falha ALTO aqui
+        // linha excluída falha ALTO aqui. Leitura comum de propósito: travar a linha AUSENTE seria trava de intervalo (regra 12); um retrato
+        // velho só troca a mensagem (409 no lugar de "excluída") — falha fechado nos dois casos, nada foi gravado
+        await readRow(conn, scope, environment, false)
         throw new HttpError(409, `A numeração de produção da NF-e (modelo ${scope.model}, série ${scope.serie}) ainda não foi aberta — informe o número inicial antes de transmitir em produção`,
           undefined, ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN)
       }
@@ -122,18 +138,23 @@ export async function nextInvoiceNumber(conn: Queryable, scope: NumberSequenceSc
     }
     throw err
   }
-  const number = await readRow(conn, scope, environment, false)
+  // leitura de volta TRAVANTE (leitura corrente, não a do retrato): a linha existe e, tendo avançado, já é nossa. Com a leitura comum, uma
+  // linha marcada excluída DEPOIS do retrato desta transação faria o `IF` não avançar e a leitura devolver o número antigo como "gerado"
+  const number = await readRow(conn, scope, environment, true)
   if (number == null || number < 1) throw new Error(`Último número da NF-e: a sequência ${describeAxis(scope, environment)} não devolveu o número gerado`)
   return { number, environment }
 }
 
 /**
  * TRAVA e lê o último número do ambiente vigente (D-NE263) — para a reserva da INUTILIZAÇÃO, que só vale até ele: enquanto a transação de
- * quem chama estiver aberta, nenhuma geração deste eixo anda (as duas se serializam na habilitação e na linha).
+ * quem chama estiver aberta, nenhuma geração deste estabelecimento × modelo anda (espera na habilitação; a linha, quando existe, também
+ * fica travada). Linha AUSENTE não é travada (seria trava de intervalo): devolve `null`, e nada nasce enquanto a habilitação estiver presa.
  */
 export async function lockNumberSequence(conn: Queryable, scope: NumberSequenceScope): Promise<LockedNumberSequence> {
   assertScope(scope)
   const environment = await lockedEnvironment(conn, scope)
+  // 1º a leitura comum, só para saber se a linha EXISTE; existindo, a leitura travante (corrente) é a que vale
+  if (await readRow(conn, scope, environment, false) == null) return { environment, lastNumber: null }
   return { environment, lastNumber: await readRow(conn, scope, environment, true) }
 }
 
@@ -153,15 +174,17 @@ export async function openNumberSequence(conn: Queryable, scope: NumberSequenceS
   await lockedEnvironment(conn, scope)
   const alreadyOpen = () => new HttpError(409, `A numeração de produção da NF-e (modelo ${scope.model}, série ${scope.serie}) já está aberta — o número inicial não muda`,
     undefined, ErrorCodes.FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN)
-  if (await readRow(conn, scope, 'P', true) != null) throw alreadyOpen()
   try {
+    // INSERT direto: a chave decide (1062). Ler a linha AUSENTE com trava antes daqui seria trava de intervalo, e duas aberturas de
+    // estabelecimentos vizinhos fechariam deadlock (regra 13)
     await conn.query(
       `INSERT INTO ${NUMBER_SEQUENCE_TABLE} (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted)
        VALUES (?, ?, ?, 'P', ?, ?, NOW(), NOW(), 'N')`,
       [scope.institutionId, scope.model, scope.serie, firstNumber - 1, userId])
   } catch (err: any) {
-    if (err?.errno === 1062) throw alreadyOpen()
-    throw err
+    if (err?.errno !== 1062) throw err
+    await readRow(conn, scope, 'P', true)                               // a linha existe: travante é de registro; excluída falha ALTO
+    throw alreadyOpen()
   }
 }
 

@@ -571,7 +571,13 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
     })
 
     it('(b) produção: sem a sequência aberta é 409 e NADA é gravado; aberta com 3138, o próximo é 3138; abrir de novo é 409', async () => {
-      await expect(generate(B)).rejects.toMatchObject({ statusCode: 409, code: ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN })
+      // o 409 e, depois dele, COMMIT (não rollback): se a peça tivesse gravado algo antes de recusar, a linha ficaria
+      const conn = await pool.getConnection()
+      try {
+        await conn.beginTransaction()
+        await expect(nextInvoiceNumber(conn, scope(B))).rejects.toMatchObject({ statusCode: 409, code: ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN })
+        await conn.commit()
+      } finally { conn.release() }
       expect(await rowsOf(B)).toEqual([])
       await inTx(conn => openNumberSequence(conn, scope(B), 3138, null))
       expect(await rowsOf(B)).toEqual(['1/P=3137'])
@@ -612,6 +618,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       // dentro de cada conexão a sequência é crescente (nunca volta)
       for (const w of [x, y]) expect(w.every((n, i) => i === 0 || n > w[i - 1])).toBe(true)
       expect(await rowsOf(C)).toEqual(['1/H=100'])
+      expect(deadlocks).toBe(0)                                         // a habilitação serializa: deadlock aqui seria defeito, não azar
       report.numberSequenceParallel = { generated: all.length, deadlocksRetried: deadlocks }
     }, 60_000)
 
@@ -626,10 +633,18 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
         let settled = false
         const pending = nextInvoiceNumber(waiter, scope(D)).finally(() => { settled = true })
         pending.catch(() => undefined)
+        // a LINHA da sequência também está travada (o cinto): uma escrita direta nela, sem passar pela habilitação, espera igual
+        const direct = await pool.getConnection()
+        let directSettled = false
+        const directWrite = direct.query(`UPDATE tb_invoice_number_sequence SET updated_at = updated_at
+          WHERE tb_institution_id = ? AND model = '55' AND serie = 1 AND environment = 'H'`, [D]).finally(() => { directSettled = true; direct.release() })
+        directWrite.catch(() => undefined)
         await new Promise(r => setTimeout(r, 300))
-        expect(settled).toBe(false)                                     // a geração concorrente não andou
+        expect(settled).toBe(false)                                     // a geração concorrente não andou (espera na habilitação)
+        expect(directSettled).toBe(false)                               // nem a escrita direta na linha (espera na própria linha)
         expect(await lockNumberSequence(locker, scope(D))).toEqual({ environment: 'H', lastNumber: 2 })   // e o último não mudou para quem trava
         await locker.commit()
+        await directWrite
         expect(await pending).toEqual({ number: 3, environment: 'H' })
         await waiter.commit()
       } finally {
@@ -647,5 +662,52 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       await expect(generate(9206)).rejects.toThrow(/sem habilitação viva do modelo 55/)
       expect([...await rowsOf(9205), ...await rowsOf(9206)]).toEqual([])
     })
+
+    it('o teto do nNF (999.999.999 — RF-NFE-44) no motor: o último número possível sai, o seguinte é "numeração esgotada" e nada avança, em H e em P', async () => {
+      // H pelo upsert: a linha da série 9 de A é posta no penúltimo número
+      await generate(A, 9)
+      await root.query(`UPDATE \`${DB}\`.tb_invoice_number_sequence SET last_number = 999999998 WHERE tb_institution_id = ? AND serie = 9 AND environment = 'H'`, [A])
+      expect(await generate(A, 9)).toBe(999_999_999)
+      await expect(generate(A, 9)).rejects.toThrow(/numeração esgotada/)
+      // P pelo UPDATE: aberta já no último número
+      await inTx(conn => openNumberSequence(conn, scope(B, 9), 999_999_999, null))
+      expect(await generate(B, 9)).toBe(999_999_999)
+      await expect(generate(B, 9)).rejects.toThrow(/numeração esgotada/)
+      expect((await rowsOf(A)).filter(r => r.startsWith('9/'))).toEqual(['9/H=999999999'])
+      expect((await rowsOf(B)).filter(r => r.startsWith('9/'))).toEqual(['9/P=999999999'])
+    })
+
+    it('linha marcada como excluída (só por mão no banco): gerar, travar e abrir falham ALTO e o número não anda', async () => {
+      await generate(A, 5)                                              // 5/H=1
+      await inTx(conn => openNumberSequence(conn, scope(A, 5), 70, null))   // 5/P=69
+      await root.query(`UPDATE \`${DB}\`.tb_invoice_number_sequence SET deleted = 'S' WHERE tb_institution_id = ? AND serie = 5`, [A])
+      await expect(generate(A, 5)).rejects.toThrow(/marcada como excluída/)
+      await expect(inTx(conn => lockNumberSequence(conn, scope(A, 5)))).rejects.toThrow(/marcada como excluída/)
+      await expect(inTx(conn => openNumberSequence(conn, scope(A, 5), 70, null))).rejects.toThrow(/marcada como excluída/)
+      await setEnvironment(A, 'P')
+      await expect(generate(A, 5)).rejects.toThrow(/marcada como excluída/)
+      await setEnvironment(A, 'H')
+      expect((await rowsOf(A)).filter(r => r.startsWith('5/'))).toEqual(['5/H=1', '5/P=69'])
+    })
+
+    it('estabelecimentos VIZINHOS abrindo a produção e travando série nunca usada ao mesmo tempo: sem deadlock nem espera (linha ausente não leva trava de intervalo)', async () => {
+      const ids = [9211, 9212, 9213, 9214]
+      for (const i of ids) {
+        await root.query(`INSERT INTO \`${DB}\`.tb_establishment_issuer (tb_institution_id, model, environment, cutover_at, deleted)
+          VALUES (?, '55', 'H', '2026-11-22 03:00:00', 'N')`, [i])
+      }
+      // um vizinho segura a transação com a trava de uma série AUSENTE; os outros abrem P e geram a 1ª de H nesse meio-tempo
+      const holder = await pool.getConnection()
+      try {
+        await holder.beginTransaction()
+        expect(await lockNumberSequence(holder, scope(9212, 3))).toEqual({ environment: 'H', lastNumber: null })
+        for (let round = 1; round <= 5; round++) {
+          await Promise.all([9211, 9213, 9214].map(i => inTx(conn => openNumberSequence(conn, scope(i, round), 10, null))))
+          expect(await Promise.all([9211, 9213, 9214].map(i => generate(i, round)))).toEqual([1, 1, 1])
+        }
+        await holder.commit()
+      } finally { await holder.rollback().catch(() => undefined); holder.release() }
+      expect(await rowsOf(9212)).toEqual([])
+    }, 30_000)
   })
 })

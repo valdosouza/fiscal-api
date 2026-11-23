@@ -107,7 +107,8 @@ describe('nextInvoiceNumber — o próximo número nasce do último, sob a trava
     expect(calls[1].sql).toMatch(/^INSERT INTO tb_invoice_number_sequence \(tb_institution_id, model, serie, environment, last_number, created_at, updated_at, deleted\) VALUES \(\?, \?, \?, \?, 1, NOW\(\), NOW\(\), 'N'\) ON DUPLICATE KEY UPDATE /)
     expect(calls[1].sql).toContain("last_number = IF(deleted = 'N', last_number + 1, last_number)")
     expect(calls[1].params).toEqual([7, '55', 1, 'H'])
-    expect(calls[2].sql).toBe('SELECT last_number AS n, deleted AS d FROM tb_invoice_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ?')
+    // a leitura de volta é TRAVANTE (corrente): com retrato velho, a leitura comum devolveria o número antigo de uma linha marcada excluída
+    expect(calls[2].sql).toBe('SELECT last_number AS n, deleted AS d FROM tb_invoice_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ? FOR UPDATE')
     expect(calls[2].params).toEqual([7, '55', 1, 'H'])
   })
   it('produção: só UPDATE (a linha nunca nasce sozinha — D-NE265); o ambiente sai da habilitação, não de quem chama', async () => {
@@ -122,6 +123,8 @@ describe('nextInvoiceNumber — o próximo número nasce do último, sob a trava
     const err = await httpError(nextInvoiceNumber(conn, SCOPE))
     expect([err.statusCode, err.code]).toEqual([409, ErrorCodes.FISCAL_NUMBER_SEQUENCE_NOT_OPEN])
     expect(calls.filter(c => /^INSERT/.test(c.sql))).toEqual([])
+    // a linha AUSENTE nunca é lida com trava (seria trava de intervalo — PADROES §9 regra 12)
+    expect(calls.filter(c => /FROM tb_invoice_number_sequence/.test(c.sql)).map(c => / FOR UPDATE$/.test(c.sql))).toEqual([false])
     expect(ErrorCatalog.FISCAL_NUMBER_SEQUENCE_NOT_OPEN).toMatch(/PRODUÇÃO/)
   })
   it('réplica do ERP (cutover_at NULL) = 409 FISCAL_CUTOVER_PENDING; sem habilitação viva = erro simples — nos dois, nada toca a sequência', async () => {
@@ -162,17 +165,17 @@ describe('nextInvoiceNumber — o próximo número nasce do último, sob a trava
 })
 
 describe('lockNumberSequence — a leitura travante para a inutilização (D-NE263)', () => {
-  it('trava a habilitação e depois a linha (FOR UPDATE) e devolve o último número do ambiente vigente', async () => {
+  it('trava a habilitação, vê que a linha existe (leitura comum) e só então a trava (FOR UPDATE); devolve o último número do ambiente vigente', async () => {
     const { conn, calls } = fake({ issuer: { environment: 'P' }, row: { n: 3140 } })
     expect(await lockNumberSequence(conn, SCOPE)).toEqual({ environment: 'P', lastNumber: 3140 })
-    expect(calls.map(c => c.sql)).toEqual([
-      expect.stringMatching(/FROM tb_establishment_issuer .* FOR UPDATE$/),
-      'SELECT last_number AS n, deleted AS d FROM tb_invoice_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ? FOR UPDATE',
-    ])
-    expect(calls[1].params).toEqual([7, '55', 1, 'P'])
+    const SELECT = 'SELECT last_number AS n, deleted AS d FROM tb_invoice_number_sequence WHERE tb_institution_id = ? AND model = ? AND serie = ? AND environment = ?'
+    expect(calls.map(c => c.sql)).toEqual([expect.stringMatching(/FROM tb_establishment_issuer .* FOR UPDATE$/), SELECT, `${SELECT} FOR UPDATE`])
+    expect(calls[2].params).toEqual([7, '55', 1, 'P'])
   })
-  it('sem linha = lastNumber null (nada foi gerado: nada a inutilizar); réplica, sem habilitação e linha excluída como no gerador', async () => {
-    expect(await lockNumberSequence(fake({ row: null }).conn, SCOPE)).toEqual({ environment: 'H', lastNumber: null })
+  it('sem linha = lastNumber null SEM travar a linha ausente (trava de intervalo — regra 12); réplica, sem habilitação e linha excluída como no gerador', async () => {
+    const absent = fake({ row: null })
+    expect(await lockNumberSequence(absent.conn, SCOPE)).toEqual({ environment: 'H', lastNumber: null })
+    expect(absent.calls.filter(c => /FROM tb_invoice_number_sequence/.test(c.sql)).map(c => / FOR UPDATE$/.test(c.sql))).toEqual([false])
     expect((await httpError(lockNumberSequence(fake({ issuer: { cutoverAt: null } }).conn, SCOPE))).code).toBe(ErrorCodes.FISCAL_CUTOVER_PENDING)
     await expect(lockNumberSequence(fake({ issuer: null }).conn, SCOPE)).rejects.toThrow(/sem habilitação viva/)
     await expect(lockNumberSequence(fake({ row: { n: 2, d: 'S' } }).conn, SCOPE)).rejects.toThrow(/marcada como excluída/)
@@ -181,23 +184,23 @@ describe('lockNumberSequence — a leitura travante para a inutilização (D-NE2
 })
 
 describe('openNumberSequence — abre a sequência de PRODUÇÃO com o número inicial (D-NE265)', () => {
-  it('grava firstNumber - 1 em P, com quem abriu, depois de travar a habilitação e de ver que a linha não existe', async () => {
+  const DUPLICATE = () => Object.assign(new Error('Duplicate entry'), { errno: 1062 })
+  it('grava firstNumber - 1 em P, com quem abriu, depois de travar a habilitação — INSERT direto, sem ler a linha ausente com trava', async () => {
     const { conn, calls } = fake({ row: null })                        // habilitação ainda em H: abre-se antes de virar o ambiente
     await openNumberSequence(conn, SCOPE, 3138, 12)
-    expect(calls).toHaveLength(3)
+    expect(calls).toHaveLength(2)
     expect(calls[0].sql).toMatch(/tb_establishment_issuer .* FOR UPDATE$/)
-    expect(calls[1].sql).toMatch(/^SELECT last_number .* FOR UPDATE$/)
-    expect(calls[1].params).toEqual([7, '55', 1, 'P'])
-    expect(calls[2].sql).toBe("INSERT INTO tb_invoice_number_sequence (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted) VALUES (?, ?, ?, 'P', ?, ?, NOW(), NOW(), 'N')")
-    expect(calls[2].params).toEqual([7, '55', 1, 3137, 12])
+    expect(calls[1].sql).toBe("INSERT INTO tb_invoice_number_sequence (tb_institution_id, model, serie, environment, last_number, tb_user_id, created_at, updated_at, deleted) VALUES (?, ?, ?, 'P', ?, ?, NOW(), NOW(), 'N')")
+    expect(calls[1].params).toEqual([7, '55', 1, 3137, 12])
   })
-  it('sequência que já existe = 409 FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN sem escrever (e o 1062 de uma corrida vira o mesmo 409)', async () => {
-    const open = fake({ row: { n: 10 } })
+  it('sequência que já existe (a chave decide — 1062) = 409 FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN; outro erro do banco sobe como veio', async () => {
+    const open = fake({ row: { n: 10 }, writeError: DUPLICATE() })
     const err = await httpError(openNumberSequence(open.conn, SCOPE, 500, null))
     expect([err.statusCode, err.code]).toEqual([409, ErrorCodes.FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN])
-    expect(open.calls.some(c => /^INSERT/.test(c.sql))).toBe(false)
-    const race = fake({ row: null, writeError: Object.assign(new Error('Duplicate entry'), { errno: 1062 }) })
-    expect((await httpError(openNumberSequence(race.conn, SCOPE, 500, null))).code).toBe(ErrorCodes.FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN)
+    expect(open.calls[2].sql).toMatch(/^SELECT last_number .* FOR UPDATE$/)   // a linha EXISTE: a leitura travante é de registro
+    expect(open.calls[2].params).toEqual([7, '55', 1, 'P'])
+    const deadlock = Object.assign(new Error('Deadlock'), { errno: 1213 })
+    await expect(openNumberSequence(fake({ row: null, writeError: deadlock }).conn, SCOPE, 500, null)).rejects.toBe(deadlock)
   })
   it('número inicial fora de 1–999999999 e usuário torto são erro ANTES do SQL; réplica, sem habilitação e linha excluída recusam', async () => {
     for (const n of [0, 1_000_000_000, 1.5, '5', undefined]) {
@@ -208,7 +211,7 @@ describe('openNumberSequence — abre a sequência de PRODUÇÃO com o número i
     await expect(openNumberSequence(fake({ row: null }).conn, SCOPE, 1, 0)).rejects.toThrow(/usuário inválido/)
     expect((await httpError(openNumberSequence(fake({ issuer: { cutoverAt: null } }).conn, SCOPE, 1, null))).code).toBe(ErrorCodes.FISCAL_CUTOVER_PENDING)
     await expect(openNumberSequence(fake({ issuer: null }).conn, SCOPE, 1, null)).rejects.toThrow(/sem habilitação viva/)
-    await expect(openNumberSequence(fake({ row: { n: 0, d: 'S' } }).conn, SCOPE, 1, null)).rejects.toThrow(/marcada como excluída/)
+    await expect(openNumberSequence(fake({ row: { n: 0, d: 'S' }, writeError: DUPLICATE() }).conn, SCOPE, 1, null)).rejects.toThrow(/marcada como excluída/)
   })
 })
 
@@ -226,11 +229,14 @@ describe('cerca de texto — a D-NE257 trocou a D-F21 no ponto do número', () =
   const FILES = ['numbering/withdrawn-ranges.ts', 'establishment/issuer-view.ts', 'reading.ts', 'establishment/establishment.ts', 'index.ts']
   const lines = (rel: string) => fs.readFileSync(path.join(SRC, rel), 'utf8').split(/\r?\n/)
 
-  it('nenhuma linha liga "cunhar" ao ERP/setes-api sem citar a D-NE257, e ninguém diz que o número do 55/65 é do ERP', () => {
+  // nas quatro peças de LEITURA a raiz "cunh" some inteira (pega "cunhador" e "1ª cunhagem", que não traziam "ERP" na linha); em
+  // `establishment.ts` o nDPS da NFS-e segue sendo cunhado pelo núcleo — lá a cerca só recusa "cunh" ligado ao ERP/setes-api
+  const READ_SIDE = ['numbering/withdrawn-ranges.ts', 'establishment/issuer-view.ts', 'reading.ts', 'index.ts']
+  it('nas peças de leitura ninguém "cunha"; no resto, "cunhar" não se liga ao ERP sem citar a D-NE257; ninguém diz que o número do 55/65 é do ERP', () => {
     const bad: string[] = []
     for (const rel of FILES) {
       lines(rel).forEach((line, i) => {
-        const minting = /cunh/i.test(line) && /\b(ERP|setes-api)\b/i.test(line) && !/D-NE257/.test(line)
+        const minting = /cunh/i.test(line) && (READ_SIDE.includes(rel) || (/\b(ERP|setes-api)\b/i.test(line) && !/D-NE257/.test(line)))
         const numberOfErp = /s[ée]rie\s*\/\s*n[úu]mero deles [ée] do ERP/i.test(line) || /n[úu]mero do 55(\/65)? (s[ãa]o|[ée]) (cunhad[oa]s? )?(pel|d)o ERP/i.test(line)
         if (minting || numberOfErp) bad.push(`${rel}:${i + 1}: ${line.trim()}`)
       })

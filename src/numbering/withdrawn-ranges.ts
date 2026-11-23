@@ -12,8 +12,9 @@ import type { ReadQueryable } from '../voice/family-reader'
  *
  * QUEM LÊ, depois da D-NE257 (Valdo 2026-11-23, fiscal-api:FAMILIA.E5.P5): o número do 55 nasce na TRANSMISSÃO, na nfe-api, do último
  * número guardado no núcleo (`numbering/number-sequence`) — ninguém mais "pula faixa" ao gerar número, e a inutilização só vale até o
- * último número gerado (D-NE263). Esta leitura serve à tabela de controle de notas do ERP web, que COPIA as faixas inutilizadas (D-NE258,
- * D-NE259), e à consulta da sequência. A série continua do ERP (D-NE11).
+ * último número gerado (D-NE263). A leitura segue publicada: a tabela de controle de notas do ERP web copia as inutilizações do banco
+ * fiscal (D-NE258, D-NE259) e PODE usá-la — por onde a cópia lê fica para a ficha do setes-api, sem decisão aqui. A série continua do
+ * ERP (D-NE11).
  *
  * Fonte: a view `vw_invoice_number_void` (migration 001 da nfe-api — D-F35): faixas PENDENTES e homologadas, sem `authority_recorded`
  * (D-NE161 — "registro" é palavra da voz). Colunas GERADAS do Id da inutilização (uma fonte só).
