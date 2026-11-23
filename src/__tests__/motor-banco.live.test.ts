@@ -10,7 +10,7 @@
 // sobras com esse prefixo). O usuário descartável tem o GRANT no FORMATO do serviço (nfse-api ops/grants.sql): ALL no banco fiscal, SÓ
 // SELECT no "ERP" (`setes\_%`), SÓ SELECT na view da "central" (`setes_central.vw_user_link`).
 //
-// T2: as migrations 001–007 aplicam, a 2ª corrida não aplica nada, e apagado o registro em `_migrations` elas RE-EXECUTAM sem erro e o
+// T2: as migrations 001–008 aplicam, a 2ª corrida não aplica nada, e apagado o registro em `_migrations` elas RE-EXECUTAM sem erro e o
 //     schema sai igual (D-F123); o banco e as tabelas nascem utf8mb4 mesmo com o padrão utf8mb3 do servidor (§23.12).
 // T1: o CHECK de model e environment é aplicado (as sondas do boot — D-F45/D-NE84/D-F120); as views respondem com o GRANT mínimo; a
 //     leitura travante (FOR UPDATE da nota — D-F27/D-F31 — e a COMPARTILHADA da view de vida) funciona com SÓ SELECT e trava de verdade;
@@ -31,6 +31,7 @@ import { assertSessionViewReadable } from '../access/access'
 import { ISSUER_VIEW, issuerViewQuery, readIssuerView, assertIssuerViewReadable } from '../establishment/issuer-view'
 import { mapServiceAuthorityIbscbs } from '../voice/families/service-authority-ibscbs'
 import { invoiceRef } from '../ref/invoice-ref'
+import { assertNumberSequenceDomainsEnforced } from '../numbering/number-sequence'
 import {
   assertFiscalCodeDomainsEnforced, assertRequiredProviderCodesPresent, providerFiscalCredentialOf, saveProviderFiscalCredential,
   fiscalCodeRequirementsOf, FiscalCodeConflictError, FiscalCodeMissingError, establishmentFiscalCredentialOf, listProviderFiscalCredentials,
@@ -109,7 +110,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   async function schemaSnapshot(): Promise<string> {
     const out: string[] = []
     for (const t of ['tb_establishment_certificate', 'tb_establishment_issuer', 'tb_fiscal_code_type', 'tb_fiscal_code_requirement',
-      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential']) {
+      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential', 'tb_invoice_number_sequence']) {
       const [rows] = await root.query<any[]>(`SHOW CREATE TABLE \`${DB}\`.\`${t}\``)
       out.push(String(rows[0]['Create Table']))
       if (t === 'tb_fiscal_code_type' || t === 'tb_fiscal_code_requirement') {
@@ -155,7 +156,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   })
 
   // ---------------------------------------------------------------- T2
-  describe('T2 — as migrations 001–007 aplicam e re-executam', () => {
+  describe('T2 — as migrations 001–008 aplicam e re-executam', () => {
     let first = ''
 
     it('aplicam todas, na ordem, num banco novo (o executor confere a sessão estrita e o modo global antes)', async () => {
@@ -163,7 +164,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(applied).toEqual([
         'fiscal-api/001_core_baseline', 'fiscal-api/002_issuer_refresh_lease', 'fiscal-api/003_issuer_cutover',
         'fiscal-api/004_issuer_model_domain', 'fiscal-api/005_issuer_domains_binary', 'fiscal-api/006_fiscal_code',
-        'fiscal-api/007_issuer_view',
+        'fiscal-api/007_issuer_view', 'fiscal-api/008_invoice_number_sequence',
       ])
       first = await schemaSnapshot()
       // 005: sai o CHECK _ci da 004, ficam os dois binários de nome próprio
@@ -177,10 +178,10 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])).toEqual([])
     })
 
-    it('apagado o registro, as 001–007 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
+    it('apagado o registro, as 001–008 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
       await root.query(`DELETE FROM \`${DB}\`.\`_migrations\` WHERE project = ?`, [CORE_MIGRATIONS_PROJECT])
       const again = await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])
-      expect(again).toHaveLength(7)
+      expect(again).toHaveLength(8)
       expect(await schemaSnapshot()).toBe(first)
       report.migrationsReexecuted = again.length
     })
@@ -192,11 +193,18 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       const [tabs] = await root.query<any[]>(`SELECT TABLE_NAME AS t, TABLE_COLLATION AS co FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`, [DB])
       expect(tabs.map(r => String(r.t)).sort()).toEqual(['_migrations', 'tb_establishment_certificate', 'tb_establishment_fiscal_credential',
-        'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_provider_fiscal_credential'])
+        'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_invoice_number_sequence', 'tb_provider_fiscal_credential'])
       for (const r of tabs) expect(r.co).toBe('utf8mb4_unicode_ci')
       const [cols] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = ? AND CHARACTER_SET_NAME IS NOT NULL AND CHARACTER_SET_NAME <> 'utf8mb4'`, [DB])
       expect(Number(cols[0].n)).toBe(0)
+    })
+
+    it('FAMILIA.E5.P5 — a 008: o motor aplica os cinco CHECKs do último número (sonda do boot, transação desfeita, nada fica gravado)', async () => {
+      const pool = createFiscalPool(ownerCfg); pools.push(pool)
+      await assertNumberSequenceDomainsEnforced(pool)
+      const [left] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM \`${DB}\`.tb_invoice_number_sequence`)
+      expect(Number(left[0].n)).toBe(0)
     })
   })
 
