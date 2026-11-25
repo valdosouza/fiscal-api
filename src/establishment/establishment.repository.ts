@@ -5,6 +5,7 @@ import { HttpError } from '../errors/http-error'
 import { ErrorCodes } from '../errors/error-codes'
 import { erpServiceIssuerExists } from '../erp/facts'
 import { SealedSecret } from '../secret/cipher'
+import type { SealedStore } from '../secret/sealed-store'
 import { ISSUER_MODELS, IssuerModel, SERVICE_ISSUER_MODEL, erpTransmitted, isIssuerModel } from './issuer-models'
 
 /**
@@ -447,3 +448,26 @@ export async function eraseCertificate(conn: PoolConnection, institutionId: numb
     [userId, institutionId])
   return Number(r?.affectedRows ?? 0) > 0
 }
+
+/** AAD da chave privada cifrada: amarra a cifra à LINHA (copiar para outro estabelecimento não abre). */
+export const certificateAad = (institutionId: number) => `tb_establishment_certificate:${institutionId}`
+
+/** Versões de chave-mestra que ainda cifram algum A1 vivo. */
+export async function certificateKeyVersions(q: Queryable): Promise<number[]> {
+  const [rows] = await q.query(
+    `SELECT DISTINCT cipher_key_version AS v FROM tb_establishment_certificate
+      WHERE deleted = 'N' AND cipher_key_version IS NOT NULL`)
+  return (rows as any[]).filter(r => r.v != null).map(r => Number(r.v)).filter(v => Number.isInteger(v) && v > 0)
+}
+
+/** O A1 como DONO de segredo cifrado do cofre (`SEALED_STORES` — rotação e prova da chave-mestra; FAMILIA.E5.P7). */
+export const CERTIFICATE_SEALED_STORE: SealedStore = Object.freeze({
+  name: 'tb_establishment_certificate',
+  unreadableCode: ErrorCodes.FISCAL_CERT_INVALID,
+  aad: certificateAad,
+  keyVersions: certificateKeyVersions,
+  outsideKeyVersion: certificatesOutsideKeyVersion,
+  samplePerKeyVersion: (q: Queryable, perVersion: number) => sampleCertificatesPerKeyVersion(q, perVersion),
+  readSealedForUpdate: async (conn: PoolConnection, institutionId: number) => (await getCertificate(conn, institutionId, 'update'))?.sealedKey ?? null,
+  rewrap: rewrapCertificateKey,
+})

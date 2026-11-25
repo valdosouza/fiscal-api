@@ -37,6 +37,9 @@ export * as access from './access/access'
 // cofre (D-F16) e certificado A1
 export * from './secret/cipher'
 export * from './secret/certificate'
+// os DONOS de segredo cifrado do cofre e a rotação da chave-mestra sobre todos eles (FAMILIA.E5.P7)
+export * from './secret/sealed-store'
+export * from './secret/sealed-stores'
 
 // emitente: certificado + habilitação por modelo (D-F34); catálogo dos modelos (D-NE10 — parte 2 da NE-1a)
 export * from './establishment/issuer-models'
@@ -62,6 +65,11 @@ export * from './technical-responsible/technical-responsible'
 
 // CONFIGURAÇÃO FISCAL POR UF (migration 006 — D-NE221…D-NE226, FAMILIA.E5.P4.T4): exigências, credenciais do dono certo, boot e escrita
 export * from './fiscal-code/fiscal-code'
+
+// CONTA DE ENVIO DE E-MAIL do estabelecimento (migration 009 — D-NE236, FAMILIA.E5.P7): a credencial SMTP do cliente, senha cifrada pelo
+// cofre; o núcleo GUARDA, quem envia é a família (D-NE261). Fora de `fiscal-api/reading` (lado de escrita e segredo)
+export * from './smtp-credential/smtp-credential.repository'
+export * from './smtp-credential/smtp-credential'
 
 // arquivo fiscal (XML)
 export * from './storage/fiscal-storage'

@@ -14,6 +14,8 @@ import { createFiscalPool, FiscalDbConfig } from '../db/pool'
 import { MasterKeyRing } from '../secret/cipher'
 import { rotateCertificateKeys, verifyStoredKeys, storedKeyVersions, certificateAad } from '../establishment/establishment'
 import { getCertificate } from '../establishment/establishment.repository'
+import { rotateStoredKeys, storedSecretsOutsideKeyVersion } from '../secret/sealed-stores'
+import { openSmtpCredential, storeSmtpCredential } from '../smtp-credential/smtp-credential'
 
 const LIVE = process.env.FISCAL_ENGINE_LIVE === '1'
 const d = LIVE ? describe : describe.skip
@@ -131,5 +133,61 @@ d('DEPLOY.E3.P1 — rotação da chave-mestra e prova do health no motor real', 
     expect(await verifyStoredKeys({ pool, keyring: NEW_ONLY }))
       .toEqual({ ok: true, degraded: true, versions: [{ version: 2, ok: true, unreadable: 1 }] })
     report.verifyStoredKeys = 'ok'
+  })
+
+  it('FAMILIA.E5.P7: o cofre com DOIS donos no motor — a rotação só do A1 deixa a senha de e-mail na chave antiga; `rotateStoredKeys` regrava os dois', async () => {
+    const TABLE = 'tb_establishment_smtp_credential'
+    const passwords: Record<number, string> = {}
+    for (const id of [301, 302]) {
+      passwords[id] = `senha-de-teste-${id}-${crypto.randomBytes(18).toString('base64')}`   // gerada na hora
+      await storeSmtpCredential({ pool, keyring: OLD }, id, { host: 'smtp.exemplo.invalid', port: 587, security: 'starttls',
+        username: `u${id}@exemplo.invalid`, senderAddress: `u${id}@exemplo.invalid`, password: passwords[id], userId: null })
+    }
+    await root.query(`UPDATE \`${DB}\`.${TABLE} SET updated_at = '2026-01-01 00:00:00'`)
+    await seed(301, OLD)
+
+    // quem roda só a rotação do A1 continua vendo a versão 1 em uso — e não tira a chave
+    expect((await rotateCertificateKeys({ pool, keyring: BOTH })).rewrapped).toEqual([{ institutionId: 301, from: 1 }])
+    expect((await storedKeyVersions(pool)).sort()).toEqual([1, 2])
+    expect(await storedSecretsOutsideKeyVersion(pool, 2)).toEqual([{ store: TABLE, institutionId: 301 }, { store: TABLE, institutionId: 302 }])
+    await expect(openSmtpCredential({ pool, keyring: NEW_ONLY }, 301)).rejects.toMatchObject({ statusCode: 503, code: 'FISCAL_MASTER_KEY_UNAVAILABLE' })
+
+    const rep = await rotateStoredKeys({ pool, keyring: BOTH })
+    expect(rep).toEqual({ currentVersion: 2, failed: [], skipped: [],
+      rewrapped: [{ store: TABLE, institutionId: 301, from: 1 }, { store: TABLE, institutionId: 302, from: 1 }] })
+    expect(await storedKeyVersions(pool)).toEqual([2])
+    for (const id of [301, 302]) expect((await openSmtpCredential({ pool, keyring: NEW_ONLY }, id)).password).toBe(passwords[id])
+    // só a cifra mudou: a data da conta fica como estava, e nada do que está na tabela contém a senha
+    const [rows] = await root.query<any[]>(`SELECT * FROM \`${DB}\`.${TABLE} ORDER BY tb_institution_id`)
+    expect(rows.map(r => [r.cipher_key_version, new Date(r.updated_at).toISOString().slice(0, 10)])).toEqual([[2, '2026-01-01'], [2, '2026-01-01']])
+    const everything = Buffer.concat(rows.flatMap(r => Object.values(r)).map(v => (Buffer.isBuffer(v) ? v : Buffer.from(String(v)))))
+    for (const id of [301, 302]) expect(everything.includes(Buffer.from(passwords[id]))).toBe(false)
+    expect(JSON.stringify(rep)).not.toContain(passwords[301])
+    expect(await rotateStoredKeys({ pool, keyring: BOTH })).toEqual({ currentVersion: 2, rewrapped: [], failed: [], skipped: [] })
+    // a prova da chave olha os dois donos: chave errada falha também pela senha; a certa passa (o A1 101 ilegível do teste anterior = degradado)
+    expect((await verifyStoredKeys({ pool, keyring: NEW_ONLY })).ok).toBe(true)
+    expect((await verifyStoredKeys({ pool, keyring: MasterKeyRing.of({ 2: crypto.randomBytes(32) }) })).ok).toBe(false)
+    report.sealedStoresRotated = rep.rewrapped.length
+  })
+
+  it('FAMILIA.E5.P7: com um leitor segurando a conta de e-mail, a rotação ESPERA a trava (FOR UPDATE real) e conclui — sem deadlock', async () => {
+    const password = `senha-de-teste-${crypto.randomBytes(18).toString('base64')}`
+    await storeSmtpCredential({ pool, keyring: OLD }, 401, { host: 'smtp.exemplo.invalid', port: 465, security: 'tls',
+      username: 'u401', senderAddress: 'u401@exemplo.invalid', password, userId: null })
+    const reader = await mysql.createConnection({ ...owner, database: DB, timezone: 'Z' })
+    try {
+      await reader.query('START TRANSACTION')
+      await reader.query(`SELECT cipher_key_version FROM tb_establishment_smtp_credential WHERE tb_institution_id = 401 LOCK IN SHARE MODE`)
+      const t0 = Date.now()
+      const running = rotateStoredKeys({ pool, keyring: BOTH })
+      await new Promise(r => setTimeout(r, 1500))
+      await reader.query('COMMIT')
+      const rep = await running
+      expect(rep.rewrapped).toEqual([{ store: 'tb_establishment_smtp_credential', institutionId: 401, from: 1 }])
+      expect(Date.now() - t0).toBeGreaterThanOrEqual(1400)
+      expect((await openSmtpCredential({ pool, keyring: NEW_ONLY }, 401)).password).toBe(password)
+    } finally {
+      await reader.end()
+    }
   })
 })

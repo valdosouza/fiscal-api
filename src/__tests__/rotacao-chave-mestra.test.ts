@@ -20,6 +20,9 @@ function fakeDb(opts: { beforeLock?: (id: number, rows: Map<number, Row>) => voi
   const viaConn: string[] = []
   const query = jest.fn(async (sql: string, p: any[] = []) => {
     sqls.push(sql)
+    // FAMILIA.E5.P7: o cofre tem um 2º dono (a senha da conta de e-mail); aqui a tabela dele está VAZIA — os dois donos juntos estão em
+    // `familia-e5-p7-sealed-stores.test.ts`
+    if (/tb_establishment_smtp_credential/.test(sql)) return [[]]
     if (/ROW_NUMBER\(\) OVER \(PARTITION BY cipher_key_version ORDER BY tb_institution_id\)/.test(sql)) {   // amostra por versão
       const live = [...rows.entries()].filter(([, r]) => r.deleted === 'N' && r.version != null)
         .sort((a, b) => a[1].version! - b[1].version! || a[0] - b[0])
@@ -241,9 +244,11 @@ describe('DEPLOY.E3.P1.T1 — D-F243: o health prova que a chave do SERVIDOR abr
     db.seed(20, OLD); db.seed(10, OLD); db.seed(30, NEW_ONLY)
     const r = await verifyStoredKeys({ pool: db.pool, keyring: BOTH })
     expect(r).toEqual({ ok: true, degraded: false, versions: [{ version: 1, ok: true, unreadable: 0 }, { version: 2, ok: true, unreadable: 0 }] })
-    expect(db.sqls).toHaveLength(1)
-    expect(sampleReads(db)).toHaveLength(1)
-    expect(db.sqls[0]).not.toMatch(/FOR UPDATE|LOCK IN SHARE MODE/)
+    // FAMILIA.E5.P7: UMA leitura por DONO do cofre (o A1 e a senha da conta de e-mail) — cada uma com versão e cifra da mesma instrução
+    expect(db.sqls).toHaveLength(2)
+    expect(sampleReads(db)).toHaveLength(2)
+    expect(db.sqls.filter(q => /FROM tb_establishment_certificate/.test(q))).toHaveLength(1)
+    for (const q of db.sqls) expect(q).not.toMatch(/FOR UPDATE|LOCK IN SHARE MODE/)
   })
 
   it('chave ERRADA com o mesmo número de versão → não ok (FISCAL_CERT_INVALID), embora storedKeyVersions e selfTest digam ok', async () => {

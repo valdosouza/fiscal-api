@@ -39,6 +39,10 @@ import {
   fiscalCodeRequirementsOf, FiscalCodeConflictError, FiscalCodeMissingError, establishmentFiscalCredentialOf, listProviderFiscalCredentials,
   endProviderFiscalCredential,
 } from '../fiscal-code/fiscal-code'
+import {
+  assertSmtpCredentialDomainsEnforced, clearSmtpCredential, openSmtpCredential, smtpCredentialStatus, storeSmtpCredential,
+} from '../smtp-credential/smtp-credential'
+import { MasterKeyRing } from '../secret/cipher'
 import { execFileSync } from 'child_process'
 import os from 'os'
 import path from 'path'
@@ -112,7 +116,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   async function schemaSnapshot(): Promise<string> {
     const out: string[] = []
     for (const t of ['tb_establishment_certificate', 'tb_establishment_issuer', 'tb_fiscal_code_type', 'tb_fiscal_code_requirement',
-      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential', 'tb_fiscal_number_sequence']) {
+      'tb_provider_fiscal_credential', 'tb_establishment_fiscal_credential', 'tb_fiscal_number_sequence', 'tb_establishment_smtp_credential']) {
       const [rows] = await root.query<any[]>(`SHOW CREATE TABLE \`${DB}\`.\`${t}\``)
       out.push(String(rows[0]['Create Table']))
       if (t === 'tb_fiscal_code_type' || t === 'tb_fiscal_code_requirement') {
@@ -158,7 +162,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
   })
 
   // ---------------------------------------------------------------- T2
-  describe('T2 — as migrations 001–008 aplicam e re-executam', () => {
+  describe('T2 — as migrations 001–009 aplicam e re-executam', () => {
     let first = ''
 
     it('aplicam todas, na ordem, num banco novo (o executor confere a sessão estrita e o modo global antes)', async () => {
@@ -166,7 +170,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(applied).toEqual([
         'fiscal-api/001_core_baseline', 'fiscal-api/002_issuer_refresh_lease', 'fiscal-api/003_issuer_cutover',
         'fiscal-api/004_issuer_model_domain', 'fiscal-api/005_issuer_domains_binary', 'fiscal-api/006_fiscal_code',
-        'fiscal-api/007_issuer_view', 'fiscal-api/008_fiscal_number_sequence',
+        'fiscal-api/007_issuer_view', 'fiscal-api/008_fiscal_number_sequence', 'fiscal-api/009_establishment_smtp_credential',
       ])
       first = await schemaSnapshot()
       // 005: sai o CHECK _ci da 004, ficam os dois binários de nome próprio
@@ -180,10 +184,10 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       expect(await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])).toEqual([])
     })
 
-    it('apagado o registro, as 001–008 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
+    it('apagado o registro, as 001–009 RE-EXECUTAM sem erro e o schema sai igual — a semente da 006 sem duplicar (D-F123 — processo morto entre o ALTER e o registro)', async () => {
       await root.query(`DELETE FROM \`${DB}\`.\`_migrations\` WHERE project = ?`, [CORE_MIGRATIONS_PROJECT])
       const again = await runMigrations(ownerCfg, [{ project: CORE_MIGRATIONS_PROJECT, dir: CORE_MIGRATIONS_DIR }])
-      expect(again).toHaveLength(8)
+      expect(again).toHaveLength(9)
       expect(await schemaSnapshot()).toBe(first)
       report.migrationsReexecuted = again.length
     })
@@ -195,7 +199,7 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       const [tabs] = await root.query<any[]>(`SELECT TABLE_NAME AS t, TABLE_COLLATION AS co FROM information_schema.TABLES
         WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME`, [DB])
       expect(tabs.map(r => String(r.t)).sort()).toEqual(['_migrations', 'tb_establishment_certificate', 'tb_establishment_fiscal_credential',
-        'tb_establishment_issuer', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_fiscal_number_sequence', 'tb_provider_fiscal_credential'])
+        'tb_establishment_issuer', 'tb_establishment_smtp_credential', 'tb_fiscal_code_requirement', 'tb_fiscal_code_type', 'tb_fiscal_number_sequence', 'tb_provider_fiscal_credential'])
       for (const r of tabs) expect(r.co).toBe('utf8mb4_unicode_ci')
       const [cols] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM information_schema.COLUMNS
         WHERE TABLE_SCHEMA = ? AND CHARACTER_SET_NAME IS NOT NULL AND CHARACTER_SET_NAME <> 'utf8mb4'`, [DB])
@@ -207,6 +211,57 @@ d('DEPLOY.E1.P2 — o núcleo no motor real do banco', () => {
       await assertNumberSequenceDomainsEnforced(pool)
       const [left] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM \`${DB}\`.tb_fiscal_number_sequence`)
       expect(Number(left[0].n)).toBe(0)
+    })
+
+    it('FAMILIA.E5.P7 — a 009: o motor aplica os quatro CHECKs da conta de e-mail (sonda do boot, transação desfeita, nada fica gravado)', async () => {
+      const pool = createFiscalPool(ownerCfg); pools.push(pool)
+      await assertSmtpCredentialDomainsEnforced(pool)
+      const [left] = await root.query<any[]>(`SELECT COUNT(*) AS n FROM \`${DB}\`.tb_establishment_smtp_credential`)
+      expect(Number(left[0].n)).toBe(0)
+    })
+
+    it('FAMILIA.E5.P7 — a conta de e-mail no motor: grava cifrado (a coluna não tem a senha), abre, troca, apaga (cifra NULL) e revive', async () => {
+      const pool = createFiscalPool(ownerCfg); pools.push(pool)
+      const keyring = MasterKeyRing.of({ 1: crypto.randomBytes(32) })
+      const deps = { pool, keyring }
+      const password = `senha-de-teste-${crypto.randomBytes(18).toString('base64')}`   // gerada na hora
+      const input = { host: 'smtp.exemplo.invalid', port: 587, security: 'starttls' as const, username: 'nota@exemplo.invalid',
+        senderAddress: 'nota@exemplo.invalid', password, userId: 7 }
+      const inst = 990901
+      expect(await smtpCredentialStatus(pool, inst)).toMatchObject({ configured: false })
+      const status = await storeSmtpCredential(deps, inst, input)
+      expect(status).toMatchObject({ configured: true, host: 'smtp.exemplo.invalid', port: 587, security: 'starttls' })
+      expect(status.updatedAt).toMatch(/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.000Z$/)
+      const [raw] = await root.query<any[]>(`SELECT * FROM \`${DB}\`.tb_establishment_smtp_credential WHERE tb_institution_id = ?`, [inst])
+      const everything = Buffer.concat(Object.values(raw[0]).map(v => (Buffer.isBuffer(v) ? v : Buffer.from(String(v)))))
+      expect(everything.includes(Buffer.from(password))).toBe(false)
+      expect([raw[0].password_iv.length, raw[0].password_tag.length, raw[0].cipher_key_version, raw[0].deleted]).toEqual([12, 16, 1, 'N'])
+      expect((await openSmtpCredential(deps, inst)).password).toBe(password)
+      // a cifra copiada por SQL para a linha de outro estabelecimento não abre
+      await root.query(`INSERT INTO \`${DB}\`.tb_establishment_smtp_credential
+        (tb_institution_id, host, port, security, username, sender_address, password_cipher, password_iv, password_tag, cipher_key_version, deleted)
+        SELECT ?, host, port, security, username, sender_address, password_cipher, password_iv, password_tag, cipher_key_version, deleted
+          FROM \`${DB}\`.tb_establishment_smtp_credential WHERE tb_institution_id = ?`, [inst + 1, inst])
+      await expect(openSmtpCredential(deps, inst + 1)).rejects.toMatchObject({ statusCode: 409, code: 'SMTP_CREDENTIAL_UNREADABLE' })
+      // trocar = a mesma linha (uma conta por estabelecimento)
+      const other = `outra-${crypto.randomBytes(12).toString('hex')}`
+      await storeSmtpCredential(deps, inst, { ...input, host: 'mail.exemplo.invalid', security: 'tls', port: 465, password: other })
+      expect(await openSmtpCredential(deps, inst)).toMatchObject({ host: 'mail.exemplo.invalid', security: 'tls', port: 465, password: other })
+      // apagar zera a cifra (o CHECK de presença aceita a linha apagada SEM segredo) e revive com a conta nova
+      expect(await clearSmtpCredential(deps, inst, 9)).toBe(true)
+      const [gone] = await root.query<any[]>(`SELECT password_cipher AS c, password_iv AS i, password_tag AS t, cipher_key_version AS v, deleted AS d, tb_user_id AS u
+        FROM \`${DB}\`.tb_establishment_smtp_credential WHERE tb_institution_id = ?`, [inst])
+      expect(gone[0]).toEqual({ c: null, i: null, t: null, v: null, d: 'S', u: 9 })
+      await expect(openSmtpCredential(deps, inst)).rejects.toMatchObject({ code: 'SMTP_CREDENTIAL_MISSING' })
+      expect(await clearSmtpCredential(deps, inst, 9)).toBe(false)
+      await storeSmtpCredential(deps, inst, input)
+      expect((await openSmtpCredential(deps, inst)).password).toBe(password)
+      // o motor recusa direto o que a peça nunca grava: porta acima do SMALLINT (sessão estrita) e segurança fora do domínio
+      await expect(pool.query(`UPDATE tb_establishment_smtp_credential SET port = 70000 WHERE tb_institution_id = ?`, [inst])).rejects.toBeDefined()
+      await expect(pool.query(`UPDATE tb_establishment_smtp_credential SET security = 'none' WHERE tb_institution_id = ?`, [inst])).rejects.toBeDefined()
+      await expect(pool.query(`UPDATE tb_establishment_smtp_credential SET password_cipher = NULL WHERE tb_institution_id = ?`, [inst])).rejects.toBeDefined()
+      await root.query(`DELETE FROM \`${DB}\`.tb_establishment_smtp_credential WHERE tb_institution_id IN (?, ?)`, [inst, inst + 1])
+      report.smtpCredentialEngine = 'ok'
     })
   })
 

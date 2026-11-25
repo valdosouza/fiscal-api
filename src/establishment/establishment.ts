@@ -8,8 +8,9 @@ import { CertificateInfo, ExpectedCnpj, certificateInfo, pkcs12ToPem, validateIs
 import {
   IssuerModel, IssuerEnvironment, IssuerRow, CertificateRow,
   getIssuer, getCertificate, saveCertificate, issuerRowsState, assertCertificateWritable,
-  issuerModelStillInErp, establishmentStillInErp, certificatesOutsideKeyVersion, rewrapCertificateKey, sampleCertificatesPerKeyVersion,
+  issuerModelStillInErp, establishmentStillInErp, certificatesOutsideKeyVersion, rewrapCertificateKey, certificateAad,
 } from './establishment.repository'
+import { SEALED_STORES } from '../secret/sealed-stores'
 import { IssuerAuthority, authorityOf } from './issuer-models'
 
 /**
@@ -25,8 +26,8 @@ import { IssuerAuthority, authorityOf } from './issuer-models'
 export { authorityOf }
 export type { IssuerAuthority }
 
-/** AAD da chave cifrada: amarra o texto cifrado à LINHA (copiar para outro estabelecimento não abre). */
-export const certificateAad = (institutionId: number) => `tb_establishment_certificate:${institutionId}`
+// AAD da chave cifrada do A1: mora no repositório (o dono do segredo — `CERTIFICATE_SEALED_STORE`); re-exportada com o mesmo nome
+export { certificateAad }
 
 export interface IssuerCertificateStatus {
   certificate:     boolean
@@ -177,12 +178,17 @@ export async function anyEmissionStillInErp(q: Queryable, schemaName: string, in
   return establishmentStillInErp(q, schemaName, institutionId)
 }
 
-/** Versões de chave-mestra que ainda cifram algum A1 vivo (health: todas têm que estar no anel). */
+/**
+ * Versões de chave-mestra que ainda cifram algum segredo vivo do cofre — de TODOS os donos (`SEALED_STORES`: o A1 e, desde a FAMILIA.E5.P7,
+ * a senha da conta de e-mail). Health: todas têm que estar no anel. Quem rotaciona só o A1 (`rotateCertificateKeys`) continua vendo aqui a
+ * versão antiga enquanto outro dono estiver nela — e não tira a chave do anel.
+ */
 export async function storedKeyVersions(q: Queryable): Promise<number[]> {
-  const [rows] = await q.query(
-    `SELECT DISTINCT cipher_key_version AS v FROM tb_establishment_certificate
-      WHERE deleted = 'N' AND cipher_key_version IS NOT NULL`)
-  return (rows as any[]).filter(r => r.v != null).map(r => Number(r.v)).filter(v => Number.isInteger(v) && v > 0)
+  const out: number[] = []
+  for (const store of SEALED_STORES) {
+    for (const v of await store.keyVersions(q)) if (!out.includes(v)) out.push(v)
+  }
+  return out
 }
 
 export interface KeyRotationReport {
@@ -212,7 +218,9 @@ class ResealMismatch extends Error {}
 
 /**
  * DEPLOY.E3.P1.T2 (D-F16 — "reabre com a antiga, regrava com a nova"): todo A1 vivo cifrado por versão de chave-mestra
- * diferente da ATUAL (a maior do anel) é aberto com a versão dele e regravado com a atual, UM estabelecimento por transação:
+ * diferente da ATUAL (a maior do anel) é aberto com a versão dele e regravado com a atual, UM estabelecimento por transação.
+ * ⚠️ SÓ o A1: desde a FAMILIA.E5.P7 o cofre tem outro dono (a senha da conta de e-mail) e a rotação COMPLETA é `rotateStoredKeys`
+ * (`secret/sealed-stores.ts`) — é ela que o runbook manda rodar. Esta fica para quem já a chama; sozinha, não autoriza tirar a chave antiga:
  *  - a linha do certificado é lida com FOR UPDATE (exclusivo já na leitura; a trava é só dela — quem abre o emissor trava a
  *    habilitação e depois o A1, nunca o contrário, e a rotação não pede outra trava segurando esta: não há ciclo);
  *  - o novo selo é conferido (abre com a AAD da linha) ANTES do UPDATE, que só grava se a linha ainda está na versão aberta;
@@ -225,7 +233,7 @@ class ResealMismatch extends Error {}
  * ORDEM DA OPERAÇÃO (runbook — o anel é de cada processo, e a função não o vê nos outros):
  *  1. publicar o anel {antiga, nova} em TODOS os processos que usam o cofre (nfse-api, nfe-api) e reiniciá-los — antes disso, um
  *     processo só com a antiga não abriria o A1 regravado;
- *  2. rodar a rotação; 3. conferir `failed` vazio, `storedKeyVersions` = [nova] e `verifyStoredKeys` ok;
+ *  2. rodar a rotação de TODOS os donos (`rotateStoredKeys`); 3. conferir `failed` vazio, `storedKeyVersions` = [nova] e `verifyStoredKeys` ok;
  *  4. só então tirar a antiga do anel em todos os processos — e guardar a NOVA fora do servidor (é o backup do A1).
  */
 export async function rotateCertificateKeys(deps: EstablishmentDeps): Promise<KeyRotationReport> {
@@ -280,62 +288,73 @@ export async function rotateCertificateKeys(deps: EstablishmentDeps): Promise<Ke
 }
 
 export interface StoredKeyCheck {
-  /** toda versão em uso abre ALGUM dos A1 de amostra (sem A1 guardado = ok: não há o que provar) */
+  /** toda versão em uso abre ALGUM segredo de amostra, de qualquer dono (sem segredo guardado = ok: não há o que provar) */
   ok: boolean
-  /** alguma amostra não abriu numa versão que outra amostra provou: a chave está certa, mas há A1 ilegível — alarme, não queda */
+  /** alguma amostra não abriu numa versão que outra amostra provou: a chave está certa, mas há segredo ilegível — alarme, não queda */
   degraded: boolean
-  /** por versão: ok, o código quando nenhuma amostra abriu, e quantas amostras não abriram */
+  /** por versão: ok, o código quando nenhuma amostra de algum dono abriu, e quantas amostras não abriram */
   versions: Array<{ version: number; ok: boolean; code?: string; unreadable: number }>
 }
 
-/** Quantos A1 por versão o health tenta abrir antes de dizer que a versão não abre. */
+/** Quantos segredos por dono e por versão o health tenta abrir antes de dizer que a versão não abre. */
 export const STORED_KEY_SAMPLES_PER_VERSION = 3
 
 /**
- * DEPLOY.E3.P1.T1 (D-F243 — Valdo, 2026-11-16): a prova de que a chave do SERVIDOR é a que cifrou os A1 de cada versão em uso. O
+ * DEPLOY.E3.P1.T1 (D-F243 — Valdo, 2026-11-16): a prova de que a chave do SERVIDOR é a que cifrou os segredos de cada versão em uso. O
  * `selfTest` do anel cifra e decifra um vetor que ele mesmo criou — passa com qualquer chave de 32 bytes; `storedKeyVersions` só confere
- * o número. Aqui, por versão, abre os A1 de amostra (os de menor institution, até [STORED_KEY_SAMPLES_PER_VERSION], numa leitura só)
- * em ordem até UM abrir, e zera cada um na hora:
- *  - chave errada no servidor → o GCM recusa TODAS as amostras → versão não ok (FISCAL_CERT_INVALID) → `ok` falso;
+ * o número. Aqui, por DONO do cofre (`SEALED_STORES` — o A1 e a senha da conta de e-mail, FAMILIA.E5.P7) e por versão, abre os segredos de
+ * amostra (os de menor institution, até [STORED_KEY_SAMPLES_PER_VERSION], numa leitura só por dono) em ordem até UM abrir, e zera cada um:
+ *  - chave errada no servidor → o GCM recusa TODAS as amostras → versão não ok (o código do dono: FISCAL_CERT_INVALID para o A1) → `ok` falso;
  *  - UMA linha ilegível (corrompida, restaurada de outro lugar) com outra que abre → versão ok, `degraded` verdadeiro — o estabelecimento
- *    dela já recebe 409 próprio no `openIssuer`; ela não derruba o serviço de todos;
- *  - `ok` prova a CHAVE da versão, não que todo A1 abra.
+ *    dela já recebe 409 próprio ao abrir o segredo; ela não derruba o serviço de todos;
+ *  - uma versão usada por DOIS donos segue a MESMA regra (D-F243, gate socrático de 2026-11-25): basta UMA amostra de qualquer dono abrir para a
+ *    chave estar provada; as que não abriram, de qualquer dono, deixam a versão `degraded` (alarme, não queda) — a senha de e-mail ilegível
+ *    de um cliente não derruba o health de quem nem envia e-mail. Sem nenhuma amostra aberta, o código é o do 1º dono que falhou;
+ *  - `ok` prova a CHAVE da versão, não que todo segredo abra.
  * Leitura comum (sem trava). Nada do segredo sai daqui — só versão, ok, código e contagem. Quem expõe (health público) decide o que
  * mostrar e com que frequência roda (D-F243: a adoção é da nfse-api).
  */
 export async function verifyStoredKeys(
   deps: EstablishmentDeps, perVersion = STORED_KEY_SAMPLES_PER_VERSION,
 ): Promise<StoredKeyCheck> {
-  // agrupa por versão numa LISTA (a leitura já vem ordenada por versão, id) — sem Map/Set em memória (regra 3, cerca D-F10)
-  const groups: Array<{ version: number; samples: Array<{ institutionId: number; sealed: SealedSecret }> }> = []
-  for (const s of await sampleCertificatesPerKeyVersion(deps.pool, perVersion)) {
-    const last = groups[groups.length - 1]
-    if (last && last.version === s.version) last.samples.push(s)
-    else groups.push({ version: s.version, samples: [s] })
-  }
-  const out: StoredKeyCheck = { ok: true, degraded: false, versions: [] }
-  for (const { version, samples } of groups) {
-    if (!deps.keyring.hasVersion(version)) {
-      out.versions.push({ version, ok: false, code: ErrorCodes.FISCAL_MASTER_KEY_UNAVAILABLE, unreadable: samples.length })
-      continue
+  // um resultado por (dono, versão), em LISTA (cada leitura já vem ordenada por versão, id) — sem Map/Set em memória (regra 3, cerca D-F10)
+  const partial: StoredKeyCheck['versions'] = []
+  for (const store of SEALED_STORES) {
+    const groups: Array<{ version: number; samples: Array<{ institutionId: number; sealed: SealedSecret }> }> = []
+    for (const s of await store.samplePerKeyVersion(deps.pool, perVersion)) {
+      const last = groups[groups.length - 1]
+      if (last && last.version === s.version) last.samples.push(s)
+      else groups.push({ version: s.version, samples: [s] })
     }
-    let unreadable = 0
-    let opened = false
-    for (const { institutionId, sealed } of samples) {
-      let plain: Buffer | null = null
-      try {
-        plain = deps.keyring.open(sealed, certificateAad(institutionId))
-        opened = true
-        break
-      } catch {
-        unreadable++
-      } finally {
-        plain?.fill(0)
+    for (const { version, samples } of groups) {
+      if (!deps.keyring.hasVersion(version)) {
+        partial.push({ version, ok: false, code: ErrorCodes.FISCAL_MASTER_KEY_UNAVAILABLE, unreadable: samples.length })
+        continue
       }
+      let unreadable = 0
+      let opened = false
+      for (const { institutionId, sealed } of samples) {
+        let plain: Buffer | null = null
+        try {
+          plain = deps.keyring.open(sealed, store.aad(institutionId))
+          opened = true
+          break
+        } catch {
+          unreadable++
+        } finally {
+          plain?.fill(0)
+        }
+      }
+      partial.push(opened ? { version, ok: true, unreadable } : { version, ok: false, code: store.unreadableCode, unreadable })
     }
-    out.versions.push(opened
-      ? { version, ok: true, unreadable }
-      : { version, ok: false, code: ErrorCodes.FISCAL_CERT_INVALID, unreadable })
+  }
+  // junta os donos por versão (D-F243): ok se ALGUM dono abriu; as ilegíveis somam; sem nenhum aberto, o código é o do 1º dono que falhou
+  const out: StoredKeyCheck = { ok: true, degraded: false, versions: [] }
+  for (const p of [...partial].sort((a, b) => a.version - b.version)) {
+    const last = out.versions[out.versions.length - 1]
+    if (!last || last.version !== p.version) { out.versions.push({ ...p }); continue }
+    last.unreadable += p.unreadable
+    if (!last.ok && p.ok) { last.ok = true; delete last.code }
   }
   out.ok = out.versions.every(v => v.ok)
   out.degraded = out.versions.some(v => v.ok && v.unreadable > 0)

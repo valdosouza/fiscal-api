@@ -33,6 +33,9 @@ O núcleo guarda o que é COMUM às famílias:
   genérico; estado DERIVADO da última voz; ambíguo nunca fecha; recusa ≠ transitório
 - **referência da nota** (`ref/invoice-ref.ts` — `InvoiceRef` com o TERMINAL; `WEB_TERMINAL` só na borda; nenhum `terminal = 0` em SQL do
   núcleo — D-NE12)
+- **conta de envio de e-mail** do estabelecimento (`tb_establishment_smtp_credential`, migration 009 — D-NE236, FAMILIA.E5.P7): a credencial
+  SMTP do cliente com a senha CIFRADA pelo cofre (`smtp-credential/`); o núcleo GUARDA, quem envia é a família (D-NE261). O cofre tem DOIS
+  donos de segredo (`secret/sealed-stores.ts`: o A1 e a senha SMTP) — a rotação completa da chave-mestra é `rotateStoredKeys`
 - storage do XML (filesystem no dev; backend de produção na F3)
 - autenticação pelo **JWT do produto** (RS256, só chave pública — D-F13)
 - base da **fonte de fatos Gestão 2027** (leitura SÓ-SELECT de `setes_central`/`setes_*` — D-F10/D-F15)

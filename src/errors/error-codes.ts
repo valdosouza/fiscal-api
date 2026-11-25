@@ -58,6 +58,10 @@ export const ErrorCodes = {
   FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN: 'FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN',
   // Arquivo fiscal de gravação única (FAMILIA.E5.P6.T1 — D-NE41)
   FISCAL_FILE_CONFLICT:                'FISCAL_FILE_CONFLICT',
+  // Conta de envio de e-mail do estabelecimento (credencial SMTP — FAMILIA.E5.P7, D-NE236)
+  SMTP_CREDENTIAL_MISSING:           'SMTP_CREDENTIAL_MISSING',
+  SMTP_CREDENTIAL_INVALID:           'SMTP_CREDENTIAL_INVALID',
+  SMTP_CREDENTIAL_UNREADABLE:        'SMTP_CREDENTIAL_UNREADABLE',
 } as const
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes]
@@ -110,4 +114,7 @@ export const ErrorCatalog: Record<ErrorCode, string> = {
   FISCAL_NUMBER_SEQUENCE_NOT_OPEN:     'A numeração de PRODUÇÃO da NF-e desta série ainda não foi aberta — informe o número inicial antes de transmitir em produção; nada foi gerado (D-NE265)',
   FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN: 'A numeração de produção da NF-e desta série já está aberta — o número inicial não muda (D-NE265)',
   FISCAL_FILE_CONFLICT:                'O arquivo fiscal já existe com outro conteúdo — gravação única, nada foi alterado (D-NE41)',
+  SMTP_CREDENTIAL_MISSING:           'Estabelecimento sem conta de envio de e-mail (SMTP) cadastrada',
+  SMTP_CREDENTIAL_INVALID:           'Conta de envio de e-mail (SMTP) fora da forma — fields[] aponta os campos; a senha nunca aparece',
+  SMTP_CREDENTIAL_UNREADABLE:        'A senha da conta de envio de e-mail não decifra (cofre adulterado ou chave-mestra trocada) — cadastre a conta de novo',
 }
