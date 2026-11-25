@@ -246,8 +246,13 @@ describe('arquivo fiscal — achados dos gates (socrático 0,72 · adversarial 0
     expect(st.find({ ...key({ environment: 'H' }), serie: undefined }, 'F-nfse.xml', [])).toBe(p)
   })
   it('a varredura vai do mais novo ao mais antigo; NODE_ENV com caixa ou espaço ainda é produção', () => {
+    // FAMILIA.E5.P6.T1 (gravação única pelo nome em todos os dias): o save já não cria o MESMO nome em dois dias; o segundo exemplar
+    // (que só existia por sobrescrita antiga ou cópia manual) é posto direto no disco para provar a ordem da varredura
     const old = st.save(key(), 'G-nfse.xml', '<velho/>', new Date('2024-01-10T12:00:00Z'))
-    const recent = st.save(key(), 'G-nfse.xml', '<novo/>', new Date('2026-11-10T12:00:00Z'))
+    const recentDir = path.join(path.dirname(old), '..', '..', '..', '2026', '11', '10')
+    fs.mkdirSync(recentDir, { recursive: true })
+    const recent = path.join(path.resolve(recentDir), 'G-nfse.xml')
+    fs.writeFileSync(recent, '<novo/>')
     expect(old).not.toBe(recent)
     expect(st.find(key(), 'G-nfse.xml', [])).toBe(recent)
     for (const NODE_ENV of ['Production', ' production ', 'PRODUCTION']) {

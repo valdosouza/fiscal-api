@@ -78,6 +78,8 @@ export * from './voice/families'
 // NE-2 (D-NE158, Valdo 2026-10-20): a leitura publicada da NF-e nasceu aqui, fora do catálogo e de `fiscal-api/reading`; ENTROU nos dois na
 // janela da NE-6 (fiscal-api:FAMILIA.E5.P3)
 export * from './voice/families/merchandise'
+// a PROVA de "não registrada" da NF-e (FAMILIA.E5.P6.T2 — D-NE235): só o veredito; fora de `fiscal-api/reading` (a decisão é da família)
+export * from './voice/families/merchandise-proof'
 // a ESCRITA da voz por família (D-F108 — parte 2 da NE-1a) e a transação sob a trava da nota (D-NE74)
 export * from './voice/event-table'
 export * from './voice/outcome'

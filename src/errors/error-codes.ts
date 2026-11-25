@@ -56,6 +56,8 @@ export const ErrorCodes = {
   // Último número da NF-e (FAMILIA.E5.P5 — D-NE265)
   FISCAL_NUMBER_SEQUENCE_NOT_OPEN:     'FISCAL_NUMBER_SEQUENCE_NOT_OPEN',
   FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN: 'FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN',
+  // Arquivo fiscal de gravação única (FAMILIA.E5.P6.T1 — D-NE41)
+  FISCAL_FILE_CONFLICT:                'FISCAL_FILE_CONFLICT',
 } as const
 
 export type ErrorCode = typeof ErrorCodes[keyof typeof ErrorCodes]
@@ -107,4 +109,5 @@ export const ErrorCatalog: Record<ErrorCode, string> = {
   FISCAL_CUTOVER_PENDING:            'A emissão fiscal desta empresa ainda é feita pelo ERP — a API fiscal só LÊ até a virada (D-F18 sem dual-write; virada = fato `cutover_at` na habilitação — D-F39)',
   FISCAL_NUMBER_SEQUENCE_NOT_OPEN:     'A numeração de PRODUÇÃO da NF-e desta série ainda não foi aberta — informe o número inicial antes de transmitir em produção; nada foi gerado (D-NE265)',
   FISCAL_NUMBER_SEQUENCE_ALREADY_OPEN: 'A numeração de produção da NF-e desta série já está aberta — o número inicial não muda (D-NE265)',
+  FISCAL_FILE_CONFLICT:                'O arquivo fiscal já existe com outro conteúdo — gravação única, nada foi alterado (D-NE41)',
 }
